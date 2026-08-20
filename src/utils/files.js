@@ -113,6 +113,21 @@ export function formatCount(value) {
   return new Intl.NumberFormat('fr-FR').format(Number(value));
 }
 
+/**
+ * Libellé d’effectif d’un dossier dans les listes.
+ *
+ * `item.count` vaut `null` tant que le JSON d’index n’a pas fourni d’effectif.
+ * Il ne faut surtout pas passer par `Number(item.count)` : `Number(null)`
+ * vaut `0` et l’interface afficherait « 0 ressource » pour tous les dossiers.
+ */
+export function formatFolderCount(item, indexing = false) {
+  if (item && item.count !== null && item.count !== undefined) {
+    const value = Number(item.count);
+    if (Number.isFinite(value)) return `${formatCount(value)} ressource${value <= 1 ? '' : 's'}`;
+  }
+  return indexing ? 'Indexation…' : 'Nombre indisponible';
+}
+
 export function parentPath(path = '') {
   const parts = path.split('/').filter(Boolean);
   parts.pop();

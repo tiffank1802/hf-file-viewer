@@ -181,14 +181,36 @@ Le bucket n’est parcouru récursivement qu’au **premier** `GET /api/index` d
 
 Le frontend charge ce JSON une fois au démarrage (`useIndexCatalog`). L’accueil, les cartes d’espaces, l’explorateur et la recherche lisent ensuite les mêmes valeurs : **changer de dossier ne déclenche aucun recomptage**, seule la liste du dossier est demandée à `/api/tree` (elle-même cachée). Pendant le tout premier index, l’interface affiche « Indexation… ».
 
+### Script de comptage de référence
+
+`scripts/count-bucket-files.mjs` parcourt réellement le bucket Hugging Face, recalcule l’effectif de chaque dossier ainsi que la taille cumulée, et affiche le total officiel déclaré par l’API. C’est l’outil de diagnostic quand l’interface affiche « 0 ressource » ou « Nombre indisponible » partout :
+
+```bash
+npm run count:files                                    # structure complète du bucket
+npm run count:files -- --prefix "GM/3A GM"             # un sous-arbre seulement
+npm run count:files -- --json index-reel.json          # document d’index recalculé
+npm run count:files -- --compare https://enise-docs.example.workers.dev
+```
+
+`--compare` télécharge le `/api/index` du site (ou lit un fichier JSON local) et liste les dossiers dont l’effectif servi diffère du contenu réel ; le code de sortie vaut **2** en cas d’écart, ce qui permet de l’utiliser en CI.
+
+Si le script trouve des fichiers alors que le site en affiche 0, le document d’index servi a été calculé pendant la création du bucket (bucket alors vide) puis mis en cache. Trois façons de l’invalider :
+
+1. **Redéployer avec une nouvelle version de clés** (recommandé, fonctionne aussi sur `*.workers.dev`) : incrémenter `CACHE_KEY_VERSION` dans `worker/index.js` puis `npm run deploy`. Le Worker utilise des clés de cache personnalisées que la « purge par URL » du tableau de bord ne peut pas atteindre ; changer la version rend les anciennes entrées orphelines (elles expirent seules).
+2. **Purge Everything** au niveau de la zone Cloudflare (Caching → Purge Cache → Purge Everything), uniquement si le site est rattaché à un domaine personnalisé. C’est la seule purge du tableau de bord qui vide aussi le Cache API des Workers. Inutile si le site est servi depuis `*.workers.dev` (pas de zone).
+3. **Attendre l’expiration naturelle** : 12 h pour l’index (`INDEX_CACHE_TTL`). Aucun namespace KV n’est configuré par défaut, donc rien à purger côté KV.
+
+Après purge, vérifier que `/api/index` repart en `X-Cache-Status: MISS` et que `totalFiles` correspond au bucket (voir aussi `npm run count:files -- --compare <url-du-site>`).
+
 ## Commandes utiles
 
 ```bash
-npm run lint       # ESLint
-npm test           # tests Node du Worker et des utilitaires
-npm run build      # build Vite
-npm run check      # lint + tests + build
-npm audit          # audit des dépendances
+npm run lint         # ESLint
+npm test             # tests Node du Worker et des utilitaires
+npm run build        # build Vite
+npm run check        # lint + tests + build
+npm run count:files  # comptage de référence des fichiers du bucket HF
+npm audit            # audit des dépendances
 ```
 
 ## Structure
@@ -196,6 +218,7 @@ npm audit          # audit des dépendances
 ```text
 src/                 interface React
 worker/index.js      proxy, sécurité et stratégie Cache API
+scripts/             comptage de référence des fichiers du bucket (diagnostic)
 public/              logos, drapeau, favicon et en-têtes Cloudflare
 wrangler.jsonc       configuration de déploiement
 .dev.vars.example    exemple de secrets locaux, sans valeur réelle
