@@ -1,24 +1,33 @@
 {
-  "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "enise-docs",
-  "main": "worker/index.js",
-  "compatibility_date": "2026-08-20",
-  "assets": {
-    "binding": "ASSETS",
-    "directory": "./dist",
-    "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
-  },
-  "vars": {
-    "HF_BUCKET_ID": "ktongue/ENISE-SITE",
-    "TREE_CACHE_TTL": "21600",
-    "INDEX_CACHE_TTL": "43200",
-    "FILE_CACHE_TTL": "604800",
-    "KV_CACHE_TTL": "86400",
-    "MAX_CACHEABLE_FILE_BYTES": "26214400"
-  },
-  "observability": {
-    "enabled": true,
-    "head_sampling_rate": 1
-  }
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "enise-docs",
+	"main": "worker/index.js",
+	"compatibility_date": "2026-08-20",
+	"assets": {
+		"binding": "ASSETS",
+		"directory": "./dist",
+		"not_found_handling": "single-page-application",
+		"run_worker_first": [
+			"/api/*"
+		]
+	},
+	"vars": {
+		"HF_BUCKET_ID": "ktongue/ENISE-SITE",
+		"TREE_CACHE_TTL": "21600",
+		"INDEX_CACHE_TTL": "43200",
+		"FILE_CACHE_TTL": "604800",
+		"KV_CACHE_TTL": "86400",
+		"MAX_CACHEABLE_FILE_BYTES": "26214400"
+	},
+	"observability": {
+		"enabled": true,
+		"head_sampling_rate": 1
+	},
+	"kv_namespaces": [
+		{
+			"binding": "METADATA_KV",
+			"id": "dffc5c6a27c443a5ace774e5fc9aeed7",
+			"remote": true
+		}
+	]
 }
