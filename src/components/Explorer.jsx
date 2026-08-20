@@ -35,6 +35,7 @@ function LoadingGrid({ view }) {
 
 export default function Explorer({
   library,
+  liveCounts,
   onOpenFile,
   favorites,
   onToggleFavorite,
@@ -167,6 +168,11 @@ export default function Explorer({
                 onNavigate={(path) => library.navigate(path, { scroll: false })}
                 favorite={favorites.includes(item.path)}
                 onToggleFavorite={onToggleFavorite}
+                countState={item.type === 'directory' ? {
+                  loading: liveCounts?.loading,
+                  error: liveCounts?.error,
+                  value: liveCounts?.counts?.[item.path],
+                } : null}
               />
             ))}
           </div>

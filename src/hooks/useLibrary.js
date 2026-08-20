@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchTree } from '../services/api';
 import { getFallbackTree } from '../data/fallbackData';
-import { hashFromPath, pathFromHash } from '../utils/routes';
+import { hrefFromLibraryPath, pathFromHash, pathFromLocation } from '../utils/routes';
 
 export function useLibrary() {
-  const [path, setPath] = useState(() => pathFromHash() ?? '');
+  const [path, setPath] = useState(() => pathFromLocation());
   const [state, setState] = useState({
     items: [],
     loading: true,
@@ -17,12 +17,19 @@ export function useLibrary() {
   const cacheRef = useRef(new Map());
 
   useEffect(() => {
+    const syncPath = () => {
+      setPath(pathFromLocation());
+    };
     const onHashChange = () => {
       const nextPath = pathFromHash();
       if (nextPath !== null) setPath(nextPath);
     };
+    window.addEventListener('popstate', syncPath);
     window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
+    return () => {
+      window.removeEventListener('popstate', syncPath);
+      window.removeEventListener('hashchange', onHashChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -69,9 +76,11 @@ export function useLibrary() {
   const navigate = useCallback(
     (nextPath = '', options = {}) => {
       const normalized = nextPath.replace(/^\/+|\/+$/g, '');
-      const nextHash = hashFromPath(normalized);
-      if (window.location.hash !== nextHash) {
-        window.location.hash = nextHash;
+      const nextHref = hrefFromLibraryPath(normalized);
+      const current = `${window.location.pathname}${window.location.search}`;
+      if (current !== nextHref || window.location.hash) {
+        window.history.pushState({ libraryPath: normalized }, '', nextHref);
+        setPath(normalized);
       } else {
         setPath(normalized);
       }

@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildHfFetchInit,
   buildHfFileUrl,
   buildHfTreeUrl,
+  countFilesByDirectory,
   getNextLink,
   makeKvKey,
   normalizeFilePath,
@@ -42,6 +44,28 @@ test('les clés Workers KV sont courtes, stables et spécifiques au chemin', () 
   assert.equal(first, makeKvKey('tree', 'ktongue/ENISE-SITE', 'GM/3A GM'));
   assert.notEqual(first, makeKvKey('tree', 'ktongue/ENISE-SITE', 'GM/4A GM'));
   assert.ok(first.length < 80);
+});
+
+test('le comptage récursif agrège tous les fichiers d’un dossier', () => {
+  const { counts, totalFiles } = countFilesByDirectory([
+    { type: 'directory', path: 'GM' },
+    { type: 'file', path: 'GM/3A GM/S5/poly.pdf' },
+    { type: 'file', path: 'GM/3A GM/S6/td.pdf' },
+    { type: 'file', path: 'GM/readme.md' },
+    { type: 'file', path: 'TOEIC/audio.mp3' },
+  ], '');
+  assert.equal(totalFiles, 4);
+  assert.equal(counts.GM, 3);
+  assert.equal(counts['GM/3A GM'], 2);
+  assert.equal(counts['GM/3A GM/S5'], 1);
+  assert.equal(counts.TOEIC, 1);
+});
+
+test('le fetch live Hugging Face désactive tous les caches', () => {
+  const init = buildHfFetchInit({}, { live: true });
+  assert.equal(init.cache, 'no-store');
+  assert.equal(init.cf.cacheTtl, 0);
+  assert.equal(init.headers.get('Cache-Control'), 'no-cache, no-store, max-age=0');
 });
 
 test('les chemins sont normalisés et les traversées refusées', () => {

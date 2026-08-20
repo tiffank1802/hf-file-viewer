@@ -56,6 +56,11 @@ export default {
         return await handleFile(request, env, ctx);
       }
 
+      if (url.pathname === '/api/counts') {
+        assertMethod(request, ['GET']);
+        return await handleCounts(request, env);
+      }
+
       return jsonResponse(
         { error: 'Route API introuvable.' },
         { status: 404, cacheControl: 'no-store' },
@@ -177,6 +182,35 @@ async function handleIndex(request, env, ctx) {
   });
 }
 
+async function handleCounts(request, env) {
+  const requestUrl = new URL(request.url);
+  const prefix = normalizePrefix(requestUrl.searchParams.get('prefix') ?? '');
+  const bucketId = getBucketId(env);
+  const startedAt = Date.now();
+  const { items, complete } = await fetchBucketTree(env, prefix, true, { live: true });
+  const { counts, totalFiles } = countFilesByDirectory(items, prefix);
+
+  return jsonResponse(
+    {
+      bucketId,
+      prefix,
+      counts,
+      totalFiles,
+      complete,
+      fetchedAt: new Date().toISOString(),
+      source: 'huggingface-live',
+    },
+    {
+      cacheControl: 'no-store, max-age=0',
+      headers: {
+        'X-Cache-Status': 'BYPASS-LIVE',
+        'X-Data-Source': 'huggingface-live',
+        'Server-Timing': `hf;desc="live counts";dur=${Date.now() - startedAt}`,
+      },
+    },
+  );
+}
+
 async function handleFile(request, env, ctx) {
   const url = new URL(request.url);
   const filePath = normalizeFilePath(url.searchParams.get('path'));
@@ -271,7 +305,8 @@ async function handleFile(request, env, ctx) {
   return response;
 }
 
-export async function fetchBucketTree(env, prefix = '', recursive = false) {
+export async function fetchBucketTree(env, prefix = '', recursive = false, options = {}) {
+  const live = Boolean(options.live);
   const bucketId = getBucketId(env);
   const items = [];
   let nextUrl = buildHfTreeUrl(bucketId, prefix, recursive);
@@ -281,10 +316,7 @@ export async function fetchBucketTree(env, prefix = '', recursive = false) {
   while (nextUrl && pageCount < MAX_TREE_PAGES && items.length < MAX_INDEX_ITEMS) {
     let response;
     try {
-      response = await fetch(nextUrl, {
-        headers: buildHfHeaders(env),
-        redirect: 'follow',
-      });
+      response = await fetch(nextUrl, buildHfFetchInit(env, { live }));
     } catch {
       throw new HttpError(502, 'Connexion au stockage Hugging Face interrompue.');
     }
@@ -389,13 +421,51 @@ function encodeBucketId(bucketId) {
   return bucketId.split('/').map(encodeURIComponent).join('/');
 }
 
-function buildHfHeaders(env) {
+function buildHfHeaders(env, { live = false } = {}) {
   const headers = new Headers({
     Accept: 'application/json, application/octet-stream;q=0.9, */*;q=0.8',
     'User-Agent': 'enise-docs-cloudflare-worker/1.0',
   });
+  if (live) {
+    headers.set('Cache-Control', 'no-cache, no-store, max-age=0');
+    headers.set('Pragma', 'no-cache');
+  }
   if (env.HF_TOKEN) headers.set('Authorization', `Bearer ${env.HF_TOKEN}`);
   return headers;
+}
+
+export function buildHfFetchInit(env, { live = false } = {}) {
+  const init = {
+    headers: buildHfHeaders(env, { live }),
+    redirect: 'follow',
+  };
+  if (live) {
+    init.cache = 'no-store';
+    init.cf = { cacheTtl: 0, cacheEverything: false };
+  }
+  return init;
+}
+
+export function countFilesByDirectory(items, prefix = '') {
+  const base = String(prefix || '').replace(/^\/+|\/+$/g, '');
+  const counts = {};
+  let totalFiles = 0;
+
+  for (const item of items) {
+    if (!item || item.type === 'directory') continue;
+    const path = String(item.path || '').replace(/^\/+/, '');
+    if (!path) continue;
+    if (base && path !== base && !path.startsWith(`${base}/`)) continue;
+    totalFiles += 1;
+    const parts = path.split('/').filter(Boolean);
+    for (let index = 1; index < parts.length; index += 1) {
+      const dirPath = parts.slice(0, index).join('/');
+      if (base && (dirPath === base || !dirPath.startsWith(`${base}/`))) continue;
+      counts[dirPath] = (counts[dirPath] || 0) + 1;
+    }
+  }
+
+  return { counts, totalFiles };
 }
 
 function makeCacheKey(kind, bucketId, params = {}) {

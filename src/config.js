@@ -1,19 +1,12 @@
 export const BUCKET_ID = 'ktongue/ENISE-SITE';
 export const BUCKET_URL = `https://huggingface.co/buckets/${BUCKET_ID}`;
 
-export const LIBRARY_STATS = [
-  { value: '9 625', label: 'ressources' },
-  { value: '52,7 Go', label: 'de savoir partagé' },
-  { value: '5', label: 'espaces clés' },
-];
-
 export const FEATURED_SPACES = [
   {
     title: '3e année GM',
     shortTitle: '3A',
     description: 'Semestres 5 & 6',
     path: 'GM/3A GM',
-    count: 1815,
     tone: 'green',
     icon: 'layers',
   },
@@ -22,7 +15,6 @@ export const FEATURED_SPACES = [
     shortTitle: '4A',
     description: 'Cours & projets avancés',
     path: 'GM/4A GM',
-    count: 1966,
     tone: 'red',
     icon: 'tool',
   },
@@ -31,7 +23,6 @@ export const FEATURED_SPACES = [
     shortTitle: '5A',
     description: 'Spécialités & fin d’études',
     path: 'GM/5A GM',
-    count: 1155,
     tone: 'yellow',
     icon: 'award',
   },
@@ -40,7 +31,6 @@ export const FEATURED_SPACES = [
     shortTitle: 'TOEIC',
     description: 'Audio, tests & méthodes',
     path: 'TOEIC',
-    count: 2142,
     tone: 'green',
     icon: 'headphones',
   },
@@ -49,7 +39,6 @@ export const FEATURED_SPACES = [
     shortTitle: 'SW',
     description: 'Modéliser pas à pas',
     path: 'GM/Tutos SolidWorks',
-    count: 2547,
     tone: 'red',
     icon: 'box',
   },
