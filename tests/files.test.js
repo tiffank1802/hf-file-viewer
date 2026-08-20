@@ -4,6 +4,7 @@ import {
   applyFolderCounts,
   countFilesByDirectory,
   formatBytes,
+  formatFolderCount,
   getBreadcrumbs,
   getFileKind,
   normalizeBucketItem,
@@ -78,6 +79,16 @@ test('applyFolderCounts complète les dossiers depuis le JSON d’index', () => 
   assert.equal(folder.count, 128);
   assert.equal(file.count, null);
   assert.equal(applyFolderCounts(items, {})[0].count, null);
+});
+
+test('formatFolderCount ne transforme pas un compteur manquant en 0', () => {
+  const folder = normalizeBucketItem({ type: 'directory', path: 'GM' });
+  assert.equal(folder.count, null);
+  assert.equal(formatFolderCount(folder), 'Nombre indisponible');
+  assert.equal(formatFolderCount(folder, true), 'Indexation…');
+  assert.equal(formatFolderCount({ ...folder, count: 0 }), '0 ressource');
+  assert.equal(formatFolderCount({ ...folder, count: 1 }), '1 ressource');
+  assert.equal(formatFolderCount({ ...folder, count: 128 }), '128 ressources');
 });
 
 test('le catalogue d’aperçu local fournit des effectifs hors ligne', () => {

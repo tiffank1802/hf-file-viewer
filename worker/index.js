@@ -1,5 +1,16 @@
 const HF_ORIGIN = 'https://huggingface.co';
 const DEFAULT_BUCKET_ID = 'ktongue/ENISE-SITE';
+/**
+ * Version des clés de cache (Cache API et Workers KV).
+ *
+ * Le Cache API des Workers ne se purge pas par URL et n’est pas vidé
+ * datacenter par datacenter via cache.delete depuis l’extérieur : pour
+ * invalider d’un coup un état périmé (par exemple un index calculé à 0
+ * pendant la création du bucket Hugging Face), incrémenter cette version
+ * puis redéployer. Les anciennes entrées deviennent orphelines et expirent
+ * naturellement selon leur TTL.
+ */
+const CACHE_KEY_VERSION = 'v2';
 const DEFAULT_TREE_TTL = 6 * 60 * 60;
 const DEFAULT_INDEX_TTL = 12 * 60 * 60;
 const DEFAULT_FILE_TTL = 7 * 24 * 60 * 60;
@@ -518,7 +529,7 @@ export function countFilesByDirectory(items, prefix = '') {
 }
 
 function makeCacheKey(kind, bucketId, params = {}) {
-  const url = new URL(`https://edge-cache.enise-docs.internal/${kind}`);
+  const url = new URL(`https://edge-cache.enise-docs.internal/${CACHE_KEY_VERSION}/${kind}`);
   url.searchParams.set('bucket', bucketId);
   Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
   return new Request(url, { method: 'GET' });
@@ -560,7 +571,7 @@ function storeMetadataKv(ctx, env, key, body) {
 }
 
 export function makeKvKey(kind, bucketId, suffix = '') {
-  const value = `v1:${kind}:${bucketId}:${suffix}`;
+  const value = `${CACHE_KEY_VERSION}:${kind}:${bucketId}:${suffix}`;
   let first = 0x811c9dc5;
   let second = 0x9e3779b9;
   for (let index = 0; index < value.length; index += 1) {

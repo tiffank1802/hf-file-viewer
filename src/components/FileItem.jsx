@@ -5,21 +5,14 @@ import {
   FiHeart,
 } from 'react-icons/fi';
 import { fileProxyUrl } from '../services/api';
-import { formatBytes, formatCount, formatDate, getExtension, isPreviewable } from '../utils/files';
+import { formatBytes, formatDate, formatFolderCount, getExtension, isPreviewable } from '../utils/files';
 import { FileTypeIcon } from './Icons';
-
-function folderCountLabel(item, indexing) {
-  const value = Number(item.count);
-  if (Number.isFinite(value)) return `${formatCount(value)} ressource${value === 1 ? '' : 's'}`;
-  if (indexing) return 'Indexation…';
-  return 'Nombre indisponible';
-}
 
 export default function FileItem({ item, view, onOpen, onNavigate, favorite, onToggleFavorite, indexing }) {
   const isFolder = item.type === 'directory';
   const extension = getExtension(item.path);
   const metadata = isFolder
-    ? folderCountLabel(item, indexing)
+    ? formatFolderCount(item, indexing)
     : `${extension ? extension.toUpperCase() : 'FICHIER'} · ${formatBytes(item.size)}`;
 
   const handlePrimaryAction = () => {
@@ -41,7 +34,7 @@ export default function FileItem({ item, view, onOpen, onNavigate, favorite, onT
         {view === 'list' && (
           <>
             <span className="file-date">{formatDate(item.mtime)}</span>
-            <span className="file-size-column">{isFolder ? folderCountLabel(item, indexing) : formatBytes(item.size)}</span>
+            <span className="file-size-column">{isFolder ? formatFolderCount(item, indexing) : formatBytes(item.size)}</span>
           </>
         )}
         <span className="file-open-indicator" aria-hidden="true">

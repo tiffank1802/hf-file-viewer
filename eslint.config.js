@@ -36,4 +36,12 @@ export default [
       globals: { ...globals.worker, ...globals.node },
     },
   },
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2024,
+      sourceType: 'module',
+      globals: globals.node,
+    },
+  },
 ];
