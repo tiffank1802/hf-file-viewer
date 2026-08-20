@@ -8,11 +8,18 @@ import { fileProxyUrl } from '../services/api';
 import { formatBytes, formatCount, formatDate, getExtension, isPreviewable } from '../utils/files';
 import { FileTypeIcon } from './Icons';
 
-export default function FileItem({ item, view, onOpen, onNavigate, favorite, onToggleFavorite }) {
+function folderCountLabel(countState) {
+  if (!countState || countState.loading) return 'Comptage Hugging Face…';
+  if (countState.error) return 'Nombre indisponible';
+  const n = Number.isFinite(Number(countState.value)) ? Number(countState.value) : 0;
+  return `${formatCount(n)} ressource${n === 1 ? '' : 's'}`;
+}
+
+export default function FileItem({ item, view, onOpen, onNavigate, favorite, onToggleFavorite, countState }) {
   const isFolder = item.type === 'directory';
   const extension = getExtension(item.path);
   const metadata = isFolder
-    ? `${formatCount(item.count) || 'Plusieurs'} ressource${item.count === 1 ? '' : 's'}`
+    ? folderCountLabel(countState)
     : `${extension ? extension.toUpperCase() : 'FICHIER'} · ${formatBytes(item.size)}`;
 
   const handlePrimaryAction = () => {
@@ -34,7 +41,7 @@ export default function FileItem({ item, view, onOpen, onNavigate, favorite, onT
         {view === 'list' && (
           <>
             <span className="file-date">{formatDate(item.mtime)}</span>
-            <span className="file-size-column">{isFolder ? formatCount(item.count) || '—' : formatBytes(item.size)}</span>
+            <span className="file-size-column">{isFolder ? folderCountLabel(countState) : formatBytes(item.size)}</span>
           </>
         )}
         <span className="file-open-indicator" aria-hidden="true">

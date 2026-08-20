@@ -9,9 +9,18 @@ import {
   FiSearch,
   FiShield,
 } from 'react-icons/fi';
-import { LIBRARY_STATS } from '../config';
+import { formatCount } from '../utils/files';
 
-export default function Hero({ onOpenSearch, navigate }) {
+function liveStat(liveCounts, fallbackLabel) {
+  if (!liveCounts || liveCounts.loading) return { value: '…', label: 'Comptage Hugging Face…' };
+  if (liveCounts.error || !Number.isFinite(Number(liveCounts.totalFiles))) {
+    return { value: '—', label: 'Nombre indisponible' };
+  }
+  return { value: formatCount(liveCounts.totalFiles), label: fallbackLabel };
+}
+
+export default function Hero({ onOpenSearch, navigate, liveCounts }) {
+  const totalStat = liveStat(liveCounts, 'ressources');
   return (
     <section className="hero-section" aria-labelledby="hero-title">
       <div className="hero-copy">
@@ -42,12 +51,18 @@ export default function Hero({ onOpenSearch, navigate }) {
         </div>
 
         <dl className="hero-stats">
-          {LIBRARY_STATS.map((stat) => (
-            <div key={stat.label}>
-              <dt>{stat.value}</dt>
-              <dd>{stat.label}</dd>
-            </div>
-          ))}
+          <div>
+            <dt>{totalStat.value}</dt>
+            <dd>{totalStat.label}</dd>
+          </div>
+          <div>
+            <dt>HF</dt>
+            <dd>source live</dd>
+          </div>
+          <div>
+            <dt>5</dt>
+            <dd>espaces clés</dd>
+          </div>
         </dl>
       </div>
 
@@ -80,7 +95,7 @@ export default function Hero({ onOpenSearch, navigate }) {
             <button type="button" onClick={() => navigate('GM/4A GM')}>
               <span className="mini-icon red"><FiFolder aria-hidden="true" /></span>
               <small>4e année GM</small>
-              <strong>1 966 ressources</strong>
+              <strong>Parcours avancé</strong>
             </button>
             <button type="button" onClick={() => navigate('TOEIC')}>
               <span className="mini-icon yellow"><FiHeadphones aria-hidden="true" /></span>

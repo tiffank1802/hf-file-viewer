@@ -35,7 +35,6 @@ export function getFileKind(path = '', type = 'file') {
 export function normalizeBucketItem(item) {
   const path = String(item.path || '');
   const type = item.type === 'directory' ? 'directory' : 'file';
-  const rawCount = item.numItems ?? item.totalFiles ?? item.count;
   return {
     ...item,
     path,
@@ -43,7 +42,7 @@ export function normalizeBucketItem(item) {
     name: item.name || getName(path),
     size: Number(item.size) || 0,
     mtime: item.mtime || item.uploadedAt || item.uploaded_at || null,
-    count: Number.isFinite(Number(rawCount)) ? Number(rawCount) : null,
+    count: null,
     kind: getFileKind(path, type),
   };
 }

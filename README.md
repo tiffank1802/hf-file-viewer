@@ -44,6 +44,7 @@ Le frontend et le Worker sont sur **le même domaine**. Le navigateur n’appell
 | Assets versionnés | 1 an | CDN Cloudflare | bundle Vite |
 | Dossier `/api/tree` | 5 min | Cache API, 6 h | API Hugging Face |
 | Index `/api/index` | 30 min | Cache API, 12 h | API Hugging Face |
+| Comptage `/api/counts` | **aucun** | **aucun** | API Hugging Face (live) |
 | Fichier `/api/file` | 1 h | Cache API, 7 j | bucket Hugging Face |
 
 Les fichiers ne sont ajoutés au Cache API que si une réponse complète possède une taille connue inférieure ou égale à **25 Mio**. Les requêtes `Range` et les fichiers plus grands sont transmis sans mise en cache par le Worker (`BYPASS-RANGE` ou `BYPASS-SIZE`) ; le CDN de Hugging Face peut néanmoins les optimiser.

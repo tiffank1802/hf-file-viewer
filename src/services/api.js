@@ -49,6 +49,45 @@ export async function fetchTree(prefix = '', signal) {
   };
 }
 
+export async function fetchCounts(prefix = '', signal) {
+  const params = new URLSearchParams();
+  if (prefix) params.set('prefix', prefix);
+  const suffix = params.size ? `?${params}` : '';
+  let response;
+  try {
+    response = await fetch(`/api/counts${suffix}`, {
+      signal,
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json',
+        'Cache-Control': 'no-cache, no-store, max-age=0',
+        Pragma: 'no-cache',
+      },
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') throw error;
+    throw new LibraryApiError('Connexion au service de comptage impossible.');
+  }
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new LibraryApiError('Le service de comptage a renvoyé une réponse illisible.', response.status);
+  }
+
+  if (!response.ok) {
+    throw new LibraryApiError(payload.error || 'Impossible de compter les documents.', response.status);
+  }
+
+  return {
+    ...payload,
+    counts: payload.counts && typeof payload.counts === 'object' ? payload.counts : {},
+    cacheStatus: response.headers.get('X-Cache-Status') || 'BYPASS-LIVE',
+    dataSource: response.headers.get('X-Data-Source') || payload.source || 'huggingface-live',
+  };
+}
+
 export async function fetchIndex(signal) {
   const payload = await getJson('/api/index', signal);
   return {

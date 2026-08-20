@@ -97,6 +97,57 @@ test('Workers KV sert de cache global optionnel après un MISS Edge', async () =
   }
 });
 
+test('GET /api/counts relit Hugging Face sans Cache API ni KV', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCaches = globalThis.caches;
+  let cacheOps = 0;
+  let kvOps = 0;
+  let upstreamCalls = 0;
+  let liveInit;
+  globalThis.caches = {
+    default: {
+      async match() { cacheOps += 1; return undefined; },
+      async put() { cacheOps += 1; },
+    },
+  };
+  globalThis.fetch = async (_url, options) => {
+    upstreamCalls += 1;
+    liveInit = options;
+    return Response.json([
+      { type: 'file', path: 'GM/3A GM/poly.pdf' },
+      { type: 'file', path: 'GM/4A GM/td.pdf' },
+      { type: 'directory', path: 'GM' },
+    ]);
+  };
+
+  try {
+    const context = createContext();
+    const envWithKv = {
+      ...env,
+      METADATA_KV: {
+        get: async () => { kvOps += 1; return '{"should":"not"}'; },
+        put: async () => { kvOps += 1; },
+      },
+    };
+    const first = await worker.fetch(new Request('https://docs.example/api/counts'), envWithKv, context);
+    const second = await worker.fetch(new Request('https://docs.example/api/counts?prefix=GM'), envWithKv, context);
+    assert.equal(first.status, 200);
+    assert.equal(first.headers.get('X-Cache-Status'), 'BYPASS-LIVE');
+    assert.equal(first.headers.get('X-Data-Source'), 'huggingface-live');
+    assert.equal(first.headers.get('Cache-Control'), 'no-store, max-age=0');
+    assert.equal((await first.json()).counts.GM, 2);
+    assert.equal(second.status, 200);
+    assert.equal(upstreamCalls, 2);
+    assert.equal(cacheOps, 0);
+    assert.equal(kvOps, 0);
+    assert.equal(liveInit.cache, 'no-store');
+    assert.equal(liveInit.headers.get('Cache-Control'), 'no-cache, no-store, max-age=0');
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.caches = originalCaches;
+  }
+});
+
 test('une requête Range est transmise et n’est pas mise en cache', async () => {
   const originalFetch = globalThis.fetch;
   const originalCaches = globalThis.caches;

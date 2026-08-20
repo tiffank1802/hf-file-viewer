@@ -3,7 +3,14 @@ import { FEATURED_SPACES } from '../config';
 import { formatCount } from '../utils/files';
 import { NavigationIcon } from './Icons';
 
-export default function CategoryGrid({ navigate, prefetch }) {
+function spaceCountLabel(liveCounts, path) {
+  if (!liveCounts || liveCounts.loading) return 'Comptage Hugging Face…';
+  if (liveCounts.error) return 'Nombre indisponible';
+  const n = Number.isFinite(Number(liveCounts.counts?.[path])) ? Number(liveCounts.counts[path]) : 0;
+  return `${formatCount(n)} ressource${n === 1 ? '' : 's'}`;
+}
+
+export default function CategoryGrid({ navigate, prefetch, liveCounts }) {
   return (
     <section className="featured-section" aria-labelledby="featured-title">
       <div className="section-heading-row">
@@ -30,7 +37,7 @@ export default function CategoryGrid({ navigate, prefetch }) {
               <small>{space.description}</small>
             </span>
             <span className="category-meta">
-              {formatCount(space.count)} ressources
+              {spaceCountLabel(liveCounts, space.path)}
               <span><FiArrowUpRight aria-hidden="true" /></span>
             </span>
           </button>
