@@ -1,0 +1,6 @@
+# Optionnel : uniquement si le bucket Hugging Face devient privé.
+# Ne jamais préfixer cette variable avec VITE_ : elle doit rester côté Worker.
+HF_TOKEN="hf_your_read_only_token"
+
+# Optionnel : surcharge locale du bucket configuré dans wrangler.jsonc.
+# HF_BUCKET_ID="ktongue/ENISE-SITE"
