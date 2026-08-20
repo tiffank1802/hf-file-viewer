@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildHfFetchInit,
   buildHfFileUrl,
   buildHfTreeUrl,
   countFilesByDirectory,
@@ -9,6 +8,7 @@ import {
   makeKvKey,
   normalizeFilePath,
   normalizePrefix,
+  selectCountsForPrefix,
 } from '../worker/index.js';
 
 test('buildHfTreeUrl encode les préfixes sans perdre les caractères Unicode', () => {
@@ -61,11 +61,22 @@ test('le comptage récursif agrège tous les fichiers d’un dossier', () => {
   assert.equal(counts.TOEIC, 1);
 });
 
-test('le fetch live Hugging Face désactive tous les caches', () => {
-  const init = buildHfFetchInit({}, { live: true });
-  assert.equal(init.cache, 'no-store');
-  assert.equal(init.cf.cacheTtl, 0);
-  assert.equal(init.headers.get('Cache-Control'), 'no-cache, no-store, max-age=0');
+test('les effectifs sont extraits du JSON d’index, jamais recalculés en live', () => {
+  const document = {
+    counts: { GM: 3, 'GM/3A GM': 2, 'GM/4A GM': 1, TOEIC: 1 },
+    totalFiles: 4,
+  };
+
+  const root = selectCountsForPrefix(document, '');
+  assert.equal(root.totalFiles, 4);
+  assert.equal(root.counts.TOEIC, 1);
+
+  const scoped = selectCountsForPrefix(document, '/GM/');
+  assert.equal(scoped.totalFiles, 3);
+  assert.equal(scoped.counts['GM/3A GM'], 2);
+  assert.equal(scoped.counts.TOEIC, undefined);
+
+  assert.deepEqual(selectCountsForPrefix({}, 'GM'), { counts: {}, totalFiles: 0 });
 });
 
 test('les chemins sont normalisés et les traversées refusées', () => {

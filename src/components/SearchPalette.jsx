@@ -9,14 +9,15 @@ import {
   FiX,
 } from 'react-icons/fi';
 import { FEATURED_SPACES } from '../config';
-import { getFallbackIndex } from '../data/fallbackData';
-import { fetchIndex } from '../services/api';
-import { formatBytes, getName, normalizeBucketItem, searchItems } from '../utils/files';
+import {
+  applyFolderCounts,
+  formatBytes,
+  formatCount,
+  getName,
+  normalizeBucketItem,
+  searchItems,
+} from '../utils/files';
 import { FileTypeIcon } from './Icons';
-
-const featuredItems = FEATURED_SPACES.map((space) =>
-  normalizeBucketItem({ type: 'directory', path: space.path, count: space.count }),
-);
 
 export default function SearchPalette({
   open,
@@ -25,12 +26,10 @@ export default function SearchPalette({
   onNavigate,
   onOpenFile,
   favoriteItems,
+  catalog,
 }) {
   const [query, setQuery] = useState('');
-  const [indexItems, setIndexItems] = useState(() => getFallbackIndex());
-  const [indexState, setIndexState] = useState('idle');
   const inputRef = useRef(null);
-  const indexRequestedRef = useRef(false);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -49,17 +48,20 @@ export default function SearchPalette({
     };
   }, [open, onClose]);
 
-  useEffect(() => {
-    if (!open || indexRequestedRef.current) return;
-    indexRequestedRef.current = true;
-    setIndexState('loading');
-    fetchIndex()
-      .then((payload) => {
-        setIndexItems(payload.items);
-        setIndexState('ready');
-      })
-      .catch(() => setIndexState('fallback'));
-  }, [open]);
+  const counts = catalog?.counts;
+  const indexItems = useMemo(
+    () => applyFolderCounts(catalog?.items ?? [], counts),
+    [catalog?.items, counts],
+  );
+
+  const featuredItems = useMemo(
+    () =>
+      applyFolderCounts(
+        FEATURED_SPACES.map((space) => normalizeBucketItem({ type: 'directory', path: space.path })),
+        counts,
+      ),
+    [counts],
+  );
 
   const baseItems = mode === 'favorites' ? favoriteItems : indexItems;
   const results = useMemo(() => {
@@ -67,8 +69,8 @@ export default function SearchPalette({
       if (mode === 'favorites') return favoriteItems;
       return featuredItems;
     }
-    return searchItems(baseItems, query, 45);
-  }, [baseItems, favoriteItems, mode, query]);
+    return applyFolderCounts(searchItems(baseItems, query, 45), counts);
+  }, [baseItems, counts, favoriteItems, featuredItems, mode, query]);
 
   if (!open) return null;
 
@@ -104,9 +106,9 @@ export default function SearchPalette({
             </h2>
           </div>
           <span>
-            {indexState === 'loading' && <><FiLoader className="spinning" aria-hidden="true" /> Indexation…</>}
-            {indexState === 'fallback' && <><FiWifiOff aria-hidden="true" /> Index local</>}
-            {indexState === 'ready' && `${indexItems.length.toLocaleString('fr-FR')} éléments indexés`}
+            {catalog?.loading && <><FiLoader className="spinning" aria-hidden="true" /> Indexation…</>}
+            {!catalog?.loading && catalog?.source === 'fallback' && <><FiWifiOff aria-hidden="true" /> Index local</>}
+            {!catalog?.loading && catalog?.source !== 'fallback' && `${formatCount(indexItems.length)} éléments indexés`}
           </span>
         </div>
 
@@ -119,7 +121,11 @@ export default function SearchPalette({
                 <small>{item.path.includes('/') ? item.path.slice(0, item.path.lastIndexOf('/')) : 'Racine de la bibliothèque'}</small>
               </span>
               <span className="search-result-meta">
-                {item.type === 'directory' ? `${item.count?.toLocaleString('fr-FR') || ''} ressources` : formatBytes(item.size)}
+                {item.type === 'directory'
+                  ? Number.isFinite(Number(item.count))
+                    ? `${formatCount(item.count)} ressources`
+                    : catalog?.loading ? 'Indexation…' : ''
+                  : formatBytes(item.size)}
               </span>
               <FiArrowRight className="result-arrow" aria-hidden="true" />
             </button>

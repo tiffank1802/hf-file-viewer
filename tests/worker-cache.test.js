@@ -97,51 +97,98 @@ test('Workers KV sert de cache global optionnel après un MISS Edge', async () =
   }
 });
 
-test('GET /api/counts relit Hugging Face sans Cache API ni KV', async () => {
+test('le premier index compte les fichiers et le JSON sert ensuite /api/counts', async () => {
   const originalFetch = globalThis.fetch;
   const originalCaches = globalThis.caches;
-  let cacheOps = 0;
-  let kvOps = 0;
   let upstreamCalls = 0;
-  let liveInit;
-  globalThis.caches = {
-    default: {
-      async match() { cacheOps += 1; return undefined; },
-      async put() { cacheOps += 1; },
-    },
-  };
-  globalThis.fetch = async (_url, options) => {
+  globalThis.caches = { default: createCache() };
+  globalThis.fetch = async () => {
     upstreamCalls += 1;
-    liveInit = options;
     return Response.json([
-      { type: 'file', path: 'GM/3A GM/poly.pdf' },
-      { type: 'file', path: 'GM/4A GM/td.pdf' },
       { type: 'directory', path: 'GM' },
+      { type: 'directory', path: 'GM/3A GM' },
+      { type: 'file', path: 'GM/3A GM/poly.pdf', size: 12 },
+      { type: 'file', path: 'GM/3A GM/td.pdf', size: 12 },
+      { type: 'file', path: 'GM/4A GM/projet.pdf', size: 12 },
+      { type: 'file', path: 'TOEIC/audio.mp3', size: 12 },
     ]);
   };
 
   try {
+    const indexContext = createContext();
+    const index = await worker.fetch(new Request('https://docs.example/api/index'), env, indexContext);
+    assert.equal(index.status, 200);
+    assert.equal(index.headers.get('X-Cache-Status'), 'MISS');
+    assert.equal(index.headers.get('X-Data-Source'), 'index-json');
+
+    const indexPayload = await index.json();
+    assert.equal(indexPayload.totalFiles, 4);
+    assert.equal(indexPayload.counts.GM, 3);
+    assert.equal(indexPayload.counts['GM/3A GM'], 2);
+    assert.equal(indexPayload.counts.TOEIC, 1);
+    await indexContext.done();
+
+    const countsContext = createContext();
+    const counts = await worker.fetch(new Request('https://docs.example/api/counts'), env, countsContext);
+    assert.equal(counts.status, 200);
+    assert.equal(counts.headers.get('X-Cache-Status'), 'HIT');
+    assert.equal(counts.headers.get('X-Data-Source'), 'index-json');
+
+    const countsPayload = await counts.json();
+    assert.equal(countsPayload.source, 'index-json');
+    assert.equal(countsPayload.totalFiles, 4);
+    assert.equal(countsPayload.counts['GM/3A GM'], 2);
+
+    const scopedContext = createContext();
+    const scoped = await worker.fetch(
+      new Request('https://docs.example/api/counts?prefix=GM'),
+      env,
+      scopedContext,
+    );
+    const scopedPayload = await scoped.json();
+    assert.equal(scopedPayload.prefix, 'GM');
+    assert.equal(scopedPayload.totalFiles, 3);
+    assert.equal(scopedPayload.counts['GM/3A GM'], 2);
+    assert.equal(scopedPayload.counts.TOEIC, undefined);
+
+    // Un seul parcours Hugging Face pour l’index, aucun recompte live ensuite.
+    assert.equal(upstreamCalls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.caches = originalCaches;
+  }
+});
+
+test('/api/counts réutilise le document d’index stocké dans Workers KV', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCaches = globalThis.caches;
+  const document = JSON.stringify({
+    bucketId: 'ktongue/ENISE-SITE',
+    items: [{ type: 'directory', path: 'GM' }],
+    counts: { GM: 42, 'GM/3A GM': 12 },
+    totalFiles: 42,
+    complete: true,
+    fetchedAt: '2026-08-20T10:00:00Z',
+  });
+  globalThis.caches = { default: createCache() };
+  globalThis.fetch = async () => {
+    throw new Error('Hugging Face ne doit pas être relu pour un comptage');
+  };
+
+  try {
     const context = createContext();
-    const envWithKv = {
-      ...env,
-      METADATA_KV: {
-        get: async () => { kvOps += 1; return '{"should":"not"}'; },
-        put: async () => { kvOps += 1; },
-      },
-    };
-    const first = await worker.fetch(new Request('https://docs.example/api/counts'), envWithKv, context);
-    const second = await worker.fetch(new Request('https://docs.example/api/counts?prefix=GM'), envWithKv, context);
-    assert.equal(first.status, 200);
-    assert.equal(first.headers.get('X-Cache-Status'), 'BYPASS-LIVE');
-    assert.equal(first.headers.get('X-Data-Source'), 'huggingface-live');
-    assert.equal(first.headers.get('Cache-Control'), 'no-store, max-age=0');
-    assert.equal((await first.json()).counts.GM, 2);
-    assert.equal(second.status, 200);
-    assert.equal(upstreamCalls, 2);
-    assert.equal(cacheOps, 0);
-    assert.equal(kvOps, 0);
-    assert.equal(liveInit.cache, 'no-store');
-    assert.equal(liveInit.headers.get('Cache-Control'), 'no-cache, no-store, max-age=0');
+    const response = await worker.fetch(
+      new Request('https://docs.example/api/counts?prefix=GM'),
+      { ...env, METADATA_KV: { get: async () => document, put: async () => {} } },
+      context,
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('X-Cache-Status'), 'KV-HIT');
+    assert.equal(response.headers.get('X-Data-Source'), 'index-json');
+    const payload = await response.json();
+    assert.equal(payload.totalFiles, 42);
+    assert.equal(payload.counts['GM/3A GM'], 12);
+    await context.done();
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.caches = originalCaches;
