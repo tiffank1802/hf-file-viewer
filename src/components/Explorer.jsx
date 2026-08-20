@@ -13,6 +13,7 @@ import {
 } from 'react-icons/fi';
 import { huggingFaceFolderUrl } from '../services/api';
 import {
+  applyFolderCounts,
   getBreadcrumbs,
   getName,
   parentPath,
@@ -35,7 +36,7 @@ function LoadingGrid({ view }) {
 
 export default function Explorer({
   library,
-  liveCounts,
+  catalog,
   onOpenFile,
   favorites,
   onToggleFavorite,
@@ -44,8 +45,8 @@ export default function Explorer({
   const [sortBy, setSortBy] = useState('name');
   const breadcrumbs = useMemo(() => getBreadcrumbs(library.path), [library.path]);
   const sortedItems = useMemo(
-    () => sortItems(library.items, sortBy),
-    [library.items, sortBy],
+    () => applyFolderCounts(sortItems(library.items, sortBy), catalog?.counts),
+    [library.items, sortBy, catalog?.counts],
   );
   const folderCount = library.items.filter((item) => item.type === 'directory').length;
   const fileCount = library.items.length - folderCount;
@@ -168,11 +169,7 @@ export default function Explorer({
                 onNavigate={(path) => library.navigate(path, { scroll: false })}
                 favorite={favorites.includes(item.path)}
                 onToggleFavorite={onToggleFavorite}
-                countState={item.type === 'directory' ? {
-                  loading: liveCounts?.loading,
-                  error: liveCounts?.error,
-                  value: liveCounts?.counts?.[item.path],
-                } : null}
+                indexing={Boolean(catalog?.loading)}
               />
             ))}
           </div>

@@ -35,6 +35,7 @@ export function getFileKind(path = '', type = 'file') {
 export function normalizeBucketItem(item) {
   const path = String(item.path || '');
   const type = item.type === 'directory' ? 'directory' : 'file';
+  const count = Number(item.count);
   return {
     ...item,
     path,
@@ -42,9 +43,47 @@ export function normalizeBucketItem(item) {
     name: item.name || getName(path),
     size: Number(item.size) || 0,
     mtime: item.mtime || item.uploadedAt || item.uploaded_at || null,
-    count: null,
+    count: type === 'directory' && Number.isFinite(count) ? count : null,
     kind: getFileKind(path, type),
   };
+}
+
+/**
+ * Compte les fichiers de chaque dossier à partir d’une liste récursive.
+ * Utilisé pour l’index (côté Worker) et pour l’aperçu local hors ligne.
+ */
+export function countFilesByDirectory(items = [], prefix = '') {
+  const base = String(prefix || '').replace(/^\/+|\/+$/g, '');
+  const counts = {};
+  let totalFiles = 0;
+
+  for (const item of items) {
+    if (!item || item.type === 'directory') continue;
+    const path = String(item.path || '').replace(/^\/+/, '');
+    if (!path) continue;
+    if (base && path !== base && !path.startsWith(`${base}/`)) continue;
+    totalFiles += 1;
+    const parts = path.split('/').filter(Boolean);
+    for (let index = 1; index < parts.length; index += 1) {
+      const dirPath = parts.slice(0, index).join('/');
+      if (base && (dirPath === base || !dirPath.startsWith(`${base}/`))) continue;
+      counts[dirPath] = (counts[dirPath] || 0) + 1;
+    }
+  }
+
+  return { counts, totalFiles };
+}
+
+/** Applique les effectifs du JSON d’index aux dossiers d’une liste. */
+export function applyFolderCounts(items = [], counts = {}) {
+  if (!counts || typeof counts !== 'object') return items;
+  return items.map((item) => {
+    if (!item || item.type !== 'directory') return item;
+    const value = Number(counts[item.path]);
+    if (!Number.isFinite(value)) return item;
+    if (item.count === value) return item;
+    return { ...item, count: value };
+  });
 }
 
 export function formatBytes(bytes, locale = 'fr-FR') {

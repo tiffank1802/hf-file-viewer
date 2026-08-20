@@ -11,6 +11,7 @@ Bibliothèque étudiante moderne pour les ressources de **Centrale Lyon ENISE**,
 - aperçu PDF, image, audio, vidéo et texte ;
 - téléchargement, partage et favoris enregistrés dans le navigateur ;
 - recherche globale à partir d’un index Hugging Face mis en cache ;
+- effectifs par dossier calculés **une seule fois à l’indexation** et stockés dans le JSON d’index ;
 - Worker Cloudflare servant à la fois les assets statiques et l’API proxy ;
 - Cache API configuré pour les arbres, l’index et les fichiers raisonnablement petits ;
 - mode aperçu local si l’API n’est pas joignable pendant le développement ;
@@ -44,7 +45,7 @@ Le frontend et le Worker sont sur **le même domaine**. Le navigateur n’appell
 | Assets versionnés | 1 an | CDN Cloudflare | bundle Vite |
 | Dossier `/api/tree` | 5 min | Cache API, 6 h | API Hugging Face |
 | Index `/api/index` | 30 min | Cache API, 12 h | API Hugging Face |
-| Comptage `/api/counts` | **aucun** | **aucun** | API Hugging Face (live) |
+| Comptage `/api/counts` | 30 min | Cache API, 12 h | JSON d’index (aucun appel HF) |
 | Fichier `/api/file` | 1 h | Cache API, 7 j | bucket Hugging Face |
 
 Les fichiers ne sont ajoutés au Cache API que si une réponse complète possède une taille connue inférieure ou égale à **25 Mio**. Les requêtes `Range` et les fichiers plus grands sont transmis sans mise en cache par le Worker (`BYPASS-RANGE` ou `BYPASS-SIZE`) ; le CDN de Hugging Face peut néanmoins les optimiser.
@@ -162,11 +163,23 @@ Pour un déploiement CI GitHub, stocker `CLOUDFLARE_API_TOKEN` et `CLOUDFLARE_AC
 |---|---|
 | `GET /api/health` | état et configuration publique du service |
 | `GET /api/tree?prefix=GM/3A%20GM` | contenu immédiat d’un dossier |
-| `GET /api/index` | index compact récursif utilisé par la recherche locale |
+| `GET /api/index` | index compact récursif : documents, `counts` par dossier et `totalFiles` |
+| `GET /api/counts?prefix=GM` | effectifs extraits du JSON d’index (`X-Data-Source: index-json`) |
 | `GET /api/file?path=...` | aperçu/stream d’un document |
 | `GET /api/file?path=...&download=1` | téléchargement avec `Content-Disposition: attachment` |
 
-L’en-tête `X-Cache-Status` permet de diagnostiquer le comportement : `HIT`, `KV-HIT`, `MISS`, `BYPASS-RANGE` ou `BYPASS-SIZE`.
+L’en-tête `X-Cache-Status` permet de diagnostiquer le comportement : `HIT`, `KV-HIT`, `MISS`, `BYPASS-RANGE` ou `BYPASS-SIZE`. L’en-tête `X-Data-Source: index-json` confirme qu’une réponse d’effectifs provient bien du JSON d’index et non d’un nouveau parcours Hugging Face.
+
+### Comptage des documents
+
+Le bucket n’est parcouru récursivement qu’au **premier** `GET /api/index` d’un datacenter :
+
+1. le Worker liste tous les objets du bucket ;
+2. `countFilesByDirectory` calcule le nombre de fichiers de chaque dossier ;
+3. `counts` (chemin → nombre) et `totalFiles` sont écrits **dans le document d’index** ;
+4. ce document part au Cache API, et dans Workers KV si le binding existe.
+
+Le frontend charge ce JSON une fois au démarrage (`useIndexCatalog`). L’accueil, les cartes d’espaces, l’explorateur et la recherche lisent ensuite les mêmes valeurs : **changer de dossier ne déclenche aucun recomptage**, seule la liste du dossier est demandée à `/api/tree` (elle-même cachée). Pendant le tout premier index, l’interface affiche « Indexation… ».
 
 ## Commandes utiles
 

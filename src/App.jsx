@@ -10,13 +10,13 @@ import SearchPalette from './components/SearchPalette';
 import SideNav from './components/SideNav';
 import CloudflareAnalytics from './components/CloudflareAnalytics';
 import { useLibrary } from './hooks/useLibrary';
-import { useLiveCounts } from './hooks/useLiveCounts';
+import { useIndexCatalog } from './hooks/useIndexCatalog';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import './index.css';
 
 export default function App() {
   const library = useLibrary();
-  const liveCounts = useLiveCounts(library.path);
+  const catalog = useIndexCatalog();
   const [selectedFile, setSelectedFile] = useState(null);
   const [searchState, setSearchState] = useState({ open: false, mode: 'search' });
   const [storedFavorites, setStoredFavorites] = useLocalStorage('enise-docs:favorites', []);
@@ -79,8 +79,8 @@ export default function App() {
       <main id="main-content">
         {library.path === '' && (
           <>
-            <Hero onOpenSearch={() => openSearch('search')} navigate={library.navigate} liveCounts={liveCounts} />
-            <CategoryGrid navigate={library.navigate} prefetch={library.prefetch} liveCounts={liveCounts} />
+            <Hero onOpenSearch={() => openSearch('search')} navigate={library.navigate} catalog={catalog} />
+            <CategoryGrid navigate={library.navigate} prefetch={library.prefetch} catalog={catalog} />
           </>
         )}
 
@@ -104,7 +104,7 @@ export default function App() {
             />
             <Explorer
               library={library}
-              liveCounts={liveCounts}
+              catalog={catalog}
               onOpenFile={setSelectedFile}
               favorites={favoritePaths}
               onToggleFavorite={toggleFavorite}
@@ -135,6 +135,7 @@ export default function App() {
         onNavigate={library.navigate}
         onOpenFile={setSelectedFile}
         favoriteItems={favoriteItems}
+        catalog={catalog}
       />
 
       <CloudflareAnalytics />

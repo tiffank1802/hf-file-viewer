@@ -3,14 +3,14 @@ import { FEATURED_SPACES } from '../config';
 import { formatCount } from '../utils/files';
 import { NavigationIcon } from './Icons';
 
-function spaceCountLabel(liveCounts, path) {
-  if (!liveCounts || liveCounts.loading) return 'Comptage Hugging Face…';
-  if (liveCounts.error) return 'Nombre indisponible';
-  const n = Number.isFinite(Number(liveCounts.counts?.[path])) ? Number(liveCounts.counts[path]) : 0;
-  return `${formatCount(n)} ressource${n === 1 ? '' : 's'}`;
+function spaceCountLabel(catalog, path) {
+  if (!catalog || catalog.loading) return 'Indexation…';
+  const value = Number(catalog.counts?.[path]);
+  if (!Number.isFinite(value)) return 'Nombre indisponible';
+  return `${formatCount(value)} ressource${value === 1 ? '' : 's'}`;
 }
 
-export default function CategoryGrid({ navigate, prefetch, liveCounts }) {
+export default function CategoryGrid({ navigate, prefetch, catalog }) {
   return (
     <section className="featured-section" aria-labelledby="featured-title">
       <div className="section-heading-row">
@@ -37,7 +37,7 @@ export default function CategoryGrid({ navigate, prefetch, liveCounts }) {
               <small>{space.description}</small>
             </span>
             <span className="category-meta">
-              {spaceCountLabel(liveCounts, space.path)}
+              {spaceCountLabel(catalog, space.path)}
               <span><FiArrowUpRight aria-hidden="true" /></span>
             </span>
           </button>

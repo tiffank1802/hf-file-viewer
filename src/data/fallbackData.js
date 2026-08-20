@@ -1,4 +1,4 @@
-import { normalizeBucketItem } from '../utils/files';
+import { countFilesByDirectory, normalizeBucketItem } from '../utils/files.js';
 
 const UPDATED_AT = '2026-08-20T10:00:00.000Z';
 
@@ -117,4 +117,26 @@ export function getFallbackIndex() {
   const items = new Map();
   Object.values(FALLBACK_TREE).flat().forEach((item) => items.set(item.path, item));
   return [...items.values()];
+}
+
+/**
+ * Catalogue d’aperçu local, utilisé uniquement si `/api/index` est injoignable.
+ * Les effectifs déclarés ici sont des ordres de grandeur de développement ;
+ * en production, ils proviennent toujours du JSON d’index du Worker.
+ */
+export function getFallbackCatalog() {
+  const items = getFallbackIndex();
+  const counts = { ...countFilesByDirectory(items).counts };
+
+  items.forEach((item) => {
+    if (item.type !== 'directory') return;
+    const declared = Number(item.count);
+    if (Number.isFinite(declared) && declared > 0) counts[item.path] = declared;
+  });
+
+  const totalFiles = Object.entries(counts)
+    .filter(([path]) => !path.includes('/'))
+    .reduce((total, [, value]) => total + value, 0);
+
+  return { items, counts, totalFiles };
 }

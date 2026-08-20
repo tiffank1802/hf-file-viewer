@@ -58,7 +58,7 @@ export default {
 
       if (url.pathname === '/api/counts') {
         assertMethod(request, ['GET']);
-        return await handleCounts(request, env);
+        return await handleCounts(request, env, ctx);
       }
 
       return jsonResponse(
@@ -133,7 +133,15 @@ async function handleTree(request, env, ctx) {
   });
 }
 
-async function handleIndex(request, env, ctx) {
+/**
+ * Charge le document d’index (Cache API → Workers KV → Hugging Face).
+ *
+ * Le parcours récursif du bucket n’a lieu qu’au tout premier appel : les
+ * effectifs par dossier (`counts`) et le total (`totalFiles`) y sont calculés
+ * une seule fois puis stockés dans le JSON mis en cache. Toutes les vues du
+ * portail réutilisent ensuite ce même document.
+ */
+async function loadIndexDocument(env, ctx) {
   const bucketId = getBucketId(env);
   const edgeTtl = positiveInteger(env.INDEX_CACHE_TTL, DEFAULT_INDEX_TTL);
   const cache = caches.default;
@@ -142,28 +150,36 @@ async function handleIndex(request, env, ctx) {
 
   const cached = await cache.match(cacheKey);
   if (cached) {
-    return responseFromCache(cached, 'HIT', 'public, max-age=1800, stale-while-revalidate=7200');
+    return {
+      body: await cached.text(),
+      bucketId,
+      cacheStatus: 'HIT',
+      timing: 'edge;desc="cache hit";dur=0',
+      durationMs: Date.now() - startedAt,
+    };
   }
 
-  const kvKey = makeKvKey('index', bucketId, 'recursive');
+  const kvKey = makeKvKey('index', bucketId, 'recursive-counts');
   const kvBody = await readMetadataKv(env, kvKey);
   if (kvBody) {
     storeJsonInCache(ctx, cache, cacheKey, kvBody, edgeTtl);
-    return jsonResponse(kvBody, {
-      serialized: true,
-      cacheControl: 'public, max-age=1800, stale-while-revalidate=7200',
-      headers: {
-        'X-Cache-Status': 'KV-HIT',
-        'Server-Timing': 'edge;desc="cache miss", kv;desc="index hit"',
-      },
-    });
+    return {
+      body: kvBody,
+      bucketId,
+      cacheStatus: 'KV-HIT',
+      timing: 'edge;desc="cache miss", kv;desc="index hit"',
+      durationMs: Date.now() - startedAt,
+    };
   }
 
   const { items, complete } = await fetchBucketTree(env, '', true);
   const compactItems = items.slice(0, MAX_INDEX_ITEMS).map(compactBucketItem);
+  const { counts, totalFiles } = countFilesByDirectory(compactItems);
   const payload = {
     bucketId,
     items: compactItems,
+    counts,
+    totalFiles,
     complete: complete && items.length <= MAX_INDEX_ITEMS,
     fetchedAt: new Date().toISOString(),
   };
@@ -172,23 +188,35 @@ async function handleIndex(request, env, ctx) {
   storeJsonInCache(ctx, cache, cacheKey, body, edgeTtl);
   storeMetadataKv(ctx, env, kvKey, body);
 
+  return {
+    body,
+    bucketId,
+    cacheStatus: 'MISS',
+    timing: `edge;desc="cache miss", hf;dur=${Date.now() - startedAt}`,
+    durationMs: Date.now() - startedAt,
+  };
+}
+
+async function handleIndex(request, env, ctx) {
+  const { body, cacheStatus, timing } = await loadIndexDocument(env, ctx);
+
   return jsonResponse(body, {
     serialized: true,
     cacheControl: 'public, max-age=1800, stale-while-revalidate=7200',
     headers: {
-      'X-Cache-Status': 'MISS',
-      'Server-Timing': `edge;desc="cache miss", hf;dur=${Date.now() - startedAt}`,
+      'X-Cache-Status': cacheStatus,
+      'X-Data-Source': 'index-json',
+      'Server-Timing': timing,
     },
   });
 }
 
-async function handleCounts(request, env) {
+async function handleCounts(request, env, ctx) {
   const requestUrl = new URL(request.url);
   const prefix = normalizePrefix(requestUrl.searchParams.get('prefix') ?? '');
-  const bucketId = getBucketId(env);
-  const startedAt = Date.now();
-  const { items, complete } = await fetchBucketTree(env, prefix, true, { live: true });
-  const { counts, totalFiles } = countFilesByDirectory(items, prefix);
+  const { body, bucketId, cacheStatus, timing } = await loadIndexDocument(env, ctx);
+  const document = parseIndexDocument(body);
+  const { counts, totalFiles } = selectCountsForPrefix(document, prefix);
 
   return jsonResponse(
     {
@@ -196,19 +224,50 @@ async function handleCounts(request, env) {
       prefix,
       counts,
       totalFiles,
-      complete,
-      fetchedAt: new Date().toISOString(),
-      source: 'huggingface-live',
+      complete: document.complete !== false,
+      fetchedAt: document.fetchedAt ?? null,
+      source: 'index-json',
     },
     {
-      cacheControl: 'no-store, max-age=0',
+      cacheControl: 'public, max-age=1800, stale-while-revalidate=7200',
       headers: {
-        'X-Cache-Status': 'BYPASS-LIVE',
-        'X-Data-Source': 'huggingface-live',
-        'Server-Timing': `hf;desc="live counts";dur=${Date.now() - startedAt}`,
+        'X-Cache-Status': cacheStatus,
+        'X-Data-Source': 'index-json',
+        'Server-Timing': timing,
       },
     },
   );
+}
+
+function parseIndexDocument(body) {
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new HttpError(502, 'Index documentaire illisible.');
+  }
+}
+
+/** Extrait du JSON d’index les effectifs correspondant à un préfixe. */
+export function selectCountsForPrefix(document, prefix = '') {
+  const base = String(prefix || '').replace(/^\/+|\/+$/g, '');
+  const source =
+    document && typeof document.counts === 'object' && document.counts ? document.counts : {};
+
+  if (!base) {
+    const declaredTotal = Number(document?.totalFiles);
+    return {
+      counts: { ...source },
+      totalFiles: Number.isFinite(declaredTotal) ? declaredTotal : 0,
+    };
+  }
+
+  const counts = {};
+  for (const [path, value] of Object.entries(source)) {
+    if (path === base || path.startsWith(`${base}/`)) counts[path] = value;
+  }
+
+  const scopedTotal = Number(source[base]);
+  return { counts, totalFiles: Number.isFinite(scopedTotal) ? scopedTotal : 0 };
 }
 
 async function handleFile(request, env, ctx) {
@@ -305,8 +364,7 @@ async function handleFile(request, env, ctx) {
   return response;
 }
 
-export async function fetchBucketTree(env, prefix = '', recursive = false, options = {}) {
-  const live = Boolean(options.live);
+export async function fetchBucketTree(env, prefix = '', recursive = false) {
   const bucketId = getBucketId(env);
   const items = [];
   let nextUrl = buildHfTreeUrl(bucketId, prefix, recursive);
@@ -316,7 +374,7 @@ export async function fetchBucketTree(env, prefix = '', recursive = false, optio
   while (nextUrl && pageCount < MAX_TREE_PAGES && items.length < MAX_INDEX_ITEMS) {
     let response;
     try {
-      response = await fetch(nextUrl, buildHfFetchInit(env, { live }));
+      response = await fetch(nextUrl, buildHfFetchInit(env));
     } catch {
       throw new HttpError(502, 'Connexion au stockage Hugging Face interrompue.');
     }
@@ -421,29 +479,20 @@ function encodeBucketId(bucketId) {
   return bucketId.split('/').map(encodeURIComponent).join('/');
 }
 
-function buildHfHeaders(env, { live = false } = {}) {
+function buildHfHeaders(env) {
   const headers = new Headers({
     Accept: 'application/json, application/octet-stream;q=0.9, */*;q=0.8',
     'User-Agent': 'enise-docs-cloudflare-worker/1.0',
   });
-  if (live) {
-    headers.set('Cache-Control', 'no-cache, no-store, max-age=0');
-    headers.set('Pragma', 'no-cache');
-  }
   if (env.HF_TOKEN) headers.set('Authorization', `Bearer ${env.HF_TOKEN}`);
   return headers;
 }
 
-export function buildHfFetchInit(env, { live = false } = {}) {
-  const init = {
-    headers: buildHfHeaders(env, { live }),
+export function buildHfFetchInit(env) {
+  return {
+    headers: buildHfHeaders(env),
     redirect: 'follow',
   };
-  if (live) {
-    init.cache = 'no-store';
-    init.cf = { cacheTtl: 0, cacheEverything: false };
-  }
-  return init;
 }
 
 export function countFilesByDirectory(items, prefix = '') {

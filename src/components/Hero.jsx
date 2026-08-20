@@ -11,16 +11,16 @@ import {
 } from 'react-icons/fi';
 import { formatCount } from '../utils/files';
 
-function liveStat(liveCounts, fallbackLabel) {
-  if (!liveCounts || liveCounts.loading) return { value: '…', label: 'Comptage Hugging Face…' };
-  if (liveCounts.error || !Number.isFinite(Number(liveCounts.totalFiles))) {
+function indexStat(catalog, readyLabel) {
+  if (!catalog || catalog.loading) return { value: '…', label: 'Indexation…' };
+  if (!Number.isFinite(Number(catalog.totalFiles))) {
     return { value: '—', label: 'Nombre indisponible' };
   }
-  return { value: formatCount(liveCounts.totalFiles), label: fallbackLabel };
+  return { value: formatCount(catalog.totalFiles), label: readyLabel };
 }
 
-export default function Hero({ onOpenSearch, navigate, liveCounts }) {
-  const totalStat = liveStat(liveCounts, 'ressources');
+export default function Hero({ onOpenSearch, navigate, catalog }) {
+  const totalStat = indexStat(catalog, 'ressources indexées');
   return (
     <section className="hero-section" aria-labelledby="hero-title">
       <div className="hero-copy">
@@ -57,7 +57,7 @@ export default function Hero({ onOpenSearch, navigate, liveCounts }) {
           </div>
           <div>
             <dt>HF</dt>
-            <dd>source live</dd>
+            <dd>source des documents</dd>
           </div>
           <div>
             <dt>5</dt>
