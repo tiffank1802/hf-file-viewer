@@ -568,6 +568,8 @@
   .kind-audio .file-type-visual small, .kind-video .file-type-visual small { background: #5268a3; }
   .kind-office .file-type-visual { background: #eaf0fa; color: #3464a1; }
   .kind-office .file-type-visual small { background: #3464a1; }
+  .kind-model .file-type-visual { background: #edf3e9; color: #4f7a3a; }
+  .kind-model .file-type-visual small { background: #4f7a3a; }
   .file-copy { display: flex; width: 100%; min-width: 0; flex-direction: column; gap: 5px; margin-top: 16px; padding-right: 22px; }
   .file-copy strong { display: -webkit-box; overflow: hidden; color: #243c34; font-size: 0.72rem; font-weight: 720; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
   .file-copy small { overflow: hidden; color: var(--ink-faint); font-size: 0.53rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
@@ -636,6 +638,7 @@
   .search-result-icon { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 11px; background: #edf3ef; color: #667971; }
   .search-result-icon.kind-folder { background: var(--yellow-pale); color: #b58a08; }
   .search-result-icon.kind-pdf { background: var(--red-pale); color: var(--red); }
+  .search-result-icon.kind-model { background: #edf3e9; color: #4f7a3a; }
   .search-result-copy { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
   .search-result-copy strong { overflow: hidden; font-size: 0.71rem; text-overflow: ellipsis; white-space: nowrap; }
   .search-result-copy small { overflow: hidden; color: var(--ink-faint); font-size: 0.52rem; text-overflow: ellipsis; white-space: nowrap; }
@@ -659,6 +662,7 @@
   .preview-file-heading { display: flex; min-width: 0; align-items: center; gap: 11px; }
   .preview-file-icon { display: grid; flex: 0 0 auto; width: 42px; height: 46px; place-items: center; border-radius: 12px; background: var(--green-pale); color: var(--green); }
   .preview-file-icon.kind-pdf { background: var(--red-pale); color: var(--red); }
+  .preview-file-icon.kind-model { background: #edf3e9; color: #4f7a3a; }
   .preview-file-heading > div { min-width: 0; }
   .preview-file-heading h2 { max-width: 550px; overflow: hidden; font-size: 0.78rem; text-overflow: ellipsis; white-space: nowrap; }
   .preview-file-heading p { margin-top: 4px; color: var(--ink-faint); font-size: 0.52rem; }
@@ -672,6 +676,22 @@
   .preview-actions .preview-download:hover { background: var(--green); color: white; }
   .preview-actions .preview-close { margin-left: 3px; background: #edf2ef; color: var(--ink); font-size: 1rem; }
   .preview-body { flex: 1; min-height: 0; overflow: auto; background: #e8ecea; }
+  .preview-body.preview-office { overflow: hidden; background: white; }
+  .preview-body.preview-model { overflow: hidden; background: #f4f6f4; }
+  .office-web-preview { width: 100%; height: 100%; min-height: 0; background: white; }
+  .office-web-frame { display: block; width: 100%; height: 100%; border: 0; background: white; }
+  .shortcut-preview { display: flex; min-height: 100%; flex-direction: column; align-items: center; justify-content: center; padding: 34px; text-align: center; background: radial-gradient(circle at 50% 32%, rgba(0, 122, 94, 0.1), transparent 46%), #f4f7f5; }
+  .shortcut-icon { display: grid; width: 82px; height: 86px; place-items: center; margin-bottom: 19px; border-radius: 23px; background: linear-gradient(145deg, var(--green), var(--green-dark)); box-shadow: 0 24px 48px rgba(0, 87, 69, 0.22); color: white; }
+  .shortcut-preview h3 { font-size: 1.04rem; }
+  .shortcut-preview p { max-width: 470px; margin-top: 8px; color: var(--ink-faint); font-size: 0.68rem; line-height: 1.6; }
+  .shortcut-preview .shortcut-empty { max-width: 430px; }
+  .shortcut-open, .shortcut-preview .shortcut-download { display: inline-flex; align-items: center; gap: 8px; margin-top: 22px; padding: 11px 16px; border-radius: 12px; background: var(--green-dark); color: white; font-size: 0.67rem; font-weight: 750; }
+  .shortcut-preview .shortcut-download { margin-top: 10px; background: white; border: 1px solid var(--line); color: var(--ink-soft); box-shadow: var(--shadow-sm); }
+  .autodesk-preview { position: relative; display: flex; width: 100%; height: 100%; min-height: 0; flex-direction: column; background: #f4f6f4; }
+  .autodesk-preview .preview-loader { position: absolute; inset: 0; background: #f4f6f4; }
+  .autodesk-viewer { flex: 1; min-height: 0; width: 100%; background: #f4f6f4; }
+  .autodesk-hint { display: flex; align-items: center; gap: 7px; padding: 9px 16px; border-top: 1px solid var(--line); background: white; color: var(--ink-faint); font-size: 0.58rem; }
+  .autodesk-hint svg { flex: 0 0 auto; color: var(--green); }
   .pdf-frame { width: 100%; height: 100%; border: 0; background: white; }
   .image-preview, .media-preview { display: grid; min-height: 100%; place-items: center; padding: 28px; background: radial-gradient(circle at center, #f7f9f7, #e4e9e6); }
   .image-preview img { max-height: calc(88vh - 150px); object-fit: contain; border-radius: 8px; box-shadow: 0 16px 45px rgba(15, 47, 37, 0.16); }

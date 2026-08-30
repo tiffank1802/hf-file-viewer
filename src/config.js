@@ -1,6 +1,23 @@
 export const BUCKET_ID = 'ktongue/ENISE-SITE';
 export const BUCKET_URL = `https://huggingface.co/buckets/${BUCKET_ID}`;
 
+/**
+ * Viewer Office embarqué de Microsoft (Office Web Apps Viewer).
+ *
+ * Il nécessite que le fichier soit accessible publiquement : c’est le cas
+ * en production via l’URL absolue du site (`/api/file?path=...`).
+ */
+export const OFFICE_WEB_VIEWER_BASE_URL = 'https://view.officeapps.live.com/op/embed.aspx';
+
+/**
+ * Script du Viewer Autodesk (APS / Forge View & Data).
+ *
+ * La version `7.*` est la version stable maintenue par Autodesk ; le
+ * navigateur télécharge ensuite les assets depuis le même domaine Autodesk.
+ */
+export const AUTODESK_VIEWER_API_URL =
+  'https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/viewer3D.min.js';
+
 export const FEATURED_SPACES = [
   {
     title: '3e année GM',

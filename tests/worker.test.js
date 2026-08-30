@@ -1,10 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildApsObjectKey,
   buildHfFileUrl,
   buildHfTreeUrl,
   countFilesByDirectory,
   getNextLink,
+  isApsConfigured,
+  makeApsSourceKey,
   makeKvKey,
   normalizeFilePath,
   normalizePrefix,
@@ -85,4 +88,26 @@ test('les chemins sont normalisés et les traversées refusées', () => {
   assert.throws(() => normalizeFilePath('../secret'), /invalide/i);
   assert.throws(() => normalizeFilePath('a\u0000b'), /invalide/i);
   assert.throws(() => normalizeFilePath(''), /obligatoire/i);
+});
+
+test('la configuration Autodesk APS exige les deux secrets', () => {
+  assert.equal(isApsConfigured({}), false);
+  assert.equal(isApsConfigured({ APS_CLIENT_ID: 'id' }), false);
+  assert.equal(
+    isApsConfigured({ APS_CLIENT_ID: 'id', APS_CLIENT_SECRET: 'secret' }),
+    true,
+  );
+});
+
+test('les clés APS sont stables, courtes et sensibles au contenu', () => {
+  const first = makeApsSourceKey('GM/3D/piece.sldprt', '1024', '2026-01-01');
+  assert.equal(first.length, 32);
+  assert.equal(first, makeApsSourceKey('GM/3D/piece.sldprt', '1024', '2026-01-01'));
+  assert.notEqual(first, makeApsSourceKey('GM/3D/piece.sldprt', '2048', '2026-01-01'));
+  assert.notEqual(first, makeApsSourceKey('GM/3D/piece.stl', '1024', '2026-01-01'));
+});
+
+test('les objets OSS APS gardent une partie lisible du nom', () => {
+  const key = buildApsObjectKey('GM/3D/maquette_du$batiment.rvt', 'abc123');
+  assert.equal(key, 'abc123-maquette_du_batiment.rvt');
 });

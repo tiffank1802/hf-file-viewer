@@ -6,7 +6,20 @@ const TEXT_EXTENSIONS = new Set([
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'avif']);
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'mov', 'mkv', 'avi']);
-const OFFICE_EXTENSIONS = new Set(['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp']);
+const OFFICE_EXTENSIONS = new Set([
+  'doc', 'docx', 'docm', 'xls', 'xlsx', 'xlsm', 'ppt', 'pptx', 'pptm',
+  'odt', 'ods', 'odp', 'one', 'onenote', 'url',
+]);
+const OFFICE_WEB_EXTENSIONS = new Set([
+  'doc', 'docx', 'docm', 'xls', 'xlsx', 'xlsm', 'ppt', 'pptx', 'pptm',
+  'potx', 'ppsx',
+]);
+const ONENOTE_EXTENSIONS = new Set(['one', 'onenote', 'url']);
+const MODEL_EXTENSIONS = new Set([
+  'dwg', 'dxf', 'rvt', 'rfa', 'nwc', 'nwd', 'nwf', 'ifc',
+  'ipt', 'iam', 'sldprt', 'sldasm', 'stp', 'step', 'igs', 'iges',
+  'obj', 'stl', '3ds', 'fbx', 'dae', 'skp', 'max', 'ma', 'mb',
+]);
 const ARCHIVE_EXTENSIONS = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'bz2']);
 
 export function getName(path = '') {
@@ -28,8 +41,38 @@ export function getFileKind(path = '', type = 'file') {
   if (VIDEO_EXTENSIONS.has(extension)) return 'video';
   if (TEXT_EXTENSIONS.has(extension)) return 'text';
   if (OFFICE_EXTENSIONS.has(extension)) return 'office';
+  if (MODEL_EXTENSIONS.has(extension)) return 'model';
   if (ARCHIVE_EXTENSIONS.has(extension)) return 'archive';
   return 'file';
+}
+
+export function isModelExtension(extension = '') {
+  return MODEL_EXTENSIONS.has(String(extension).toLowerCase());
+}
+
+export function isOfficeExtension(extension = '') {
+  return OFFICE_EXTENSIONS.has(String(extension).toLowerCase());
+}
+
+/** Extensions affichables par le viewer Office Web Apps (Microsoft). */
+export function isOfficeWebViewerExtension(extension = '') {
+  return OFFICE_WEB_EXTENSIONS.has(String(extension).toLowerCase());
+}
+
+/** Fichiers Microsoft OneNote / raccourcis OneNote (`.one`, `.url`). */
+export function isOneNoteExtension(extension = '') {
+  return ONENOTE_EXTENSIONS.has(String(extension).toLowerCase());
+}
+
+/**
+ * Extrait l’adresse cible d’un raccourci Windows `.url` (bloc `[InternetShortcut]`).
+ */
+export function extractUrlFromShortcut(content = '') {
+  if (typeof content !== 'string') return '';
+  const lines = content.split(/\r?\n/);
+  const urlLine = lines.find((line) => /^url\s*=/i.test(line.trim()));
+  if (!urlLine) return '';
+  return String(urlLine.slice(urlLine.indexOf('=') + 1).trim());
 }
 
 export function normalizeBucketItem(item) {
@@ -187,5 +230,5 @@ export function searchItems(items, query, limit = 40) {
 }
 
 export function isPreviewable(item) {
-  return ['pdf', 'image', 'audio', 'video', 'text'].includes(item.kind);
+  return ['pdf', 'image', 'audio', 'video', 'text', 'office', 'model'].includes(item.kind);
 }

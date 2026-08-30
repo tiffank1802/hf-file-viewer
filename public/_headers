@@ -1,11 +1,17 @@
 # En-têtes appliqués aux ressources statiques par Cloudflare Workers Assets.
+#
+# Viewer Office Web (Microsoft) : le domaine view.officeapps.live.com doit
+# rester autorisé dans frame-src pour afficher les .doc/.xls/.docx/.xlsx...
+#
+# Viewer Autodesk (APS / Forge) : le domaine developer.api.autodesk.com doit
+# rester autorisé dans les directives utilisées par le player 3D.
 /*
   X-Content-Type-Options: nosniff
   X-Frame-Options: SAMEORIGIN
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
   Cross-Origin-Opener-Policy: same-origin
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; frame-src 'self' blob:; connect-src 'self' https://cloudflareinsights.com; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com https://developer.api.autodesk.com; style-src 'self' 'unsafe-inline' https://developer.api.autodesk.com; img-src 'self' data: blob: https://developer.api.autodesk.com; media-src 'self' blob: https://developer.api.autodesk.com; frame-src 'self' blob: https://view.officeapps.live.com https://developer.api.autodesk.com; connect-src 'self' https://cloudflareinsights.com https://developer.api.autodesk.com; font-src 'self' data: https://developer.api.autodesk.com; worker-src 'self' blob: https://developer.api.autodesk.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable

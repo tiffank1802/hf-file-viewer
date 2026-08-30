@@ -4,3 +4,12 @@ HF_TOKEN="hf_your_read_only_token"
 
 # Optionnel : surcharge locale du bucket configuré dans wrangler.jsonc.
 # HF_BUCKET_ID="ktongue/ENISE-SITE"
+
+# Autodesk Platform Services (APS / Forge) pour la visualisation 3D.
+# Créer une application APS avec les scopes :
+#   bucket:create bucket:read data:read data:write viewables:read
+# En production, utiliser `wrangler secret put` pour client_secret uniquement.
+APS_CLIENT_ID="your_aps_client_id"
+APS_CLIENT_SECRET="your_aps_client_secret"
+# Optionnel : nom de panier OSS à utiliser (sinon un nom est généré).
+# APS_BUCKET_KEY=""

@@ -195,6 +195,27 @@ test('/api/counts réutilise le document d’index stocké dans Workers KV', asy
   }
 });
 
+test('les routes APS signalent une configuration manquante sans secret', async () => {
+  const token = await worker.fetch(new Request('https://docs.example/api/aps/token'), env, createContext());
+  assert.equal(token.status, 501);
+  assert.equal((await token.json()).status, 'not-configured');
+
+  const view = await worker.fetch(
+    new Request('https://docs.example/api/aps/view?path=GM%2Fmodele.rvt', { method: 'POST' }),
+    env,
+    createContext(),
+  );
+  assert.equal(view.status, 501);
+  assert.equal((await view.json()).status, 'not-configured');
+
+  const status = await worker.fetch(
+    new Request('https://docs.example/api/aps/status?path=GM%2Fmodele.rvt'),
+    env,
+    createContext(),
+  );
+  assert.equal(status.status, 501);
+});
+
 test('une requête Range est transmise et n’est pas mise en cache', async () => {
   const originalFetch = globalThis.fetch;
   const originalCaches = globalThis.caches;

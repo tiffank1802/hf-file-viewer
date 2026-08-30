@@ -10,6 +10,8 @@ import {
 import { fileProxyUrl, huggingFaceFileUrl } from '../services/api';
 import { formatBytes, getExtension } from '../utils/files';
 import { FileTypeIcon } from './Icons';
+import AutodeskViewer from './AutodeskViewer';
+import OfficeViewer from './OfficeViewer';
 
 const MAX_TEXT_PREVIEW_BYTES = 2 * 1024 * 1024;
 
@@ -131,6 +133,12 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
       if (textLoading) return <div className="preview-loader"><span /><p>Chargement de l’aperçu…</p></div>;
       if (textError) return <DownloadPrompt file={file} />;
       return <pre className="text-preview"><code>{textContent}</code></pre>;
+    }
+    if (file.kind === 'office') {
+      return <OfficeViewer file={file} />;
+    }
+    if (file.kind === 'model') {
+      return <AutodeskViewer file={file} />;
     }
     return <DownloadPrompt file={file} />;
   };

@@ -18,6 +18,9 @@ const DEFAULT_KV_TTL = 24 * 60 * 60;
 const DEFAULT_MAX_CACHEABLE_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_TREE_PAGES = 45;
 const MAX_INDEX_ITEMS = 50_000;
+const APS_BASE_URL = 'https://developer.api.autodesk.com';
+const DEFAULT_APS_CACHE_TTL = 24 * 60 * 60;
+const DEFAULT_APS_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 const API_SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
@@ -70,6 +73,21 @@ export default {
       if (url.pathname === '/api/counts') {
         assertMethod(request, ['GET']);
         return await handleCounts(request, env, ctx);
+      }
+
+      if (url.pathname === '/api/aps/token') {
+        assertMethod(request, ['GET']);
+        return await handleApsToken(request, env);
+      }
+
+      if (url.pathname === '/api/aps/view') {
+        assertMethod(request, ['POST']);
+        return await handleApsView(request, env, ctx);
+      }
+
+      if (url.pathname === '/api/aps/status') {
+        assertMethod(request, ['GET']);
+        return await handleApsStatus(request, env, ctx);
       }
 
       return jsonResponse(
@@ -375,6 +393,501 @@ async function handleFile(request, env, ctx) {
   return response;
 }
 
+/** Vérifie que les identifiants APS sont présents (jamais côté navigateur). */
+export function isApsConfigured(env) {
+  return Boolean(String(env.APS_CLIENT_ID || '').trim() && String(env.APS_CLIENT_SECRET || '').trim());
+}
+
+/** Construit une clé courte et stable à partir de la source d’un document. */
+export function makeApsSourceKey(filePath, size = '', mtime = '') {
+  const source = `${String(filePath || '')}|${String(size || '')}|${String(mtime || '')}`;
+  return `${hashIdentifier(source)}${hashIdentifier(`aps:${source}`)}`.slice(0, 32);
+}
+
+/** Nom d’objet OSS utilisé pour stocker un fichier 3D. */
+export function buildApsObjectKey(filePath, sourceKey) {
+  const filename = filePath.split('/').pop() || 'document';
+  const safeName = filename.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 120) || 'document';
+  return `${sourceKey}-${safeName}`;
+}
+
+async function handleApsToken(_request, env) {
+  if (!isApsConfigured(env)) {
+    return jsonResponse(
+      { error: 'Autodesk APS non configuré.', status: 'not-configured' },
+      { status: 501, cacheControl: 'no-store' },
+    );
+  }
+
+  const { accessToken, expiresIn } = await getApsAccessToken(env);
+  return jsonResponse(
+    { access_token: accessToken, expires_in: expiresIn, token_type: 'Bearer' },
+    { cacheControl: 'no-store', headers: { 'X-APS-Status': 'ready' } },
+  );
+}
+
+async function handleApsStatus(request, env, ctx) {
+  if (!isApsConfigured(env)) {
+    return jsonResponse(
+      { error: 'Autodesk APS non configuré.', status: 'not-configured' },
+      { status: 501, cacheControl: 'no-store' },
+    );
+  }
+
+  const url = new URL(request.url);
+  const filePath = normalizeFilePath(url.searchParams.get('path'));
+  const size = normalizeNumericSearchParam(url.searchParams.get('size'));
+  const mtime = String(url.searchParams.get('mtime') || '');
+  const record = await readApsRecord(env, ctx, filePath, size, mtime);
+
+  if (!record || !record.urn) {
+    return jsonResponse(
+      { status: 'missing', message: 'Aucune traduction 3D enregistrée pour ce fichier.' },
+      { cacheControl: 'no-store' },
+    );
+  }
+
+  const { accessToken } = await getApsAccessToken(env);
+  const updated = await refreshApsRecord(env, ctx, filePath, size, mtime, record, accessToken);
+  return jsonResponse(updated, { cacheControl: 'no-store' });
+}
+
+async function handleApsView(request, env, ctx) {
+  if (!isApsConfigured(env)) {
+    return jsonResponse(
+      { error: 'Autodesk APS non configuré.', status: 'not-configured' },
+      { status: 501, cacheControl: 'no-store' },
+    );
+  }
+
+  const url = new URL(request.url);
+  const filePath = normalizeFilePath(url.searchParams.get('path'));
+  const size = normalizeNumericSearchParam(url.searchParams.get('size'));
+  const mtime = String(url.searchParams.get('mtime') || '');
+  const force = url.searchParams.get('force') === '1';
+  const existing = await readApsRecord(env, ctx, filePath, size, mtime);
+  const { accessToken } = await getApsAccessToken(env);
+
+  if (existing && !force) {
+    if (existing.status === 'success') {
+      return jsonResponse(
+        { ...stripApsRecordForClient(existing), cacheStatus: 'cached' },
+        { cacheControl: 'no-store' },
+      );
+    }
+    if (existing.urn) {
+      const refreshed = await refreshApsRecord(
+        env,
+        ctx,
+        filePath,
+        size,
+        mtime,
+        existing,
+        accessToken,
+      );
+      return jsonResponse(refreshed, { cacheControl: 'no-store' });
+    }
+  }
+
+  const record = await startApsTranslation(env, ctx, filePath, size, mtime, accessToken, force);
+  return jsonResponse(
+    { ...stripApsRecordForClient(record), cacheStatus: 'new' },
+    { cacheControl: 'no-store' },
+  );
+}
+
+async function getApsAccessToken(env) {
+  if (!isApsConfigured(env)) {
+    throw new HttpError(501, 'Autodesk APS non configuré.');
+  }
+
+  const body = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: String(env.APS_CLIENT_ID || '').trim(),
+    client_secret: String(env.APS_CLIENT_SECRET || '').trim(),
+    scope: 'bucket:create bucket:read data:read data:write viewables:read',
+  });
+
+  let response;
+  try {
+    response = await fetch(`${APS_BASE_URL}/authentication/v2/token`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body,
+    });
+  } catch {
+    throw new HttpError(502, 'Connexion à Autodesk APS impossible.');
+  }
+
+  if (!response.ok) {
+    throw await autodeskHttpError(response, 'Authentification Autodesk refusée.');
+  }
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new HttpError(502, 'Réponse illisible d’Autodesk APS.');
+  }
+
+  if (!payload.access_token) {
+    throw new HttpError(502, 'Autodesk APS n’a pas renvoyé de jeton d’accès.');
+  }
+
+  return {
+    accessToken: String(payload.access_token),
+    expiresIn: Math.max(Number(payload.expires_in) || 3600, 60),
+  };
+}
+
+async function ensureApsBucket(env, accessToken) {
+  const bucketKey = getApsBucketKey(env);
+  const headers = apsAuthHeaders(accessToken);
+
+  let detail;
+  try {
+    detail = await fetch(
+      `${APS_BASE_URL}/oss/v2/buckets/${encodeURIComponent(bucketKey)}/details`,
+      { headers },
+    );
+  } catch {
+    throw new HttpError(502, 'Connexion au stockage Autodesk impossible.');
+  }
+  if (detail.ok) return bucketKey;
+
+  let created;
+  try {
+    created = await fetch(`${APS_BASE_URL}/oss/v2/buckets`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bucketKey, policyKey: 'transient' }),
+    });
+  } catch {
+    throw new HttpError(502, 'Création du stockage Autodesk impossible.');
+  }
+
+  if (created.ok) return bucketKey;
+  if (created.status === 409) {
+    detail = await fetch(
+      `${APS_BASE_URL}/oss/v2/buckets/${encodeURIComponent(bucketKey)}/details`,
+      { headers },
+    );
+    if (detail.ok) return bucketKey;
+    throw new HttpError(502, 'Le panier Autodesk existe déjà et n’appartient pas à cette application.');
+  }
+
+  throw await autodeskHttpError(created, 'Création du panier Autodesk refusée.');
+}
+
+function getApsBucketKey(env) {
+  const configured = String(env.APS_BUCKET_KEY || '').trim().toLowerCase();
+  if (configured) return configured;
+  const clientId = String(env.APS_CLIENT_ID || '').trim();
+  return `enise-docs-3d-${hashIdentifier(clientId).slice(0, 10)}`;
+}
+
+async function startApsTranslation(env, ctx, filePath, size, mtime, accessToken, force) {
+  const sourceKey = makeApsSourceKey(filePath, size, mtime);
+  const bucketKey = await ensureApsBucket(env, accessToken);
+  const objectKey = buildApsObjectKey(filePath, sourceKey);
+  const objectId = await uploadApsObject(env, accessToken, bucketKey, objectKey, filePath);
+  const encodedUrn = base64ToUrlSafe(base64Encode(objectId));
+
+  let jobResponse;
+  try {
+    jobResponse = await fetch(`${APS_BASE_URL}/modelderivative/v2/designdata/job`, {
+      method: 'POST',
+      headers: {
+        ...apsAuthHeaders(accessToken),
+        'Content-Type': 'application/json',
+        ...(force ? { 'x-ads-force': 'true' } : {}),
+      },
+      body: JSON.stringify({
+        input: { urn: encodedUrn, compressedUrn: false },
+        output: { formats: [{ type: 'svf2', views: ['2d', '3d'] }] },
+      }),
+    });
+  } catch {
+    throw new HttpError(502, 'Démarrage de la conversion 3D Autodesk impossible.');
+  }
+
+  if (!jobResponse.ok) {
+    throw await autodeskHttpError(jobResponse, 'Autodesk a refusé la conversion du fichier.');
+  }
+
+  let job;
+  try {
+    job = await jobResponse.json();
+  } catch {
+    throw new HttpError(502, 'Réponse de conversion Autodesk illisible.');
+  }
+
+  if (!job.urn) {
+    throw new HttpError(502, 'Autodesk n’a pas renvoyé d’identifiant de conversion.');
+  }
+
+  const record = {
+    path: filePath,
+    objectKey,
+    objectId,
+    urn: String(job.urn),
+    status: 'inprogress',
+    progress: 0,
+    message: 'Conversion 3D démarrée.',
+    updatedAt: new Date().toISOString(),
+  };
+  await storeApsRecord(ctx, env, filePath, size, mtime, record);
+  return record;
+}
+
+async function uploadApsObject(env, accessToken, bucketKey, objectKey, filePath) {
+  const bucketId = getBucketId(env);
+  const upstreamUrl = buildHfFileUrl(bucketId, filePath);
+
+  let source;
+  try {
+    source = await fetch(upstreamUrl, buildHfFetchInit(env));
+  } catch {
+    throw new HttpError(502, 'Connexion au stockage Hugging Face interrompue.');
+  }
+
+  if (source.status === 404) {
+    throw new HttpError(404, 'Document 3D introuvable dans le bucket Hugging Face.');
+  }
+  if (!source.ok) {
+    throw new HttpError(source.status >= 500 ? 502 : source.status, 'Impossible de lire le fichier 3D pour Autodesk.');
+  }
+
+  const contentLength = Number(source.headers.get('Content-Length'));
+  const maxBytes = positiveInteger(env.MAX_APS_UPLOAD_BYTES, DEFAULT_APS_UPLOAD_BYTES);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new HttpError(
+      413,
+      `Ce fichier est trop volumineux pour Autodesk (limite ${Math.round(maxBytes / 1024 / 1024)} Mo).`,
+    );
+  }
+
+  const uploadPath = `${APS_BASE_URL}/oss/v2/buckets/${encodeURIComponent(bucketKey)}/objects/${encodeURIComponent(objectKey)}/signeds3upload`;
+  let signed;
+  try {
+    signed = await fetch(uploadPath, { headers: apsAuthHeaders(accessToken) });
+  } catch {
+    throw new HttpError(502, 'Demande d’URL de téléversement Autodesk impossible.');
+  }
+  if (!signed.ok) throw await autodeskHttpError(signed, 'Autodesk a refusé le téléversement du fichier.');
+
+  let signedPayload;
+  try {
+    signedPayload = await signed.json();
+  } catch {
+    throw new HttpError(502, 'Réponse de téléversement Autodesk illisible.');
+  }
+
+  const uploadUrls = Array.isArray(signedPayload.urls) ? signedPayload.urls : [];
+  const uploadUrl = uploadUrls[0];
+  if (!uploadUrl || !signedPayload.uploadKey) {
+    throw new HttpError(502, 'Autodesk n’a pas fourni d’URL de téléversement.');
+  }
+
+  let uploaded;
+  try {
+    uploaded = await fetch(uploadUrl, {
+      method: 'PUT',
+      body: source.body,
+      headers: { 'Content-Type': 'application/octet-stream' },
+    });
+  } catch {
+    throw new HttpError(502, 'Téléversement du fichier vers Autodesk impossible.');
+  }
+  if (!uploaded.ok) throw new HttpError(502, 'Le téléversement du fichier 3D a échoué.');
+
+  let completed;
+  try {
+    completed = await fetch(
+      `${APS_BASE_URL}/oss/v2/buckets/${encodeURIComponent(bucketKey)}/objects/${encodeURIComponent(objectKey)}/signeds3upload`,
+      {
+        method: 'POST',
+        headers: { ...apsAuthHeaders(accessToken), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uploadKey: signedPayload.uploadKey }),
+      },
+    );
+  } catch {
+    throw new HttpError(502, 'Validation du téléversement Autodesk impossible.');
+  }
+  if (!completed.ok) throw await autodeskHttpError(completed, 'Autodesk a refusé de valider le fichier.');
+
+  let completedPayload;
+  try {
+    completedPayload = await completed.json();
+  } catch {
+    throw new HttpError(502, 'Réponse de fin de téléversement Autodesk illisible.');
+  }
+  if (!completedPayload.objectId) {
+    throw new HttpError(502, 'Autodesk n’a pas confirmé le fichier téléversé.');
+  }
+  return String(completedPayload.objectId);
+}
+
+async function refreshApsRecord(env, ctx, filePath, size, mtime, record, accessToken) {
+  if (!record.urn) return stripApsRecordForClient(record);
+
+  let response;
+  try {
+    response = await fetch(
+      `${APS_BASE_URL}/modelderivative/v2/designdata/${encodeURIComponent(record.urn)}/manifest`,
+      { headers: apsAuthHeaders(accessToken) },
+    );
+  } catch {
+    throw new HttpError(502, 'Vérification de la conversion Autodesk impossible.');
+  }
+  if (response.status === 404) {
+    const pending = {
+      ...record,
+      status: 'inprogress',
+      progress: 0,
+      message: 'Conversion 3D en attente de démarrage…',
+      updatedAt: new Date().toISOString(),
+    };
+    await storeApsRecord(ctx, env, filePath, size, mtime, pending);
+    return { ...stripApsRecordForClient(pending), cacheStatus: 'pending' };
+  }
+  if (!response.ok) throw await autodeskHttpError(response, 'Autodesk n’a pas pu fournir l’état de conversion.');
+
+  let manifest;
+  try {
+    manifest = await response.json();
+  } catch {
+    throw new HttpError(502, 'État de conversion Autodesk illisible.');
+  }
+
+  const status = normalizeApsManifestStatus(manifest.status);
+  const updated = {
+    ...record,
+    status,
+    progress: clampProgress(manifest.progress, status === 'success' ? 100 : 0),
+    message: describeApsManifest(manifest),
+    updatedAt: new Date().toISOString(),
+  };
+
+  await storeApsRecord(ctx, env, filePath, size, mtime, updated);
+  return { ...stripApsRecordForClient(updated), cacheStatus: 'checked' };
+}
+
+async function readApsRecord(env, ctx, filePath, size, mtime) {
+  const sourceKey = makeApsSourceKey(filePath, size, mtime);
+  const bucketId = getBucketId(env);
+  const cache = caches.default;
+  const cacheKey = makeCacheKey('aps', bucketId, { file: sourceKey });
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    try {
+      return JSON.parse(await cached.text());
+    } catch {
+      // Ignore une entrée corrompue et relire la source KV.
+    }
+  }
+
+  const kvBody = await readMetadataKv(env, makeKvKey('aps', bucketId, sourceKey));
+  if (kvBody) {
+    try {
+      const record = JSON.parse(kvBody);
+      storeJsonInCache(
+        ctx,
+        cache,
+        cacheKey,
+        kvBody,
+        positiveInteger(env.APS_CACHE_TTL, DEFAULT_APS_CACHE_TTL),
+      );
+      return record;
+    } catch {
+      // Ignore une entrée KV corrompue.
+    }
+  }
+
+  return null;
+}
+
+async function storeApsRecord(ctx, env, filePath, size, mtime, record) {
+  const sourceKey = makeApsSourceKey(filePath, size, mtime);
+  const bucketId = getBucketId(env);
+  const body = JSON.stringify(record);
+  const ttl = positiveInteger(env.APS_CACHE_TTL, DEFAULT_APS_CACHE_TTL);
+  storeJsonInCache(ctx, caches.default, makeCacheKey('aps', bucketId, { file: sourceKey }), body, ttl);
+  storeMetadataKv(ctx, env, makeKvKey('aps', bucketId, sourceKey), body);
+}
+
+function apsAuthHeaders(accessToken) {
+  return {
+    Accept: 'application/json',
+    Authorization: `Bearer ${accessToken}`,
+  };
+}
+
+function normalizeApsManifestStatus(status) {
+  const value = String(status || '').toLowerCase();
+  if (value === 'success' || value === 'complete') return 'success';
+  if (value === 'failed' || value === 'timeout' || value === 'canceled' || value === 'cancelled') {
+    return 'failed';
+  }
+  return 'inprogress';
+}
+
+function clampProgress(value, fallback = 0) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(number)));
+}
+
+function describeApsManifest(manifest) {
+  const messages = (manifest.derivatives || [])
+    .flatMap((derivative) => derivative.messages || [])
+    .filter((message) => message && (message.type === 'error' || message.type === 'warning'))
+    .map((message) => String(message.message || ''))
+    .filter(Boolean);
+
+  const status = normalizeApsManifestStatus(manifest.status);
+  if (status === 'success') return 'Modèle 3D prêt.';
+  if (status === 'failed') return messages[0] || 'La conversion 3D a échoué.';
+  return manifest && String(manifest.progress || '') ? `Conversion en cours (${clampProgress(manifest.progress)} %).` : 'Conversion en cours…';
+}
+
+function stripApsRecordForClient(record) {
+  return {
+    status: record.status,
+    urn: record.urn || null,
+    progress: record.progress,
+    message: record.message,
+    updatedAt: record.updatedAt,
+  };
+}
+
+function base64Encode(value) {
+  return btoa(String(value));
+}
+
+function base64ToUrlSafe(value) {
+  return String(value).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function normalizeNumericSearchParam(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.floor(number)) : '';
+}
+
+async function autodeskHttpError(response, fallback) {
+  let detail = fallback;
+  try {
+    const body = await response.json();
+    detail = body.diagnostic || body.developerMessage || body.message || JSON.stringify(body);
+  } catch {
+    // Le corps n'est pas un JSON lisible, conserver le message générique.
+  }
+  return new HttpError(response.status >= 500 ? 502 : response.status, `Autodesk APS : ${detail}`);
+}
+
 export async function fetchBucketTree(env, prefix = '', recursive = false) {
   const bucketId = getBucketId(env);
   const items = [];
@@ -568,6 +1081,18 @@ function storeMetadataKv(ctx, env, key, body) {
       console.error('Unable to persist metadata in Workers KV', error);
     }),
   );
+}
+
+function hashIdentifier(value) {
+  const source = String(value);
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+  for (let index = 0; index < source.length; index += 1) {
+    const code = source.charCodeAt(index);
+    first = Math.imul(first ^ code, 0x01000193);
+    second = Math.imul(second ^ code, 0x85ebca6b);
+  }
+  return `${(first >>> 0).toString(16).padStart(8, '0')}${(second >>> 0).toString(16).padStart(8, '0')}`;
 }
 
 export function makeKvKey(kind, bucketId, suffix = '') {

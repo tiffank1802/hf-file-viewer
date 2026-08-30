@@ -26,6 +26,7 @@ const fileIcons = {
   video: FiVideo,
   text: FiCode,
   office: FiFileText,
+  model: FiBox,
   archive: FiArchive,
   file: FiFile,
 };

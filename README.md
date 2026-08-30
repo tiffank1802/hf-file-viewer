@@ -8,7 +8,9 @@ Bibliothèque étudiante moderne pour les ressources de **Centrale Lyon ENISE**,
 - identité blanche « liquid glass », verte, rouge et jaune ;
 - icônes React (`react-icons`) et logos locaux optimisés ;
 - navigation par dossier, fil d’Ariane, tri, grille/liste ;
-- aperçu PDF, image, audio, vidéo et texte ;
+- aperçu PDF, image, audio, vidéo, texte et **Viewer Office Web** pour les documents Office (`.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`) ;
+- raccourcis **Microsoft OneNote** (`.url`) affichés avec leur cible ouvrable, blocs-notes `.one` disponibles au téléchargement ;
+- visionneuse **Autodesk APS** (Model Derivative) pour les fichiers 3D (`.dwg`, `.rvt`, `.ifc`, `.ipt`, `.sldprt`, `.stp`, `.stl`, `.obj`, …) avec rotation, zoom et déplacement ;
 - téléchargement, partage et favoris enregistrés dans le navigateur ;
 - recherche globale à partir d’un index Hugging Face mis en cache ;
 - effectifs par dossier calculés **une seule fois à l’indexation** et stockés dans le JSON d’index ;
@@ -129,6 +131,59 @@ Reporter l’identifiant renvoyé dans `wrangler.jsonc` :
 
 Puis redéployer avec `npm run deploy`. Le Worker détecte automatiquement `env.METADATA_KV` et utilise la hiérarchie **Cache API → Workers KV → Hugging Face**. Les entrées KV expirent après 24 h (`KV_CACHE_TTL`) afin de rester cohérentes avec le bucket. Cette option consomme les quotas de lectures/écritures KV ; elle n’est utile que si le trafic provient de nombreuses régions.
 
+## Aperçu des documents Office avec le Viewer Office Web
+
+Les fichiers `doc`, `docx`, `xls`, `xlsx`, `ppt`, `pptx` sont affichés dans la modale d’aperçu via le **Viewer Office Web** de Microsoft (`https://view.officeapps.live.com/op/embed.aspx`). Le fichier est servi par l’URL absolue `/api/file?path=...` du site, si bien qu’aucune configuration n’est requise.
+
+- **Production** : le site doit être accessible publiquement (Cloudflare Workers), car le service Microsoft télécharge le fichier depuis cette URL.
+- **Développement local** : Microsoft ne peut pas joindre `localhost`. Pour tester, utiliser l’URL publique exposée par l’environnement (`npm run dev:worker`) plutôt que `localhost`.
+- **CSP** : `public/_headers` autorise déjà `https://view.officeapps.live.com` dans `frame-src`.
+
+### Raccourcis et blocs-notes Microsoft OneNote
+
+- Les fichiers `.url` (raccourcis OneNote) sont lus et la cible est affichée avec un bouton **Ouvrir la ressource**.
+- Les blocs-notes `.one` / `.onenote` ne disposent pas de visionneuse embarquée dans le navigateur : la modale propose leur téléchargement pour les ouvrir dans Microsoft OneNote.
+
+Ce viewer remplace l’ancienne intégration ONLYOFFICE : aucun document server externe n’est plus nécessaire et aucun secret n’est exposé.
+
+## Visualisation 3D avec Autodesk APS (Forge)
+
+Les fichiers modèles (`.dwg`, `.dxf`, `.rvt`, `.rfa`, `.ifc`, `.ipt`, `.iam`, `.sldprt`, `.sldasm`, `.stp`, `.step`, `.igs`, `.iges`, `.obj`, `.stl`, `.3ds`, `.fbx`, `.dae`, `.skp`, …) sont ouverts dans la modale d’aperçu avec le **Viewer Autodesk** (rotation, zoom, panoramique à la souris). Si Autodesk APS n’est pas configuré, la modale conserve l’écran de téléchargement actuel.
+
+Le Worker exécute le pipeline **APS / Model Derivative** :
+
+```text
+Navigateur
+   ├── GET /api/aps/token          -> jeton public pour le Viewer
+   ├── POST /api/aps/view          -> upload OSS + conversion SVF2 (si besoin)
+   ├── GET /api/aps/status         -> suivi de la conversion
+   └── Viewer Autodesk -> modèle 3D interactif
+```
+
+1. **Créer une application Autodesk Platform Services** avec les scopes :
+   ```text
+   bucket:create bucket:read data:read data:write viewables:read
+   ```
+2. **Configurer les secrets côté Worker** (jamais dans le frontend) :
+   ```bash
+   npx wrangler secret put APS_CLIENT_ID
+   npx wrangler secret put APS_CLIENT_SECRET
+   ```
+
+   Pour le développement local, ajouter dans `.dev.vars` :
+
+   ```bash
+   APS_CLIENT_ID="..."
+   APS_CLIENT_SECRET="..."
+   APS_BUCKET_KEY=""            # optionnel : panier OSS préexistant
+   ```
+
+3. **Autoriser le domaine Autodesk dans la CSP statique** de `public/_headers` : le domaine `https://developer.api.autodesk.com` est déjà inclus dans `script-src`, `style-src`, `img-src`, `media-src`, `frame-src`, `connect-src`, `font-src` et `worker-src`. Si `public/_headers` est modifié, conserver ces domaines.
+
+Le Worker crée automatiquement un panier OSS temporaire (`*.transient`) s’il n’en existe pas, téléverse le fichier depuis Hugging Face, puis lance une conversion vers **SVF2**. Les conversions sont mises en cache (Cache API + Workers KV éventuel) par fichier : un fichier déjà converti est réutilisé sans nouvel appel. Les paniers `transient` d’Autodesk peuvent expirer ; les conversions sont alors relancées automatiquement. Par défaut, les fichiers de plus de 100 Mo sont refusés (`MAX_APS_UPLOAD_BYTES`).
+
+> Le Viewer Autodesk télécharge ses assets depuis `https://developer.api.autodesk.com` ; le token n’est jamais partagé avec le navigateur, seul le jeton public renvoyé par `/api/aps/token` lui est transmis.
+
 ## Clés et secrets
 
 Le bucket actuel est public : **aucune clé Hugging Face n’est requise**.
@@ -167,6 +222,9 @@ Pour un déploiement CI GitHub, stocker `CLOUDFLARE_API_TOKEN` et `CLOUDFLARE_AC
 | `GET /api/counts?prefix=GM` | effectifs extraits du JSON d’index (`X-Data-Source: index-json`) |
 | `GET /api/file?path=...` | aperçu/stream d’un document |
 | `GET /api/file?path=...&download=1` | téléchargement avec `Content-Disposition: attachment` |
+| `GET /api/aps/token` | jeton public Autodesk pour la visionneuse 3D |
+| `POST /api/aps/view?path=...` | prépare le fichier 3D : OSS + conversion SVF2 |
+| `GET /api/aps/status?path=...` | état et progression de la conversion 3D |
 
 L’en-tête `X-Cache-Status` permet de diagnostiquer le comportement : `HIT`, `KV-HIT`, `MISS`, `BYPASS-RANGE` ou `BYPASS-SIZE`. L’en-tête `X-Data-Source: index-json` confirme qu’une réponse d’effectifs provient bien du JSON d’index et non d’un nouveau parcours Hugging Face.
 

@@ -3,10 +3,15 @@ import assert from 'node:assert/strict';
 import {
   applyFolderCounts,
   countFilesByDirectory,
+  extractUrlFromShortcut,
   formatBytes,
   formatFolderCount,
   getBreadcrumbs,
   getFileKind,
+  isModelExtension,
+  isOfficeExtension,
+  isOfficeWebViewerExtension,
+  isOneNoteExtension,
   normalizeBucketItem,
   searchItems,
   sortItems,
@@ -18,6 +23,55 @@ test('les types de documents sont reconnus', () => {
   assert.equal(getFileKind('audio.m4a'), 'audio');
   assert.equal(getFileKind('notes.md'), 'text');
   assert.equal(getFileKind('GM', 'directory'), 'folder');
+  assert.equal(getFileKind('document.doc'), 'office');
+  assert.equal(getFileKind('tableur.xls'), 'office');
+});
+
+test('les fichiers 3D sont reconnus pour Autodesk', () => {
+  assert.equal(getFileKind('modele.rvt'), 'model');
+  assert.equal(getFileKind('piece.sldprt'), 'model');
+  assert.equal(getFileKind('maquette.stp'), 'model');
+  assert.equal(getFileKind('objet.stl'), 'model');
+  assert.equal(getFileKind('plan.dwg'), 'model');
+  assert.equal(isModelExtension('RVT'), true);
+  assert.equal(isModelExtension('ifc'), true);
+  assert.equal(isModelExtension('pdf'), false);
+});
+
+test('les documents Office et OneNote sont détectés pour le viewer Office', () => {
+  assert.equal(isOfficeExtension('doc'), true);
+  assert.equal(isOfficeExtension('xls'), true);
+  assert.equal(isOfficeExtension('DOCX'), true);
+  assert.equal(isOfficeExtension('pdf'), false);
+  assert.equal(isOfficeExtension('url'), true);
+  assert.equal(isOfficeExtension('one'), true);
+
+  assert.equal(isOfficeWebViewerExtension('doc'), true);
+  assert.equal(isOfficeWebViewerExtension('docx'), true);
+  assert.equal(isOfficeWebViewerExtension('xls'), true);
+  assert.equal(isOfficeWebViewerExtension('xlsx'), true);
+  assert.equal(isOfficeWebViewerExtension('ppt'), true);
+  assert.equal(isOfficeWebViewerExtension('pptx'), true);
+  assert.equal(isOfficeWebViewerExtension('odt'), false);
+  assert.equal(isOfficeWebViewerExtension('one'), false);
+
+  assert.equal(isOneNoteExtension('url'), true);
+  assert.equal(isOneNoteExtension('one'), true);
+  assert.equal(isOneNoteExtension('onenote'), true);
+  assert.equal(isOneNoteExtension('docx'), false);
+});
+
+test('les raccourcis .url exposent leur cible', () => {
+  const shortcut = [
+    '[InternetShortcut]',
+    'URL=https://www.onenote.com/webapp',
+    'IconFile=Microsoft OneNote.exe',
+  ].join('\r\n');
+  assert.equal(
+    extractUrlFromShortcut(shortcut),
+    'https://www.onenote.com/webapp',
+  );
+  assert.equal(extractUrlFromShortcut('aucune url ici'), '');
 });
 
 test('la recherche ignore les accents et favorise le nom', () => {
