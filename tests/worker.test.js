@@ -5,6 +5,8 @@ import {
   buildHfFileUrl,
   buildHfTreeUrl,
   countFilesByDirectory,
+  describeApsFailure,
+  describeApsManifest,
   getNextLink,
   isApsConfigured,
   makeApsSourceKey,
@@ -110,4 +112,28 @@ test('les clés APS sont stables, courtes et sensibles au contenu', () => {
 test('les objets OSS APS gardent une partie lisible du nom', () => {
   const key = buildApsObjectKey('GM/3D/maquette_du$batiment.rvt', 'abc123');
   assert.equal(key, 'abc123-maquette_du_batiment.rvt');
+});
+
+test('les erreurs Autodesk de version non prise en charge sont explicites', () => {
+  const raw = 'The Version of the file: 2024 is not supported.';
+  const failure = describeApsFailure([raw], 'GM/3D/_1700mm_plank.SLDPRT');
+  assert.match(failure, /n’est pas prise en charge/i);
+  assert.match(failure, /SLDPRT/i);
+  assert.match(failure, /STEP\/IGES\/OBJ\/STL/i);
+  assert.match(failure, /Autodesk/i);
+
+  const manifest = {
+    status: 'failed',
+    derivatives: [
+      {
+        status: 'failed',
+        messages: [{ type: 'error', message: 'The Version of the file: {0} is not supported.' }],
+      },
+    ],
+  };
+  const fromManifest = describeApsManifest(manifest, 'GM/3D/piece.x_t');
+  assert.equal(fromManifest, describeApsFailure(['The Version of the file: {0} is not supported.'], 'GM/3D/piece.x_t'));
+
+  const success = describeApsManifest({ status: 'success', derivatives: [] }, 'GM/3D/piece.stl');
+  assert.equal(success, 'Modèle 3D prêt.');
 });

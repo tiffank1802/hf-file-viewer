@@ -768,7 +768,7 @@ async function refreshApsRecord(env, ctx, filePath, size, mtime, record, accessT
     ...record,
     status,
     progress: clampProgress(manifest.progress, status === 'success' ? 100 : 0),
-    message: describeApsManifest(manifest),
+    message: describeApsManifest(manifest, filePath),
     updatedAt: new Date().toISOString(),
   };
 
@@ -841,7 +841,7 @@ function clampProgress(value, fallback = 0) {
   return Math.max(0, Math.min(100, Math.round(number)));
 }
 
-function describeApsManifest(manifest) {
+export function describeApsManifest(manifest, filePath = '') {
   const messages = (manifest.derivatives || [])
     .flatMap((derivative) => derivative.messages || [])
     .filter((message) => message && (message.type === 'error' || message.type === 'warning'))
@@ -850,8 +850,22 @@ function describeApsManifest(manifest) {
 
   const status = normalizeApsManifestStatus(manifest.status);
   if (status === 'success') return 'Modèle 3D prêt.';
-  if (status === 'failed') return messages[0] || 'La conversion 3D a échoué.';
+  if (status === 'failed') return describeApsFailure(messages, filePath);
   return manifest && String(manifest.progress || '') ? `Conversion en cours (${clampProgress(manifest.progress)} %).` : 'Conversion en cours…';
+}
+
+/** Traduit les erreurs du convertisseur Autodesk en message actionnable. */
+export function describeApsFailure(messages = [], filePath = '') {
+  const raw = messages.filter(Boolean).join(' · ') || 'La conversion 3D a échoué.';
+  const unsupported = /version of the file.{0,30}not supported|not supported|unsupported/i.test(raw);
+  if (!unsupported) return raw;
+
+  const extension = String(filePath || '').split('.').pop()?.toUpperCase() || '3D';
+  return (
+    `La version du fichier ${extension} n’est pas prise en charge par le convertisseur Autodesk. ` +
+    `Exportez le modèle en STEP/IGES/OBJ/STL puis réessayez, ou téléchargez le fichier pour l’ouvrir dans son application d’origine. ` +
+    `(Autodesk : ${raw})`
+  );
 }
 
 function stripApsRecordForClient(record) {

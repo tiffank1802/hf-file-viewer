@@ -184,6 +184,24 @@ Navigateur
 
 Le Worker crée automatiquement un panier OSS temporaire (`*.transient`) s’il n’en existe pas, téléverse le fichier depuis Hugging Face, puis lance une conversion vers **SVF2**. Les conversions sont mises en cache (Cache API + Workers KV éventuel) par fichier : un fichier déjà converti est réutilisé sans nouvel appel. Les paniers `transient` d’Autodesk peuvent expirer ; les conversions sont alors relancées automatiquement. Par défaut, les fichiers de plus de 100 Mo sont refusés (`MAX_APS_UPLOAD_BYTES`).
 
+### Limites du convertisseur Autodesk et formats fiables
+
+Autodesk **Model Derivative** ne prend pas en charge toutes les versions des formats natifs. Par exemple, un `.SLDPRT` créé avec une version de SolidWorks plus récente que celle supportée par le service produit l’erreur `The Version of the file ... is not supported`. Le site affiche alors un message explicite proposant le téléchargement.
+
+Pour un aperçu 3D fiable, privilégier les formats d’échange largement supportés :
+
+| Format | Recommandation |
+|---|---|
+| `.step` / `.stp` | ✅ très fiable |
+| `.iges` / `.igs` | ✅ très fiable |
+| `.obj` | ✅ très fiable |
+| `.stl` | ✅ très fiable (sans couleurs) |
+| `.dwg` / `.dxf` | ✅ généralement fiable |
+| `.rvt` / `.ifc` | ✅ pour le BIM |
+| `.ipt` / `.sldprt` / `.sldasm` | ⚠️ version du logiciel à compatibilité limitée |
+
+S’il s’agit d’un fichier SolidWorks récent non supporté, l’exporter en **STEP** (ou OBJ/STL) puis le ré-ajouter au bucket permet de le visualiser.
+
 > Le Viewer Autodesk télécharge ses assets depuis `https://developer.api.autodesk.com` ; le token n’est jamais partagé avec le navigateur, seul le jeton public renvoyé par `/api/aps/token` lui est transmis.
 
 ## Clés et secrets
