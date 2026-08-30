@@ -195,6 +195,115 @@ test('/api/counts réutilise le document d’index stocké dans Workers KV', asy
   }
 });
 
+test('le pipeline APS crée le panier, téléverse puis lance la conversion SVF2', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCaches = globalThis.caches;
+  const calls = [];
+  globalThis.caches = { default: createCache() };
+
+  globalThis.fetch = async (input, options = {}) => {
+    const url = String(input);
+    calls.push({ url, method: options.method || 'GET' });
+
+    if (url.includes('/authentication/v2/token')) {
+      return Response.json({ access_token: 'fake-token', expires_in: 3600, token_type: 'Bearer' });
+    }
+    if (url.includes('/oss/v2/buckets/') && url.endsWith('/details')) {
+      return new Response('{"bucketKey":"enise-docs-3d-test"}', { status: 200 });
+    }
+    if (url.endsWith('/oss/v2/buckets')) {
+      return Response.json({ bucketKey: 'enise-docs-3d-test' }, { status: 200 });
+    }
+    if (url.includes('/signeds3upload') && (options.method || 'GET') === 'GET') {
+      return Response.json({
+        uploadKey: 'upload-123',
+        uploadExpiration: '2099-01-01T00:00:00Z',
+        urls: ['https://s3.example/upload'],
+      });
+    }
+    if (url.includes('/signeds3upload') && options.method === 'POST') {
+      return Response.json(
+        {
+          bucketKey: 'enise-docs-3d-test',
+          objectKey: 'modele.dwg',
+          objectId: 'urn:adsk.objects:os.object:enise-docs-3d-test/modele.dwg',
+          size: 123,
+        },
+        { status: 200 },
+      );
+    }
+    if (url.startsWith('https://s3.example/upload') && options.method === 'PUT') {
+      return new Response('', { status: 200 });
+    }
+    if (url.includes('/modelderivative/v2/designdata/job')) {
+      return Response.json({ result: 'success', urn: 'dXJuOm1vZGVseQ' }, { status: 200 });
+    }
+    if (url.includes('/modelderivative/v2/designdata/') && url.endsWith('/manifest')) {
+      return Response.json(
+        { status: 'success', progress: '100', derivatives: [] },
+        { status: 200 },
+      );
+    }
+    if (url.includes('huggingface.co/buckets/') && url.includes('/resolve/')) {
+      // Hugging Face : fichier source simple.
+      return new Response('contenu-3d', {
+        status: 200,
+        headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': '10' },
+      });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  const apsEnv = {
+    ...env,
+    APS_CLIENT_ID: 'client-id',
+    APS_CLIENT_SECRET: 'client-secret',
+    APS_BUCKET_KEY: 'enise-docs-3d-test',
+  };
+
+  try {
+    const context = createContext();
+    const response = await worker.fetch(
+      new Request('https://docs.example/api/aps/view?path=GM%2Fmodele.dwg&size=123&mtime=2026-01-01', {
+        method: 'POST',
+      }),
+      apsEnv,
+      context,
+    );
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.status, 'inprogress');
+    assert.equal(payload.urn, 'dXJuOm1vZGVseQ');
+    assert.equal(payload.cacheStatus, 'new');
+    await context.done();
+
+    // Vérifie que tous les appels APS attendus ont été effectués dans l’ordre.
+    const urls = calls.map((call) => call.url);
+    assert.ok(urls.some((url) => url.includes('/authentication/v2/token')));
+    assert.ok(urls.some((url) => url.endsWith('/oss/v2/buckets/enise-docs-3d-test/details')));
+    assert.ok(urls.some((url) => url.includes('/signeds3upload')));
+    assert.ok(urls.some((url) => url.includes('/modelderivative/v2/designdata/job')));
+
+    // Le second appel sans force réutilise la traduction et interroge le manifest.
+    const secondContext = createContext();
+    const second = await worker.fetch(
+      new Request('https://docs.example/api/aps/view?path=GM%2Fmodele.dwg&size=123&mtime=2026-01-01', {
+        method: 'POST',
+      }),
+      apsEnv,
+      secondContext,
+    );
+    assert.equal(second.status, 200);
+    const secondPayload = await second.json();
+    assert.equal(secondPayload.cacheStatus, 'checked');
+    assert.equal(secondPayload.status, 'success');
+    await secondContext.done();
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.caches = originalCaches;
+  }
+});
+
 test('les routes APS signalent une configuration manquante sans secret', async () => {
   const token = await worker.fetch(new Request('https://docs.example/api/aps/token'), env, createContext());
   assert.equal(token.status, 501);

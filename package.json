@@ -6,7 +6,8 @@
   "description": "Bibliothèque documentaire Centrale Lyon ENISE, déployable sur Cloudflare Workers.",
   "scripts": {
     "dev": "vite",
-    "dev:worker": "npm run build && wrangler dev --ip 0.0.0.0",
+    "predev:worker": "node scripts/check-dev-vars.mjs",
+    "dev:worker": "npm run build && wrangler dev --local --ip 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "npm run build && wrangler deploy",

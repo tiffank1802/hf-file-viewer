@@ -8,6 +8,7 @@ import { FileTypeIcon } from './Icons';
 const VIEWER_SCRIPT_ID = 'autodesk-viewer-api';
 const POLL_INTERVAL_MS = 5000;
 const MAX_WAIT_MS = 2 * 60 * 1000;
+const VIEWER_INIT_TIMEOUT_MS = 30 * 1000;
 
 function AutodeskFallback({ file, message }) {
   return (
@@ -48,7 +49,10 @@ export default function AutodeskViewer({ file }) {
     let errorHandler = null;
     let pollController = null;
     let viewerTimer = 0;
+    let initTimer = 0;
     let forceRequested = false;
+    let tokenError = '';
+    let pendingUrn = '';
 
     setReady(false);
     setError('');
@@ -61,8 +65,9 @@ export default function AutodeskViewer({ file }) {
           return response.json();
         })
         .then((payload) => callback(payload.access_token, payload.expires_in))
-        .catch((tokenError) => {
-          console.error('Cannot retrieve Autodesk token', tokenError);
+        .catch((tokenIssue) => {
+          console.error('Cannot retrieve Autodesk token', tokenIssue);
+          tokenError = 'Le jeton Autodesk est indisponible. Vérifiez que les secrets APS sont configurés sur le Worker.';
           callback(null, 0);
         });
     };
@@ -103,6 +108,21 @@ export default function AutodeskViewer({ file }) {
           return;
         }
 
+        let finished = false;
+        const finish = (value) => {
+          if (finished || disposed) return;
+          finished = true;
+          if (initTimer) window.clearTimeout(initTimer);
+          resolve(value);
+        };
+
+        initTimer = window.setTimeout(() => {
+          const message = tokenError
+            || 'Le Viewer Autodesk ne répond pas. Vérifiez que le site est accessible publiquement et que Autodesk peut joindre l’URL du fichier.';
+          setError(message);
+          finish(false);
+        }, VIEWER_INIT_TIMEOUT_MS);
+
         Autodesk.Viewing.Initializer(
           {
             env: 'AutodeskProduction',
@@ -110,7 +130,12 @@ export default function AutodeskViewer({ file }) {
           },
           () => {
             if (disposed) {
-              resolve(false);
+              finish(false);
+              return;
+            }
+            if (tokenError) {
+              setError(tokenError);
+              finish(false);
               return;
             }
             try {
@@ -120,11 +145,11 @@ export default function AutodeskViewer({ file }) {
               viewerInstance = viewer;
               viewer.start();
               viewer.setTheme('light-theme');
-              resolve(true);
+              finish(true);
             } catch (initError) {
               console.error('Cannot start Autodesk viewer', initError);
               setError('La visionneuse 3D n’a pas pu démarrer.');
-              resolve(false);
+              finish(false);
             }
           },
         );
@@ -133,13 +158,27 @@ export default function AutodeskViewer({ file }) {
     const loadModel = (urn) => {
       if (disposed) return;
       const Autodesk = window.Autodesk;
-      if (!Autodesk || !Autodesk.Viewing) return;
+      if (!Autodesk || !Autodesk.Viewing) {
+        pendingUrn = urn;
+        setMessage('Préparation de la visionneuse 3D…');
+        return;
+      }
+      if (!viewerInstance) {
+        pendingUrn = urn;
+        return;
+      }
       setMessage('Chargement du modèle 3D…');
       Autodesk.Viewing.Document.load(
         `urn:${urn}`,
         onDocumentLoadSuccess,
         onDocumentLoadFailure,
       );
+    };
+
+    const flushPendingModel = () => {
+      if (pendingUrn && viewerInstance) {
+        loadModel(pendingUrn);
+      }
     };
 
     const pollStatus = (attempt = 0) => {
@@ -218,9 +257,12 @@ export default function AutodeskViewer({ file }) {
     };
 
     const onLoad = () => {
-      initViewer().then((ready) => {
-        if (ready && !disposed) requestModel();
-      });
+      initViewer()
+        .then((ready) => {
+          if (disposed) return;
+          flushPendingModel();
+          if (ready) requestModel();
+        });
     };
     const onError = () => {
       if (disposed) return;
@@ -251,6 +293,7 @@ export default function AutodeskViewer({ file }) {
       disposed = true;
       pollController?.abort();
       if (viewerTimer) window.clearTimeout(viewerTimer);
+      if (initTimer) window.clearTimeout(initTimer);
       if (script && loadHandler) script.removeEventListener('load', loadHandler);
       if (script && errorHandler) script.removeEventListener('error', errorHandler);
       if (viewerInstance) {

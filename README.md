@@ -65,13 +65,15 @@ npm run dev
 
 `npm run dev` lance Vite sur `http://localhost:3000`. Sans Worker local, l’interface utilise automatiquement les données d’aperçu si `/api` est indisponible.
 
-Pour tester le frontend **et** le Worker :
+Pour tester le frontend **et** le Worker **avec les fonctions 3D**, créer d’abord les secrets locaux (jamais versionnés) :
 
 ```bash
+cp .dev.vars.example .dev.vars
+# renseigner APS_CLIENT_ID et APS_CLIENT_SECRET avant de lancer
 npm run dev:worker
 ```
 
-Le site complet est alors disponible sur `http://localhost:8787`.
+`scripts/check-dev-vars.mjs` affiche un avertissement clair si `.dev.vars` est absent ou encore aux valeurs d’exemple. Le site complet est alors disponible sur `http://localhost:8787`. Attention : pour la conversion 3D et le viewer Office, Autodesk / Microsoft doivent pouvoir joindre l’URL publique du site ; une adresse `localhost` ne convient pas depuis un autre service.
 
 ## Déploiement sur Cloudflare
 
