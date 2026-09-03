@@ -18,6 +18,10 @@ Ce projet contient tous les éléments nécessaires pour mettre en place un pipe
 │   ├── javascript-client.js    # Client JavaScript (@gradio/client)
 │   └── model-viewer-integration.html  # Viewer HTML avec model-viewer
 │
+├── scripts/                    # Scripts de déploiement
+│   ├── deploy-space.js         # Script de déploiement automatique
+│   └── README_DEPLOYMENT.md    # Documentation du déploiement
+│
 └── PIPELINE_README.md          # Ce fichier
 ```
 
@@ -37,7 +41,56 @@ Ce projet contient tous les éléments nécessaires pour mettre en place un pipe
 
 ## 🚀 Déploiement du Space Hugging Face
 
-### Étape 1 : Créer un nouveau Space
+### Option A : Déploiement automatique (recommandé)
+
+Un script Node.js est fourni pour créer et déployer automatiquement le Space.
+
+**Prérequis :**
+- Token Hugging Face avec permissions `write` et `repo.create`
+- Node.js >= 20.19.0 installé
+
+**Commande :**
+
+```bash
+# Installation des dépendances (une seule fois)
+npm install
+
+# Déploiement automatique
+HF_TOKEN=votre_token_huggingface npm run deploy:space
+```
+
+**Options avancées :**
+
+```bash
+# Space avec un nom personnalisé
+HF_TOKEN=votre_token npm run deploy:space -- --space-id mon-org/mon-space
+
+# Créer un Space privé
+HF_TOKEN=votre_token npm run deploy:space -- --private
+
+# Seulement créer le Space (sans uploader les fichiers)
+HF_TOKEN=votre_token npm run deploy:space -- --skip-files
+
+# Aide complète
+npm run deploy:space -- --help
+```
+
+Le script va automatiquement :
+1. Récupérer votre username Hugging Face
+2. Créer le Space en mode Docker
+3. Uploader tous les fichiers (`Dockerfile`, `app.py`, etc.)
+4. Attendre le déploiement complet
+5. Vous fournir l'URL finale
+
+📖 **Documentation complète** : Voir [`scripts/README_DEPLOYMENT.md`](scripts/README_DEPLOYMENT.md)
+
+---
+
+### Option B : Déploiement manuel
+
+Si vous préférez déployer manuellement via l'interface web.
+
+#### Étape 1 : Créer un nouveau Space
 
 1. Allez sur https://huggingface.co/spaces
 2. Cliquez sur "Create new Space"
@@ -47,7 +100,7 @@ Ce projet contient tous les éléments nécessaires pour mettre en place un pipe
    - **SDK**: **Docker** (important !)
    - **Visibility**: Public ou Private selon vos besoins
 
-### Étape 2 : Pousser les fichiers
+#### Étape 2 : Pousser les fichiers
 
 ```bash
 cd /workspace/space-huggingface
@@ -64,7 +117,7 @@ git remote add origin https://huggingface.co/spaces/YOUR_USERNAME/sldprt-to-glb
 git push -u origin main
 ```
 
-### Étape 3 : Attendre le build
+#### Étape 3 : Attendre le build
 
 - Le Space va construire l'image Docker (~5-10 minutes)
 - Une fois prêt, l'interface Gradio sera accessible
