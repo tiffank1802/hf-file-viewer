@@ -50,6 +50,9 @@ coverage/
 .cache/
 .tmp/
 .temp/
+__pycache__/
+*.pyc
+.venv/
 
 # System files
 *.swp

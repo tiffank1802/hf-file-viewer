@@ -15,6 +15,12 @@ Ce script crée et déploie automatiquement le Space Hugging Face pour la conver
    npm install
    ```
 
+> ⚠️ **Plan Hugging Face requis**: héberger un Space **Docker** ou **Gradio**
+> sur `cpu-basic` nécessite un plan payant — [PRO](https://huggingface.co/pro)
+> pour un compte personnel, Team ou Enterprise pour une organisation.
+> Les **Static Spaces** sont gratuits pour tout le monde, et un compte
+> personnel gratuit peut héberger jusqu'à **2 Spaces Gradio sur ZeroGPU**.
+
 ## Obtenir un token Hugging Face
 
 1. Allez sur https://huggingface.co/settings/tokens
@@ -52,6 +58,26 @@ HF_TOKEN=votre_token npm run deploy:space -- --skip-files
 # Aide
 npm run deploy:space -- --help
 ```
+
+## Version Python (alternative)
+
+Une version Python du script est disponible dans `scripts/deploy-space.py`.
+Elle utilise `huggingface_hub` (l'API officielle) et offre les mêmes options.
+
+```bash
+# Installation unique de la dépendance
+pip install huggingface_hub
+
+# Déploiement
+HF_TOKEN=votre_token python scripts/deploy-space.py
+HF_TOKEN=votre_token npm run deploy:space:py          # alias npm
+```
+
+Options: `--space-id`, `--private`, `--skip-files`, `--skip-wait`,
+`--sdk`, `--hardware`, `--help`.
+
+> ℹ️ La version Python ne contourne **pas** la limitation de plan: elle
+> affiche un message explicite en cas d'erreur 402 (plan requis).
 
 ## Sortie attendue
 
@@ -135,13 +161,23 @@ const timeout = 1200000; // 20 minutes
 Consultez les logs du Space:
 https://huggingface.co/spaces/<username>/solidworks-viewer/tree/main
 
+### Erreur 402 "requires a PRO subscription"
+Votre compte ne peut pas héberger de Space Docker/Gradio sur `cpu-basic` sans
+plan payant. Options:
+- S'abonner à [PRO](https://huggingface.co/pro) (compte personnel).
+- Convertir le Space en **Gradio** sur **ZeroGPU** (gratuit, 2 Spaces max).
+- Utiliser un **Static Space** (gratuit, mais pas de backend Python).
+
 ## Coûts
 
-- **cpu-basic**: Gratuit (2 vCPU, mémoire limitée)
+- **Static Space**: gratuit (tout le monde).
+- **Gradio/Docker sur `cpu-basic`**: nécessite un plan payant (PRO/Team/Enterprise)
+  — le hardware lui-même reste sans coût horaire.
 - **cpu-upgrade**: ~$0.05/heure
 - **t4-medium** (GPU): ~$0.23/heure
 
-Pour un usage personnel/portfolio, `cpu-basic` est suffisant.
+Pour un usage personnel/portfolio, un Static Space ou un Space Gradio ZeroGPU
+(gratuit) est le point de départ recommandé sans abonnement.
 
 ## Sécurité
 

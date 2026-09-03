@@ -16,7 +16,8 @@
     "count:files": "node scripts/count-bucket-files.mjs",
     "check": "npm run lint && npm run test && npm run build",
     "cf:typegen": "wrangler types",
-    "deploy:space": "node scripts/deploy-space.js"
+    "deploy:space": "node scripts/deploy-space.js",
+    "deploy:space:py": "python scripts/deploy-space.py"
   },
   "dependencies": {
     "react": "^19.2.8",
