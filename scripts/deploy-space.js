@@ -13,15 +13,9 @@
  *   --skip-files                      : Ne pas uploader les fichiers (seulement création)
  */
 
-import { HfInference } from '@huggingface/inference';
-import { FormData, File } from 'formdata-node';
-import { fileFromPath } from 'formdata-node/file-from-path';
-import { createWriteStream, existsSync } from 'fs';
-import { mkdir } from 'fs/promises';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import { readFileSync, readdirSync } from 'fs';
-import { pipeline } from 'stream/promises';
+import { existsSync, openAsBlob } from 'node:fs';
+import { basename, join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -175,15 +169,15 @@ async function createSpace(hf, spaceId, isPrivate) {
  * Upload un fichier vers le Space
  */
 async function uploadFile(spaceId, filePath, pathInRepo = null) {
-  const fileName = filePath.split('/').pop();
+  const fileName = basename(filePath);
   const relativePath = pathInRepo || fileName;
-  
+
   console.log(`   📤 Upload: ${relativePath}`);
 
   try {
-    const fileData = await fileFromPath(filePath);
+    const fileData = await openAsBlob(filePath);
     const formData = new FormData();
-    formData.append('file', fileData);
+    formData.append('file', fileData, fileName);
     formData.append('path_in_repo', relativePath);
     formData.append('commit_message', `Upload ${relativePath}`);
 
