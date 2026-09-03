@@ -102,7 +102,7 @@ Variables d'environnement:
 /**
  * Récupère le username depuis l'API Hugging Face
  */
-async function getUsername(hf) {
+async function getUsername() {
   try {
     const response = await fetch('https://huggingface.co/api/whoami-v2', {
       headers: {
@@ -125,26 +125,34 @@ async function getUsername(hf) {
 /**
  * Crée le Space via l'API Hugging Face
  */
-async function createSpace(hf, spaceId, isPrivate) {
+async function createSpace(spaceId, isPrivate) {
+  // spaceId au format "namespace/nom" (ou juste "nom")
+  const [namespace, name] = spaceId.includes('/') ? spaceId.split('/') : [null, spaceId];
+
   console.log(`\n🚀 Création du Space: ${spaceId}`);
   console.log(`   SDK: ${SPACE_SDK}`);
   console.log(`   Hardware: ${SPACE_HARDWARE}`);
   console.log(`   Visibilité: ${isPrivate ? 'privé' : 'public'}`);
 
   try {
+    const body = {
+      type: 'space',
+      name,
+      sdk: SPACE_SDK,
+      hardware: SPACE_HARDWARE,
+      private: isPrivate,
+    };
+    if (namespace) {
+      body.organization = namespace;
+    }
+
     const response = await fetch('https://huggingface.co/api/repos/create', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${process.env.HF_TOKEN}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        type: 'space',
-        name: spaceId,
-        sdk: SPACE_SDK,
-        hardware: SPACE_HARDWARE,
-        private: isPrivate,
-      }),
+      body: JSON.stringify(body),
     });
 
     if (response.status === 409) {
