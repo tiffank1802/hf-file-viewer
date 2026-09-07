@@ -14,6 +14,15 @@ const OFFICE_WEB_EXTENSIONS = new Set([
   'doc', 'docx', 'docm', 'xls', 'xlsx', 'xlsm', 'ppt', 'pptx', 'pptm',
   'potx', 'ppsx',
 ]);
+/** Extensions rendues localement dans le navigateur (sans service externe). */
+const OFFICE_LOCAL_DOC_EXTENSIONS = new Set(['docx', 'docm']);
+const OFFICE_LOCAL_SHEET_EXTENSIONS = new Set(['xls', 'xlsx', 'xlsm']);
+const OFFICE_LOCAL_SLIDES_EXTENSIONS = new Set(['pptx', 'pptm']);
+/** Extensions convertibles en PDF par le Space LibreOffice (`/api/office/pdf`). */
+const OFFICE_CONVERTIBLE_EXTENSIONS = new Set([
+  'doc', 'docx', 'docm', 'xls', 'xlsx', 'xlsm', 'ppt', 'pptx', 'pptm',
+  'odt', 'ods', 'odp',
+]);
 const ONENOTE_EXTENSIONS = new Set(['one', 'onenote', 'url']);
 const MODEL_EXTENSIONS = new Set([
   'dwg', 'dxf', 'rvt', 'rfa', 'nwc', 'nwd', 'nwf', 'ifc',
@@ -62,6 +71,25 @@ export function isOfficeWebViewerExtension(extension = '') {
 /** Fichiers Microsoft OneNote / raccourcis OneNote (`.one`, `.url`). */
 export function isOneNoteExtension(extension = '') {
   return ONENOTE_EXTENSIONS.has(String(extension).toLowerCase());
+}
+
+/**
+ * Type de rendu local disponible pour une extension Office.
+ *
+ * Retourne `'docx'` (document), `'xlsx'` (classeur), `'pptx'` (texte des
+ * diapos) ou `null` quand aucun rendu 100 % navigateur n’existe.
+ */
+export function officeLocalKind(extension = '') {
+  const value = String(extension).toLowerCase();
+  if (OFFICE_LOCAL_DOC_EXTENSIONS.has(value)) return 'docx';
+  if (OFFICE_LOCAL_SHEET_EXTENSIONS.has(value)) return 'xlsx';
+  if (OFFICE_LOCAL_SLIDES_EXTENSIONS.has(value)) return 'pptx';
+  return null;
+}
+
+/** Extensions convertibles en PDF par le backend LibreOffice. */
+export function isOfficeConvertibleExtension(extension = '') {
+  return OFFICE_CONVERTIBLE_EXTENSIONS.has(String(extension).toLowerCase());
 }
 
 /**

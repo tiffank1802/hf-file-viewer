@@ -680,6 +680,50 @@
   .preview-body.preview-model { overflow: hidden; background: #f4f6f4; }
   .office-web-preview { width: 100%; height: 100%; min-height: 0; background: white; }
   .office-web-frame { display: block; width: 100%; height: 100%; border: 0; background: white; }
+  .office-viewer { display: flex; width: 100%; height: 100%; min-height: 0; flex-direction: column; background: white; }
+  .office-viewer-body { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+  .office-viewer-body > .preview-loader { flex: 1; }
+  .office-viewer-body > .download-prompt { flex: 1; }
+  .office-modes { display: flex; flex: 0 0 auto; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: #f6f8f6; }
+  .office-modes button { padding: 7px 13px; border: 1px solid var(--line); border-radius: 999px; background: white; color: var(--ink-soft); font-size: 0.6rem; font-weight: 750; cursor: pointer; transition: color 150ms ease, background 150ms ease, border-color 150ms ease; }
+  .office-modes button:hover { border-color: rgba(0, 122, 94, 0.3); color: var(--green); }
+  .office-modes button.is-active { border-color: var(--green-dark); background: var(--green-dark); color: white; }
+  .office-local-scroll { flex: 1; min-height: 0; overflow: auto; background: #e8ecea; }
+  .office-local-scroll > .preview-loader { min-height: 240px; }
+  .viewer-error-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; margin-top: 22px; }
+  .download-prompt .viewer-error-actions a { margin-top: 0; }
+  .viewer-switch { padding: 11px 16px; border: 1px solid var(--line); border-radius: 12px; background: white; color: var(--green-dark); font-size: 0.67rem; font-weight: 750; cursor: pointer; box-shadow: var(--shadow-sm); }
+  .viewer-switch:hover { border-color: rgba(0, 122, 94, 0.35); }
+  .docx-preview { padding: 20px 12px 28px; }
+  .docx-preview .docx-wrapper { background: transparent; padding: 0; }
+  .docx-preview .docx-wrapper > section.docx { margin-bottom: 18px; box-shadow: 0 10px 30px rgba(15, 47, 37, 0.12); }
+  .xlsx-preview { display: flex; flex-direction: column; background: white; }
+  .xlsx-toolbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: #f6f8f6; }
+  .xlsx-sheets { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+  .xlsx-sheets button { flex: 0 0 auto; max-width: 180px; overflow: hidden; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: white; color: var(--ink-soft); font-size: 0.6rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  .xlsx-sheets button.is-active { border-color: var(--green-dark); background: var(--green-dark); color: white; }
+  .xlsx-csv { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; padding: 7px 12px; border: 1px solid var(--line); border-radius: 10px; background: white; color: var(--green-dark); font-size: 0.6rem; font-weight: 750; cursor: pointer; }
+  .xlsx-csv:hover { border-color: rgba(0, 122, 94, 0.35); }
+  .xlsx-notice { padding: 8px 14px; border-bottom: 1px solid #f0e2b6; background: #fff7e6; color: #8a6d1a; font-size: 0.58rem; line-height: 1.5; }
+  .xlsx-empty { padding: 30px; color: var(--ink-faint); font-size: 0.65rem; text-align: center; }
+  .xlsx-table-wrap { flex: 1; min-height: 0; overflow: auto; }
+  .xlsx-table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 0.62rem; }
+  .xlsx-table th, .xlsx-table td { max-width: 320px; overflow: hidden; padding: 6px 10px; border: 1px solid #dde5e1; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+  .xlsx-table thead th { position: sticky; top: 0; z-index: 1; background: #e6ece9; color: var(--ink-soft); }
+  .xlsx-table thead th:not(.xlsx-corner) { text-align: center; }
+  .xlsx-rownum { background: #f4f7f5; color: var(--ink-faint); font-weight: 600; text-align: center; }
+  .xlsx-table tbody tr:nth-child(even) td { background: #fafcfb; }
+  .xlsx-table tbody tr:hover td { background: #eef5f1; }
+  .xlsx-pager { display: flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 12px; padding: 9px; border-top: 1px solid var(--line); background: #f6f8f6; color: var(--ink-soft); font-size: 0.6rem; }
+  .xlsx-pager button { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--green-dark); cursor: pointer; }
+  .xlsx-pager button:disabled { opacity: 0.35; cursor: default; }
+  .pptx-preview { padding: 18px 16px 28px; }
+  .pptx-notice { max-width: 860px; margin: 0 auto 14px; padding: 9px 14px; border-radius: 10px; background: #eaf0fa; color: #3464a1; font-size: 0.6rem; line-height: 1.5; }
+  .pptx-slides { display: flex; max-width: 860px; flex-direction: column; gap: 12px; margin: 0 auto; padding: 0; list-style: none; }
+  .pptx-slide { padding: 16px 18px; border: 1px solid var(--line); border-radius: 14px; background: white; box-shadow: var(--shadow-sm); }
+  .pptx-slide h4 { color: var(--green-dark); font-size: 0.66rem; }
+  .pptx-slide p { margin-top: 6px; color: var(--ink-soft); font-size: 0.68rem; line-height: 1.6; }
+  .pptx-no-text { color: var(--ink-faint); font-style: italic; }
   .shortcut-preview { display: flex; min-height: 100%; flex-direction: column; align-items: center; justify-content: center; padding: 34px; text-align: center; background: radial-gradient(circle at 50% 32%, rgba(0, 122, 94, 0.1), transparent 46%), #f4f7f5; }
   .shortcut-icon { display: grid; width: 82px; height: 86px; place-items: center; margin-bottom: 19px; border-radius: 23px; background: linear-gradient(145deg, var(--green), var(--green-dark)); box-shadow: 0 24px 48px rgba(0, 87, 69, 0.22); color: white; }
   .shortcut-preview h3 { font-size: 1.04rem; }

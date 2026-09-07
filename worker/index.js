@@ -21,6 +21,12 @@ const MAX_INDEX_ITEMS = 50_000;
 const APS_BASE_URL = 'https://developer.api.autodesk.com';
 const DEFAULT_APS_CACHE_TTL = 24 * 60 * 60;
 const DEFAULT_APS_UPLOAD_BYTES = 100 * 1024 * 1024;
+const DEFAULT_OFFICE_PDF_CACHE_TTL = 7 * 24 * 60 * 60;
+const DEFAULT_MAX_OFFICE_CONVERT_BYTES = 25 * 1024 * 1024;
+const OFFICE_CONVERTIBLE_EXTENSIONS = new Set([
+  'doc', 'docx', 'docm', 'xls', 'xlsx', 'xlsm', 'ppt', 'pptx', 'pptm',
+  'odt', 'ods', 'odp',
+]);
 
 const API_SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
@@ -88,6 +94,16 @@ export default {
       if (url.pathname === '/api/aps/status') {
         assertMethod(request, ['GET']);
         return await handleApsStatus(request, env, ctx);
+      }
+
+      if (url.pathname === '/api/office/status') {
+        assertMethod(request, ['GET']);
+        return handleOfficeStatus(env);
+      }
+
+      if (url.pathname === '/api/office/pdf') {
+        assertMethod(request, ['GET']);
+        return await handleOfficePdf(request, env, ctx);
       }
 
       return jsonResponse(
@@ -900,6 +916,173 @@ async function autodeskHttpError(response, fallback) {
     // Le corps n'est pas un JSON lisible, conserver le message générique.
   }
   return new HttpError(response.status >= 500 ? 502 : response.status, `Autodesk APS : ${detail}`);
+}
+
+/** Extensions convertibles en PDF par le Space LibreOffice. */
+export function isOfficeConvertibleExtension(extension = '') {
+  return OFFICE_CONVERTIBLE_EXTENSIONS.has(String(extension).toLowerCase());
+}
+
+/** URL publique du Space de conversion (sans slash final, ou vide). */
+export function getOfficeConvertUrl(env) {
+  return String(env.OFFICE_CONVERT_URL || '').trim().replace(/\/+$/, '');
+}
+
+/** Clé courte et stable identifiant la source d’un document à convertir. */
+export function makeOfficeSourceKey(filePath, size = '', mtime = '') {
+  const source = `${String(filePath || '')}|${String(size || '')}|${String(mtime || '')}`;
+  return `${hashIdentifier(source)}${hashIdentifier(`office-pdf:${source}`)}`.slice(0, 32);
+}
+
+function handleOfficeStatus(env) {
+  if (!getOfficeConvertUrl(env)) {
+    return jsonResponse(
+      { status: 'not-configured', error: 'La conversion PDF n’est pas configurée.' },
+      { cacheControl: 'public, max-age=300' },
+    );
+  }
+  return jsonResponse({ status: 'ready' }, { cacheControl: 'public, max-age=300' });
+}
+
+/**
+ * Convertit un document Office en PDF via le Space LibreOffice.
+ *
+ * Pipeline : Hugging Face (source) → Space `/api/convert-office` → PDF mis
+ * en cache dans le Cache API. Le Worker ne fait que proxifier : LibreOffice
+ * ne peut pas tourner dans un Worker (binaire natif, CPU limité).
+ */
+async function handleOfficePdf(request, env, ctx) {
+  const url = new URL(request.url);
+  const filePath = normalizeFilePath(url.searchParams.get('path'));
+  const extension = getExtension(filePath);
+  if (!isOfficeConvertibleExtension(extension)) {
+    throw new HttpError(400, 'Ce format ne peut pas être converti en PDF.');
+  }
+
+  const convertBase = getOfficeConvertUrl(env);
+  if (!convertBase) {
+    return jsonResponse(
+      { error: 'La conversion PDF n’est pas configurée sur ce site.', status: 'not-configured' },
+      { status: 501, cacheControl: 'no-store' },
+    );
+  }
+
+  const size = normalizeNumericSearchParam(url.searchParams.get('size'));
+  const mtime = String(url.searchParams.get('mtime') || '');
+  const sourceKey = makeOfficeSourceKey(filePath, size, mtime);
+  const bucketId = getBucketId(env);
+  const cache = caches.default;
+  const cacheKey = makeCacheKey('office-pdf', bucketId, { file: sourceKey });
+
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    const hit = new Response(cached.body, cached);
+    hit.headers.set('X-Cache-Status', 'HIT');
+    applySecurityHeaders(hit.headers);
+    return hit;
+  }
+
+  const maxBytes = positiveInteger(env.MAX_OFFICE_CONVERT_BYTES, DEFAULT_MAX_OFFICE_CONVERT_BYTES);
+  const edgeTtl = positiveInteger(env.OFFICE_PDF_CACHE_TTL, DEFAULT_OFFICE_PDF_CACHE_TTL);
+
+  const sourceBytes = await downloadConvertibleSource(env, bucketId, filePath, maxBytes);
+
+  const filename = filePath.split('/').pop() || `document.${extension}`;
+  const form = new FormData();
+  form.append('file', new Blob([sourceBytes], { type: 'application/octet-stream' }), filename);
+
+  let converted;
+  try {
+    converted = await fetch(`${convertBase}/api/convert-office`, { method: 'POST', body: form });
+  } catch {
+    throw new HttpError(502, 'Connexion au service de conversion impossible.');
+  }
+  if (!converted.ok) throw await officeConvertHttpError(converted);
+
+  const pdfBytes = await converted.arrayBuffer();
+  const magic = String.fromCharCode(...new Uint8Array(pdfBytes.slice(0, 5)));
+  if (magic !== '%PDF-') {
+    throw new HttpError(502, 'Le service de conversion n’a pas renvoyé un PDF valide.');
+  }
+
+  const pdfName = filename.includes('.') ? `${filename.slice(0, filename.lastIndexOf('.'))}.pdf` : `${filename}.pdf`;
+  const response = new Response(pdfBytes, {
+    headers: {
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': contentDisposition(pdfName, false),
+      'Cache-Control': 'public, max-age=3600, stale-while-revalidate=86400',
+      'X-Cache-Status': 'MISS',
+      ...API_SECURITY_HEADERS,
+    },
+  });
+
+  if (pdfBytes.byteLength <= maxBytes) {
+    const edgeResponse = response.clone();
+    edgeResponse.headers.set('Cache-Control', `public, max-age=${edgeTtl}`);
+    edgeResponse.headers.delete('X-Cache-Status');
+    ctx.waitUntil(
+      cache.put(cacheKey, edgeResponse).catch((error) => {
+        console.error('Unable to persist converted PDF in Cache API', error);
+      }),
+    );
+  }
+
+  return response;
+}
+
+async function downloadConvertibleSource(env, bucketId, filePath, maxBytes) {
+  let source;
+  try {
+    source = await fetch(buildHfFileUrl(bucketId, filePath), buildHfFetchInit(env));
+  } catch {
+    throw new HttpError(502, 'Connexion au stockage Hugging Face interrompue.');
+  }
+
+  if (source.status === 404) {
+    throw new HttpError(404, 'Document introuvable dans le bucket Hugging Face.');
+  }
+  if (!source.ok) {
+    throw new HttpError(
+      source.status >= 500 ? 502 : source.status,
+      'Impossible de lire le document à convertir.',
+    );
+  }
+
+  const declaredLength = Number(source.headers.get('Content-Length'));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new HttpError(
+      413,
+      `Ce fichier est trop volumineux pour la conversion (limite ${Math.round(maxBytes / 1024 / 1024)} Mo).`,
+    );
+  }
+
+  const bytes = await source.arrayBuffer();
+  if (bytes.byteLength === 0) {
+    throw new HttpError(422, 'Le document à convertir est vide.');
+  }
+  if (bytes.byteLength > maxBytes) {
+    throw new HttpError(
+      413,
+      `Ce fichier est trop volumineux pour la conversion (limite ${Math.round(maxBytes / 1024 / 1024)} Mo).`,
+    );
+  }
+  return bytes;
+}
+
+async function officeConvertHttpError(response) {
+  let detail = 'La conversion en PDF a échoué.';
+  try {
+    const body = await response.json();
+    detail = body.detail || body.error || body.message || detail;
+  } catch {
+    // Le service n’a pas renvoyé un JSON lisible, garder le message générique.
+  }
+  const message = String(detail).slice(0, 300);
+  if (response.status === 413) return new HttpError(413, message);
+  if (response.status === 400 || response.status === 422) {
+    return new HttpError(422, `Document non convertible : ${message}`);
+  }
+  return new HttpError(response.status >= 500 ? 502 : response.status, `Conversion PDF : ${message}`);
 }
 
 export async function fetchBucketTree(env, prefix = '', recursive = false) {
