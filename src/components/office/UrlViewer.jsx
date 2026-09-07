@@ -4,6 +4,7 @@ import {
   FiCopy,
   FiDownload,
   FiExternalLink,
+  FiLock,
 } from 'react-icons/fi';
 import { fileProxyUrl } from '../../services/api';
 import {
@@ -40,6 +41,7 @@ export default function UrlViewer({ file }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [preview, setPreview] = useState(null);
+  const [previewReason, setPreviewReason] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
   const [imageVisible, setImageVisible] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -50,6 +52,7 @@ export default function UrlViewer({ file }) {
     const controller = new AbortController();
     setShortcut(null);
     setPreview(null);
+    setPreviewReason('');
     setError('');
     setLoading(true);
 
@@ -74,6 +77,7 @@ export default function UrlViewer({ file }) {
 
   useEffect(() => {
     setPreview(null);
+    setPreviewReason('');
     setImageVisible(true);
     if (!target) return undefined;
     const kind = describeShortcutTarget(target).kind;
@@ -87,7 +91,9 @@ export default function UrlViewer({ file }) {
     })
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => {
-        if (payload && payload.ok) setPreview(payload);
+        if (!payload) return;
+        if (payload.ok) setPreview(payload);
+        else if (payload.reason) setPreviewReason(payload.reason);
       })
       .catch(() => {
         // Aperçu indisponible : la carte simple reste affichée.
@@ -129,6 +135,7 @@ export default function UrlViewer({ file }) {
 
   const canOpen = ['web', 'onenote-web', 'onenote-app', 'unknown'].includes(targetInfo.kind);
   const title = preview?.title || displayHost(target) || file.name;
+  const showAuthHelp = previewReason === 'auth-required' && targetInfo.kind === 'onenote-web';
 
   return (
     <div className="office-local-scroll url-preview">
@@ -157,6 +164,30 @@ export default function UrlViewer({ file }) {
             <p className="url-site">{preview?.siteName || displayHost(target)}</p>
           )}
           <p className="url-target" title={target}>{displayUrl(target)}</p>
+
+          {showAuthHelp && (
+            <div className="url-auth" role="note">
+              <p className="url-auth-title">
+                <FiLock aria-hidden="true" /> Contenu privé — connexion Microsoft requise
+              </p>
+              <p>
+                Ce carnet n’est visible que par son propriétaire : les autres
+                visiteurs ne peuvent pas le consulter depuis ce lien. Pour le
+                rendre visualisable comme les autres documents :
+              </p>
+              <ol>
+                <li>
+                  partagez-le en «&nbsp;Toute personne disposant du lien peut
+                  afficher&nbsp;» depuis OneDrive/OneNote&nbsp;;
+                </li>
+                <li>
+                  ou exportez les pages en <strong>PDF</strong> ou{' '}
+                  <strong>Word</strong> (OneNote → Fichier → Exporter) puis
+                  déposez le fichier dans la bibliothèque.
+                </li>
+              </ol>
+            </div>
+          )}
 
           {targetInfo.kind === 'file' && (
             <p className="url-hint">

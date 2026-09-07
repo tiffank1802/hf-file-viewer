@@ -1093,6 +1093,26 @@ async function officeConvertHttpError(response) {
   return new HttpError(response.status >= 500 ? 502 : response.status, `Conversion PDF : ${message}`);
 }
 
+const AUTH_WALL_HOSTS = new Set([
+  'login.microsoftonline.com',
+  'login.live.com',
+  'account.live.com',
+  'account.microsoft.com',
+]);
+
+/**
+ * Indique si une URL finale est une page de connexion Microsoft.
+ * Les liens OneNote/OneDrive privés y redirigent : leur contenu n’est
+ * visible que par le propriétaire connecté, jamais publiquement.
+ */
+export function isAuthWallUrl(url = '') {
+  try {
+    return AUTH_WALL_HOSTS.has(new URL(String(url || '')).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Indique si un nom d’hôte est interdit pour l’aperçu de lien.
  *
@@ -1294,20 +1314,32 @@ async function handleLinkPreview(request, env, ctx) {
     });
   } catch {
     return jsonResponse(
-      { ok: false, url: target, error: 'La page liée est injoignable.' },
+      { ok: false, reason: 'unreachable', url: target, error: 'La page liée est injoignable.' },
       { cacheControl: 'public, max-age=300' },
     );
   }
 
   if (!upstream.ok) {
     return jsonResponse(
-      { ok: false, url: target, error: `La page liée répond ${upstream.status}.` },
+      { ok: false, reason: 'http-error', url: target, error: `La page liée répond ${upstream.status}.` },
+      { cacheControl: 'public, max-age=300' },
+    );
+  }
+
+  const finalUrl = upstream.url || target;
+  if (isAuthWallUrl(finalUrl)) {
+    return jsonResponse(
+      {
+        ok: false,
+        reason: 'auth-required',
+        url: target,
+        error: 'Ce contenu exige une connexion Microsoft.',
+      },
       { cacheControl: 'public, max-age=300' },
     );
   }
 
   const contentType = (upstream.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
-  const finalUrl = upstream.url || target;
   const isHtml = contentType === 'text/html' || contentType === 'application/xhtml+xml';
   const meta = isHtml ? extractLinkMeta(await readCappedText(upstream.body, MAX_LINK_PREVIEW_BYTES), finalUrl) : {
     title: '',

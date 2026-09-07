@@ -176,6 +176,8 @@ Premier appel à froid : compter jusqu’à une minute si le Space gratuit dorma
 
 Les raccourcis Windows `.url` s’ouvrent dans une **carte de lien enrichie** : le fichier est parsé localement (URL, icône, section `[InternetShortcut]`), la cible est qualifiée par un badge (**OneNote en ligne**, **Lien OneNote**, **Page web**, **Fichier local**…), puis les cibles http(s) sont enrichies via `GET /api/link/preview?url=...` (titre, description, image Open Graph, mise en cache 24 h). Boutons **Ouvrir la ressource**, **Copier** et téléchargement du `.url`. Tout échec d’enrichissement dégrade vers une carte simple : l’accès au lien n’est jamais bloqué. Les hôtes internes (localhost, IP privées…) sont refusés côté Worker ; la CSP autorise les images `https:` distantes pour les visuels Open Graph.
 
+> **Liens OneNote privés** : un lien exigeant une connexion Microsoft ne peut être visualisé que par son propriétaire — aucun aperçu n’est possible pour les autres visiteurs. Quand l’aperçu détecte une redirection vers le login Microsoft, la carte affiche un encadré « Contenu privé » avec la marche à suivre : partage « Toute personne disposant du lien peut afficher » depuis OneDrive/OneNote, ou export des pages en PDF/Word (OneNote → Fichier → Exporter) déposé dans le bucket — formats déjà visualisables comme les autres documents MS.
+
 ### Blocs-notes Microsoft OneNote
 
 - Les blocs-notes `.one` / `.onenote` ne disposent pas de visionneuse embarquée dans le navigateur : la modale propose leur téléchargement pour les ouvrir dans Microsoft OneNote.

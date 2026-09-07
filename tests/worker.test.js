@@ -9,6 +9,7 @@ import {
   describeApsManifest,
   extractLinkMeta,
   getNextLink,
+  isAuthWallUrl,
   isBlockedLinkHost,
   readCappedText,
   isApsConfigured,
@@ -186,4 +187,14 @@ test('la lecture plafonnée tronque les gros corps de réponse', async () => {
   const long = await readCappedText(new Response(`${'a'.repeat(500)}<title>Tard</title>`).body, 100);
   assert.equal(long.length, 100);
   assert.equal(await readCappedText(null, 100), '');
+});
+
+test('les redirections vers le login Microsoft sont détectées', () => {
+  assert.equal(isAuthWallUrl('https://login.microsoftonline.com/tenant/oauth2/authorize?x=1'), true);
+  assert.equal(isAuthWallUrl('https://login.live.com/login.srf?wa=wsignin'), true);
+  assert.equal(isAuthWallUrl('https://account.microsoft.com/account'), true);
+  assert.equal(isAuthWallUrl('https://onedrive.live.com/?id=root'), false);
+  assert.equal(isAuthWallUrl('https://exemple.fr/'), false);
+  assert.equal(isAuthWallUrl(''), false);
+  assert.equal(isAuthWallUrl('pas une url'), false);
 });
