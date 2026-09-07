@@ -8,7 +8,7 @@ Bibliothèque étudiante moderne pour les ressources de **Centrale Lyon ENISE**,
 - identité blanche « liquid glass », verte, rouge et jaune ;
 - icônes React (`react-icons`) et logos locaux optimisés ;
 - navigation par dossier, fil d’Ariane, tri, grille/liste ;
-- aperçu PDF, image, audio, vidéo, texte et **Viewer Office Web** pour les documents Office (`.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`) ;
+- aperçu PDF, image, audio, vidéo, texte et **visionneuse Office hybride** : rendu local (`.docx`, `.xlsx`/`.xls`, texte `.pptx`), conversion PDF serveur (LibreOffice) et **Viewer Office Web** (`.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`) ;
 - raccourcis **Microsoft OneNote** (`.url`) affichés avec leur cible ouvrable, blocs-notes `.one` disponibles au téléchargement ;
 - visionneuse **Autodesk APS** (Model Derivative) pour les fichiers 3D (`.dwg`, `.rvt`, `.ifc`, `.ipt`, `.sldprt`, `.stp`, `.stl`, `.obj`, …) avec rotation, zoom et déplacement ;
 - téléchargement, partage et favoris enregistrés dans le navigateur ;
@@ -49,6 +49,8 @@ Le frontend et le Worker sont sur **le même domaine**. Le navigateur n’appell
 | Index `/api/index` | 30 min | Cache API, 12 h | API Hugging Face |
 | Comptage `/api/counts` | 30 min | Cache API, 12 h | JSON d’index (aucun appel HF) |
 | Fichier `/api/file` | 1 h | Cache API, 7 j | bucket Hugging Face |
+| PDF Office `/api/office/pdf` | 1 h | Cache API, 7 j | Space LibreOffice |
+| Aperçu lien `/api/link/preview` | 1 h | Cache API, 24 h | page cible |
 
 Les fichiers ne sont ajoutés au Cache API que si une réponse complète possède une taille connue inférieure ou égale à **25 Mio**. Les requêtes `Range` et les fichiers plus grands sont transmis sans mise en cache par le Worker (`BYPASS-RANGE` ou `BYPASS-SIZE`) ; le CDN de Hugging Face peut néanmoins les optimiser.
 
@@ -133,17 +135,49 @@ Reporter l’identifiant renvoyé dans `wrangler.jsonc` :
 
 Puis redéployer avec `npm run deploy`. Le Worker détecte automatiquement `env.METADATA_KV` et utilise la hiérarchie **Cache API → Workers KV → Hugging Face**. Les entrées KV expirent après 24 h (`KV_CACHE_TTL`) afin de rester cohérentes avec le bucket. Cette option consomme les quotas de lectures/écritures KV ; elle n’est utile que si le trafic provient de nombreuses régions.
 
-## Aperçu des documents Office avec le Viewer Office Web
+## Aperçu des documents Office (visionneuse hybride)
 
-Les fichiers `doc`, `docx`, `xls`, `xlsx`, `ppt`, `pptx` sont affichés dans la modale d’aperçu via le **Viewer Office Web** de Microsoft (`https://view.officeapps.live.com/op/embed.aspx`). Le fichier est servi par l’URL absolue `/api/file?path=...` du site, si bien qu’aucune configuration n’est requise.
+La modale d’aperçu propose jusqu’à **3 modes** (sélecteur en haut, préférence mémorisée dans le navigateur), tous gratuits et open source côté rendu :
 
-- **Production** : le site doit être accessible publiquement (Cloudflare Workers), car le service Microsoft télécharge le fichier depuis cette URL.
-- **Développement local** : Microsoft ne peut pas joindre `localhost`. Pour tester, utiliser l’URL publique exposée par l’environnement (`npm run dev:worker`) plutôt que `localhost`.
-- **CSP** : `public/_headers` autorise déjà `https://view.officeapps.live.com` dans `frame-src`.
+| Mode | Formats | Technologie | Fidélité | Contrainte |
+|---|---|---|---|---|
+| **Aperçu local** | `.docx`/`.docm`, `.xlsx`/`.xls`/`.xlsm` | `docx-preview`, `xlsx` (SheetJS CE) + grille maison | bonne | ≤ 15 Mo, ≤ 50 000 cellules |
+| **Texte local** | `.pptx`/`.pptm` | `jszip` (extraction du texte par diapo) | texte seul | ≤ 15 Mo |
+| **PDF** | `.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`, `.odt`, `.ods`, `.odp` | conversion LibreOffice côté serveur | très bonne | Space configuré (voir ci-dessous) |
+| **Microsoft** | `doc`, `docx`, `xls`, `xlsx`, `ppt`, `pptx`, … | Viewer Office Web (`view.officeapps.live.com`) | maximale | site accessible publiquement |
 
-### Raccourcis et blocs-notes Microsoft OneNote
+- Les librairies locales sont chargées en `import()` dynamique : le bundle initial n’augmente pas, aucun CDN externe n’est utilisé (aucune modification CSP requise).
+- Le classeur local offre onglets de feuilles, pagination et **export CSV** de la feuille active.
+- Le mode Microsoft nécessite toujours une URL publique : en développement `localhost`, utiliser l’**Aperçu local** ou l’URL publique exposée par l’environnement (`npm run dev:worker`).
 
-- Les fichiers `.url` (raccourcis OneNote) sont lus et la cible est affichée avec un bouton **Ouvrir la ressource**.
+### Conversion PDF via LibreOffice (mode « PDF »)
+
+Le Worker ne peut pas convertir lui-même (binaire natif, CPU limité) : il délègue au Space Docker [`space-huggingface/`](./space-huggingface/) (LibreOffice headless), puis met le PDF en cache (Cache API, 7 j) :
+
+```text
+Navigateur
+   ├── GET /api/office/status   -> conversion configurée ou non
+   └── GET /api/office/pdf      -> Worker : HF (source) → Space → PDF caché
+```
+
+1. Déployer le Space Docker (`space-huggingface/`, SDK `docker`, port `7860`).
+2. Renseigner son URL publique :
+   ```bash
+   # production (variable publique, affichée dans wrangler.jsonc)
+   # OFFICE_CONVERT_URL="https://<votre-space>.hf.space"
+   # développement local dans .dev.vars :
+   # OFFICE_CONVERT_URL="https://<votre-space>.hf.space"
+   ```
+3. Redéployer (`npm run deploy`). Sans cette variable, le mode « PDF » est masqué et les autres modes restent disponibles.
+
+Premier appel à froid : compter jusqu’à une minute si le Space gratuit dormait ; les appels suivants sont cachés côté Cloudflare.
+
+### Raccourcis `.url` (dont liens OneNote)
+
+Les raccourcis Windows `.url` s’ouvrent dans une **carte de lien enrichie** : le fichier est parsé localement (URL, icône, section `[InternetShortcut]`), la cible est qualifiée par un badge (**OneNote en ligne**, **Lien OneNote**, **Page web**, **Fichier local**…), puis les cibles http(s) sont enrichies via `GET /api/link/preview?url=...` (titre, description, image Open Graph, mise en cache 24 h). Boutons **Ouvrir la ressource**, **Copier** et téléchargement du `.url`. Tout échec d’enrichissement dégrade vers une carte simple : l’accès au lien n’est jamais bloqué. Les hôtes internes (localhost, IP privées…) sont refusés côté Worker ; la CSP autorise les images `https:` distantes pour les visuels Open Graph.
+
+### Blocs-notes Microsoft OneNote
+
 - Les blocs-notes `.one` / `.onenote` ne disposent pas de visionneuse embarquée dans le navigateur : la modale propose leur téléchargement pour les ouvrir dans Microsoft OneNote.
 
 Ce viewer remplace l’ancienne intégration ONLYOFFICE : aucun document server externe n’est plus nécessaire et aucun secret n’est exposé.
@@ -245,6 +279,9 @@ Pour un déploiement CI GitHub, stocker `CLOUDFLARE_API_TOKEN` et `CLOUDFLARE_AC
 | `GET /api/aps/token` | jeton public Autodesk pour la visionneuse 3D |
 | `POST /api/aps/view?path=...` | prépare le fichier 3D : OSS + conversion SVF2 |
 | `GET /api/aps/status?path=...` | état et progression de la conversion 3D |
+| `GET /api/office/status` | conversion PDF Office configurée ou non |
+| `GET /api/office/pdf?path=...` | PDF converti via LibreOffice (mis en cache) |
+| `GET /api/link/preview?url=...` | aperçu enrichi d’un lien `.url` (Open Graph, mis en cache) |
 
 L’en-tête `X-Cache-Status` permet de diagnostiquer le comportement : `HIT`, `KV-HIT`, `MISS`, `BYPASS-RANGE` ou `BYPASS-SIZE`. L’en-tête `X-Data-Source: index-json` confirme qu’une réponse d’effectifs provient bien du JSON d’index et non d’un nouveau parcours Hugging Face.
 

@@ -21,6 +21,15 @@ const MAX_INDEX_ITEMS = 50_000;
 const APS_BASE_URL = 'https://developer.api.autodesk.com';
 const DEFAULT_APS_CACHE_TTL = 24 * 60 * 60;
 const DEFAULT_APS_UPLOAD_BYTES = 100 * 1024 * 1024;
+const DEFAULT_OFFICE_PDF_CACHE_TTL = 7 * 24 * 60 * 60;
+const DEFAULT_MAX_OFFICE_CONVERT_BYTES = 25 * 1024 * 1024;
+const OFFICE_CONVERTIBLE_EXTENSIONS = new Set([
+  'doc', 'docx', 'docm', 'xls', 'xlsx', 'xlsm', 'ppt', 'pptx', 'pptm',
+  'odt', 'ods', 'odp',
+]);
+const DEFAULT_LINK_PREVIEW_CACHE_TTL = 24 * 60 * 60;
+const LINK_PREVIEW_TIMEOUT_MS = 10_000;
+const MAX_LINK_PREVIEW_BYTES = 128 * 1024;
 
 const API_SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
@@ -88,6 +97,21 @@ export default {
       if (url.pathname === '/api/aps/status') {
         assertMethod(request, ['GET']);
         return await handleApsStatus(request, env, ctx);
+      }
+
+      if (url.pathname === '/api/office/status') {
+        assertMethod(request, ['GET']);
+        return handleOfficeStatus(env);
+      }
+
+      if (url.pathname === '/api/office/pdf') {
+        assertMethod(request, ['GET']);
+        return await handleOfficePdf(request, env, ctx);
+      }
+
+      if (url.pathname === '/api/link/preview') {
+        assertMethod(request, ['GET']);
+        return await handleLinkPreview(request, env, ctx);
       }
 
       return jsonResponse(
@@ -900,6 +924,412 @@ async function autodeskHttpError(response, fallback) {
     // Le corps n'est pas un JSON lisible, conserver le message générique.
   }
   return new HttpError(response.status >= 500 ? 502 : response.status, `Autodesk APS : ${detail}`);
+}
+
+/** Extensions convertibles en PDF par le Space LibreOffice. */
+export function isOfficeConvertibleExtension(extension = '') {
+  return OFFICE_CONVERTIBLE_EXTENSIONS.has(String(extension).toLowerCase());
+}
+
+/** URL publique du Space de conversion (sans slash final, ou vide). */
+export function getOfficeConvertUrl(env) {
+  return String(env.OFFICE_CONVERT_URL || '').trim().replace(/\/+$/, '');
+}
+
+/** Clé courte et stable identifiant la source d’un document à convertir. */
+export function makeOfficeSourceKey(filePath, size = '', mtime = '') {
+  const source = `${String(filePath || '')}|${String(size || '')}|${String(mtime || '')}`;
+  return `${hashIdentifier(source)}${hashIdentifier(`office-pdf:${source}`)}`.slice(0, 32);
+}
+
+function handleOfficeStatus(env) {
+  if (!getOfficeConvertUrl(env)) {
+    return jsonResponse(
+      { status: 'not-configured', error: 'La conversion PDF n’est pas configurée.' },
+      { cacheControl: 'public, max-age=300' },
+    );
+  }
+  return jsonResponse({ status: 'ready' }, { cacheControl: 'public, max-age=300' });
+}
+
+/**
+ * Convertit un document Office en PDF via le Space LibreOffice.
+ *
+ * Pipeline : Hugging Face (source) → Space `/api/convert-office` → PDF mis
+ * en cache dans le Cache API. Le Worker ne fait que proxifier : LibreOffice
+ * ne peut pas tourner dans un Worker (binaire natif, CPU limité).
+ */
+async function handleOfficePdf(request, env, ctx) {
+  const url = new URL(request.url);
+  const filePath = normalizeFilePath(url.searchParams.get('path'));
+  const extension = getExtension(filePath);
+  if (!isOfficeConvertibleExtension(extension)) {
+    throw new HttpError(400, 'Ce format ne peut pas être converti en PDF.');
+  }
+
+  const convertBase = getOfficeConvertUrl(env);
+  if (!convertBase) {
+    return jsonResponse(
+      { error: 'La conversion PDF n’est pas configurée sur ce site.', status: 'not-configured' },
+      { status: 501, cacheControl: 'no-store' },
+    );
+  }
+
+  const size = normalizeNumericSearchParam(url.searchParams.get('size'));
+  const mtime = String(url.searchParams.get('mtime') || '');
+  const sourceKey = makeOfficeSourceKey(filePath, size, mtime);
+  const bucketId = getBucketId(env);
+  const cache = caches.default;
+  const cacheKey = makeCacheKey('office-pdf', bucketId, { file: sourceKey });
+
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    const hit = new Response(cached.body, cached);
+    hit.headers.set('X-Cache-Status', 'HIT');
+    applySecurityHeaders(hit.headers);
+    return hit;
+  }
+
+  const maxBytes = positiveInteger(env.MAX_OFFICE_CONVERT_BYTES, DEFAULT_MAX_OFFICE_CONVERT_BYTES);
+  const edgeTtl = positiveInteger(env.OFFICE_PDF_CACHE_TTL, DEFAULT_OFFICE_PDF_CACHE_TTL);
+
+  const sourceBytes = await downloadConvertibleSource(env, bucketId, filePath, maxBytes);
+
+  const filename = filePath.split('/').pop() || `document.${extension}`;
+  const form = new FormData();
+  form.append('file', new Blob([sourceBytes], { type: 'application/octet-stream' }), filename);
+
+  let converted;
+  try {
+    converted = await fetch(`${convertBase}/api/convert-office`, { method: 'POST', body: form });
+  } catch {
+    throw new HttpError(502, 'Connexion au service de conversion impossible.');
+  }
+  if (!converted.ok) throw await officeConvertHttpError(converted);
+
+  const pdfBytes = await converted.arrayBuffer();
+  const magic = String.fromCharCode(...new Uint8Array(pdfBytes.slice(0, 5)));
+  if (magic !== '%PDF-') {
+    throw new HttpError(502, 'Le service de conversion n’a pas renvoyé un PDF valide.');
+  }
+
+  const pdfName = filename.includes('.') ? `${filename.slice(0, filename.lastIndexOf('.'))}.pdf` : `${filename}.pdf`;
+  const response = new Response(pdfBytes, {
+    headers: {
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': contentDisposition(pdfName, false),
+      'Cache-Control': 'public, max-age=3600, stale-while-revalidate=86400',
+      'X-Cache-Status': 'MISS',
+      ...API_SECURITY_HEADERS,
+    },
+  });
+
+  if (pdfBytes.byteLength <= maxBytes) {
+    const edgeResponse = response.clone();
+    edgeResponse.headers.set('Cache-Control', `public, max-age=${edgeTtl}`);
+    edgeResponse.headers.delete('X-Cache-Status');
+    ctx.waitUntil(
+      cache.put(cacheKey, edgeResponse).catch((error) => {
+        console.error('Unable to persist converted PDF in Cache API', error);
+      }),
+    );
+  }
+
+  return response;
+}
+
+async function downloadConvertibleSource(env, bucketId, filePath, maxBytes) {
+  let source;
+  try {
+    source = await fetch(buildHfFileUrl(bucketId, filePath), buildHfFetchInit(env));
+  } catch {
+    throw new HttpError(502, 'Connexion au stockage Hugging Face interrompue.');
+  }
+
+  if (source.status === 404) {
+    throw new HttpError(404, 'Document introuvable dans le bucket Hugging Face.');
+  }
+  if (!source.ok) {
+    throw new HttpError(
+      source.status >= 500 ? 502 : source.status,
+      'Impossible de lire le document à convertir.',
+    );
+  }
+
+  const declaredLength = Number(source.headers.get('Content-Length'));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new HttpError(
+      413,
+      `Ce fichier est trop volumineux pour la conversion (limite ${Math.round(maxBytes / 1024 / 1024)} Mo).`,
+    );
+  }
+
+  const bytes = await source.arrayBuffer();
+  if (bytes.byteLength === 0) {
+    throw new HttpError(422, 'Le document à convertir est vide.');
+  }
+  if (bytes.byteLength > maxBytes) {
+    throw new HttpError(
+      413,
+      `Ce fichier est trop volumineux pour la conversion (limite ${Math.round(maxBytes / 1024 / 1024)} Mo).`,
+    );
+  }
+  return bytes;
+}
+
+async function officeConvertHttpError(response) {
+  let detail = 'La conversion en PDF a échoué.';
+  try {
+    const body = await response.json();
+    detail = body.detail || body.error || body.message || detail;
+  } catch {
+    // Le service n’a pas renvoyé un JSON lisible, garder le message générique.
+  }
+  const message = String(detail).slice(0, 300);
+  if (response.status === 413) return new HttpError(413, message);
+  if (response.status === 400 || response.status === 422) {
+    return new HttpError(422, `Document non convertible : ${message}`);
+  }
+  return new HttpError(response.status >= 500 ? 502 : response.status, `Conversion PDF : ${message}`);
+}
+
+/**
+ * Indique si un nom d’hôte est interdit pour l’aperçu de lien.
+ *
+ * Refuse le localhost, les IP privées/bouclage/lien-local littérales, les
+ * IPv6 littérales et les noms sans domaine : l’URL prévisualisée provient
+ * d’un fichier du bucket, ce garde-fou anti-SSRF reste volontairement
+ * simple (aucune résolution DNS dans un Worker).
+ */
+export function isBlockedLinkHost(hostname = '') {
+  const host = String(hostname || '').trim().toLowerCase().replace(/\.+$/, '');
+  if (!host) return true;
+  if (host === 'localhost' || host === '::1' || host === '[::1]') return true;
+  if (['local', 'localhost', 'internal', 'invalid', 'test', 'example'].includes(host)) return true;
+  if (['.local', '.localhost', '.internal', '.invalid', '.test', '.example'].some((suffix) => host.endsWith(suffix))) {
+    return true;
+  }
+
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4) {
+    const parts = ipv4.slice(1).map(Number);
+    if (parts.some((part) => part > 255)) return true;
+    const [a, b] = parts;
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true;
+    if (a >= 224) return true;
+    return false;
+  }
+
+  if (host.includes(':')) return true;
+  if (!host.includes('.')) return true;
+  return false;
+}
+
+function decodeHtmlEntities(text = '') {
+  return String(text || '')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0*39;|&#x27;|&apos;/gi, "'")
+    .replace(/&#(\d{1,6});/g, (_match, code) => {
+      const point = Number(code);
+      return Number.isFinite(point) && point > 0 && point <= 0x10FFFF
+        ? String.fromCodePoint(point)
+        : _match;
+    })
+    .replace(/&#x([0-9a-f]{1,6});/gi, (_match, code) => {
+      const point = Number.parseInt(code, 16);
+      return Number.isFinite(point) && point > 0 && point <= 0x10FFFF
+        ? String.fromCodePoint(point)
+        : _match;
+    })
+    .replace(/&amp;/gi, '&');
+}
+
+function htmlTagAttribute(tag = '', name = '') {
+  const match = String(tag || '').match(
+    new RegExp(`${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'),
+  );
+  if (!match) return '';
+  return (match[2] ?? match[3] ?? match[4] ?? '').trim();
+}
+
+function resolveLinkUrl(value = '', base = '') {
+  try {
+    const resolved = new URL(String(value || '').trim(), base);
+    if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') return '';
+    return resolved.href;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Extrait titre, description et image d’une page HTML (Open Graph puis
+ * balises classiques). Fonction pure et synchrone : testée unitairement.
+ */
+export function extractLinkMeta(html = '', baseUrl = '') {
+  const source = String(html || '');
+  const clean = (value, max) => decodeHtmlEntities(value).replace(/\s+/g, ' ').trim().slice(0, max);
+
+  let title = '';
+  let description = '';
+  let image = '';
+  let siteName = '';
+  let icon = '';
+
+  const titleMatch = source.match(/<title[^>]*>([^<]{1,500})<\/title\s*>/i);
+  if (titleMatch) title = clean(titleMatch[1], 200);
+
+  // Les balises Open Graph priment sur `<title>` / `description` classiques.
+  for (const tag of source.match(/<meta\s+[^>]*>/gi) || []) {
+    const key = (htmlTagAttribute(tag, 'property') || htmlTagAttribute(tag, 'name')).toLowerCase();
+    const content = htmlTagAttribute(tag, 'content');
+    if (!key || !content) continue;
+    if (key === 'og:title') title = clean(content, 200);
+    else if (key === 'og:description') description = clean(content, 500);
+    else if (key === 'description' && !description) description = clean(content, 500);
+    else if (key === 'og:image' && !image) image = content;
+    else if (key === 'og:site_name' && !siteName) siteName = clean(content, 120);
+  }
+
+  for (const tag of source.match(/<link\s+[^>]*>/gi) || []) {
+    const rel = htmlTagAttribute(tag, 'rel').toLowerCase();
+    if (!rel.split(/\s+/).some((token) => token === 'icon' || token === 'apple-touch-icon')) continue;
+    const href = htmlTagAttribute(tag, 'href');
+    if (href) {
+      icon = href;
+      if (rel.split(/\s+/).includes('icon')) break;
+    }
+  }
+
+  return {
+    title,
+    description,
+    image: image ? resolveLinkUrl(image, baseUrl) : '',
+    siteName,
+    icon: icon ? resolveLinkUrl(icon, baseUrl) : '',
+  };
+}
+
+export async function readCappedText(body, maxBytes) {
+  if (!body || typeof body.getReader !== 'function') return '';
+  const reader = body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (total < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done || !value) break;
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // Le flux est déjà fermé ou consommé : rien à annuler.
+    }
+    reader.releaseLock();
+  }
+
+  const merged = new Uint8Array(Math.min(total, maxBytes));
+  let offset = 0;
+  for (const chunk of chunks) {
+    if (offset >= maxBytes) break;
+    const slice = chunk.slice(0, maxBytes - offset);
+    merged.set(slice, offset);
+    offset += slice.length;
+  }
+  return new TextDecoder('utf-8', { fatal: false }).decode(merged);
+}
+
+/**
+ * Aperçu enrichi d’un lien (fichiers `.url`) : suit les redirections, lit le
+ * début du HTML et renvoie titre/description/image Open Graph en JSON.
+ * Les échecs renvoient `{ ok: false }` (jamais d’erreur HTTP) pour que la
+ * carte de lien dégrade gracieusement côté frontend.
+ */
+async function handleLinkPreview(request, env, ctx) {
+  const target = new URL(request.url).searchParams.get('url') || '';
+  if (!target || target.length > 2000) {
+    throw new HttpError(400, 'Paramètre url manquant ou trop long.');
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(target);
+  } catch {
+    throw new HttpError(400, 'URL de destination invalide.');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new HttpError(400, 'Seules les URL http(s) sont acceptées.');
+  }
+  if (parsed.username || parsed.password) {
+    throw new HttpError(400, 'URL de destination invalide.');
+  }
+  if (isBlockedLinkHost(parsed.hostname)) {
+    throw new HttpError(400, 'Cette adresse ne peut pas être prévisualisée.');
+  }
+
+  const cache = caches.default;
+  const cacheKey = makeCacheKey('link', 'global', { url: hashIdentifier(target) });
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    return responseFromCache(cached, 'HIT', 'public, max-age=3600, stale-while-revalidate=86400');
+  }
+
+  let upstream;
+  try {
+    upstream = await fetch(target, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(LINK_PREVIEW_TIMEOUT_MS),
+      headers: {
+        Accept: 'text/html,application/xhtml+xml',
+        'User-Agent': 'enise-docs-link-preview/1.0',
+      },
+    });
+  } catch {
+    return jsonResponse(
+      { ok: false, url: target, error: 'La page liée est injoignable.' },
+      { cacheControl: 'public, max-age=300' },
+    );
+  }
+
+  if (!upstream.ok) {
+    return jsonResponse(
+      { ok: false, url: target, error: `La page liée répond ${upstream.status}.` },
+      { cacheControl: 'public, max-age=300' },
+    );
+  }
+
+  const contentType = (upstream.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+  const finalUrl = upstream.url || target;
+  const isHtml = contentType === 'text/html' || contentType === 'application/xhtml+xml';
+  const meta = isHtml ? extractLinkMeta(await readCappedText(upstream.body, MAX_LINK_PREVIEW_BYTES), finalUrl) : {
+    title: '',
+    description: '',
+    image: '',
+    siteName: '',
+    icon: '',
+  };
+
+  const body = JSON.stringify({ ok: true, url: finalUrl, contentType, ...meta });
+  storeJsonInCache(
+    ctx,
+    cache,
+    cacheKey,
+    body,
+    positiveInteger(env.LINK_PREVIEW_CACHE_TTL, DEFAULT_LINK_PREVIEW_CACHE_TTL),
+  );
+  return jsonResponse(body, {
+    serialized: true,
+    cacheControl: 'public, max-age=3600, stale-while-revalidate=86400',
+    headers: { 'X-Cache-Status': 'MISS' },
+  });
 }
 
 export async function fetchBucketTree(env, prefix = '', recursive = false) {

@@ -7,7 +7,10 @@ import {
   countFilesByDirectory,
   describeApsFailure,
   describeApsManifest,
+  extractLinkMeta,
   getNextLink,
+  isBlockedLinkHost,
+  readCappedText,
   isApsConfigured,
   makeApsSourceKey,
   makeKvKey,
@@ -136,4 +139,51 @@ test('les erreurs Autodesk de version non prise en charge sont explicites', () =
 
   const success = describeApsManifest({ status: 'success', derivatives: [] }, 'GM/3D/piece.stl');
   assert.equal(success, 'Modèle 3D prêt.');
+});
+
+test('les hôtes internes sont interdits pour l’aperçu de lien', () => {
+  for (const host of ['localhost', 'LOCALHOST.', '127.0.0.1', '10.4.2.1', '172.16.0.9', '172.31.255.1', '192.168.1.1', '169.254.169.254', '0.0.0.0', '::1', '[::1]', 'intranet', 'srv.local', 'app.internal', 'x.test', '']) {
+    assert.equal(isBlockedLinkHost(host), true, host || '(vide)');
+  }
+  for (const host of ['exemple.fr', 'www.univ-lyon.fr', 'ecole.sharepoint.com', '8.8.8.8', '172.15.0.1', '172.32.0.1', '192.167.1.1']) {
+    assert.equal(isBlockedLinkHost(host), false, host);
+  }
+});
+
+test('les métas Open Graph sont extraites (og prioritaire, URL résolues)', () => {
+  const meta = extractLinkMeta(
+    '<html><head><title>Titre brut &amp; co</title>'
+    + '<meta name="description" content="Desc classique">'
+    + '<meta property="og:title" content="Titre &lt;OG&gt;">'
+    + '<meta property="og:description" content="Desc OG">'
+    + '<meta property="og:image" content="/img/cover.png">'
+    + '<meta property="og:site_name" content="Site démo">'
+    + '<link rel="icon" href="https://cdn.exemple.fr/f.ico">'
+    + '</head></html>',
+    'https://exemple.fr/page/a',
+  );
+  assert.equal(meta.title, 'Titre <OG>');
+  assert.equal(meta.description, 'Desc OG');
+  assert.equal(meta.image, 'https://exemple.fr/img/cover.png');
+  assert.equal(meta.siteName, 'Site démo');
+  assert.equal(meta.icon, 'https://cdn.exemple.fr/f.ico');
+
+  const fallback = extractLinkMeta('<title>Seul titre</title>', 'https://exemple.fr/');
+  assert.equal(fallback.title, 'Seul titre');
+  assert.equal(fallback.description, '');
+  assert.equal(fallback.image, '');
+
+  const unsafe = extractLinkMeta(
+    '<meta property="og:image" content="javascript:alert(1)">',
+    'https://exemple.fr/',
+  );
+  assert.equal(unsafe.image, '');
+});
+
+test('la lecture plafonnée tronque les gros corps de réponse', async () => {
+  const short = await readCappedText(new Response('<title>Court</title>').body, 1024);
+  assert.equal(short, '<title>Court</title>');
+  const long = await readCappedText(new Response(`${'a'.repeat(500)}<title>Tard</title>`).body, 100);
+  assert.equal(long.length, 100);
+  assert.equal(await readCappedText(null, 100), '');
 });

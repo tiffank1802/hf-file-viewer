@@ -77,3 +77,9 @@ coverage/
 *.lzo
 
 ```
+# Wrangler dev local state
+.wrangler/
+
+# Python bytecode
+__pycache__/
+*.py[cod]

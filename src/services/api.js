@@ -79,6 +79,17 @@ export function fileProxyUrl(path, download = false) {
   return `/api/file?${params}`;
 }
 
+/**
+ * URL du PDF généré par le backend LibreOffice pour un document Office.
+ * `size` et `mtime` stabilisent la clé de cache côté Worker.
+ */
+export function officePdfUrl(file) {
+  const params = new URLSearchParams({ path: file.path });
+  if (Number.isFinite(Number(file.size))) params.set('size', String(file.size));
+  if (file.mtime) params.set('mtime', String(file.mtime));
+  return `/api/office/pdf?${params}`;
+}
+
 export function huggingFaceFileUrl(path) {
   const encodedPath = path.split('/').map(encodeURIComponent).join('/');
   return `${BUCKET_URL}/resolve/${encodedPath}?download=false`;

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   applyFolderCounts,
   countFilesByDirectory,
+  describeShortcutTarget,
   extractUrlFromShortcut,
   formatBytes,
   formatFolderCount,
@@ -13,6 +14,7 @@ import {
   isOfficeWebViewerExtension,
   isOneNoteExtension,
   normalizeBucketItem,
+  parseInternetShortcut,
   searchItems,
   sortItems,
 } from '../src/utils/files.js';
@@ -150,4 +152,36 @@ test('le catalogue d’aperçu local fournit des effectifs hors ligne', () => {
   assert.ok(items.length > 0);
   assert.ok(totalFiles > 0);
   assert.ok(Number.isFinite(counts.GM));
+});
+
+test('les raccourcis .url sont parsés (URL, icône, section ignorée)', () => {
+  const shortcut = parseInternetShortcut(
+    '[InternetShortcut]\r\n'
+    + 'URL=https://onenote.com/page?x=1&y=2\r\n'
+    + 'IconFile=https://example.com/icon.ico\r\n'
+    + 'IconIndex=0\r\n'
+    + 'Modified=20240101120000\r\n'
+    + '[Autre]\r\n'
+    + 'URL=https://piege.example/\r\n',
+  );
+  assert.equal(shortcut.url, 'https://onenote.com/page?x=1&y=2');
+  assert.equal(shortcut.iconFile, 'https://example.com/icon.ico');
+  assert.equal(shortcut.iconIndex, '0');
+  assert.equal(shortcut.modified, '20240101120000');
+  assert.equal(extractUrlFromShortcut('[InternetShortcut]\nURL = https://exemple.fr/a\n'), 'https://exemple.fr/a');
+  assert.deepEqual(
+    Object.values(parseInternetShortcut('pas un raccourci')),
+    ['', '', '', '', '', ''],
+  );
+});
+
+test('les cibles de raccourcis sont qualifiées pour l’affichage', () => {
+  assert.equal(describeShortcutTarget('https://univ.fr/cours').kind, 'web');
+  assert.equal(describeShortcutTarget('https://onedrive.live.com/x').kind, 'onenote-web');
+  assert.equal(describeShortcutTarget('https://ecole.sharepoint.com/y').kind, 'onenote-web');
+  assert.equal(describeShortcutTarget('onenote:https://x').kind, 'onenote-app');
+  assert.equal(describeShortcutTarget('onenote:///C:/notes').kind, 'onenote-app');
+  assert.equal(describeShortcutTarget('file:///C:/doc.pdf').kind, 'file');
+  assert.equal(describeShortcutTarget('ftp://serveur/f').kind, 'unknown');
+  assert.equal(describeShortcutTarget('').kind, 'empty');
 });

@@ -14,6 +14,15 @@ const OFFICE_WEB_EXTENSIONS = new Set([
   'doc', 'docx', 'docm', 'xls', 'xlsx', 'xlsm', 'ppt', 'pptx', 'pptm',
   'potx', 'ppsx',
 ]);
+/** Extensions rendues localement dans le navigateur (sans service externe). */
+const OFFICE_LOCAL_DOC_EXTENSIONS = new Set(['docx', 'docm']);
+const OFFICE_LOCAL_SHEET_EXTENSIONS = new Set(['xls', 'xlsx', 'xlsm']);
+const OFFICE_LOCAL_SLIDES_EXTENSIONS = new Set(['pptx', 'pptm']);
+/** Extensions convertibles en PDF par le Space LibreOffice (`/api/office/pdf`). */
+const OFFICE_CONVERTIBLE_EXTENSIONS = new Set([
+  'doc', 'docx', 'docm', 'xls', 'xlsx', 'xlsm', 'ppt', 'pptx', 'pptm',
+  'odt', 'ods', 'odp',
+]);
 const ONENOTE_EXTENSIONS = new Set(['one', 'onenote', 'url']);
 const MODEL_EXTENSIONS = new Set([
   'dwg', 'dxf', 'rvt', 'rfa', 'nwc', 'nwd', 'nwf', 'ifc',
@@ -65,14 +74,96 @@ export function isOneNoteExtension(extension = '') {
 }
 
 /**
+ * Type de rendu local disponible pour une extension Office.
+ *
+ * Retourne `'docx'` (document), `'xlsx'` (classeur), `'pptx'` (texte des
+ * diapos) ou `null` quand aucun rendu 100 % navigateur n’existe.
+ */
+export function officeLocalKind(extension = '') {
+  const value = String(extension).toLowerCase();
+  if (OFFICE_LOCAL_DOC_EXTENSIONS.has(value)) return 'docx';
+  if (OFFICE_LOCAL_SHEET_EXTENSIONS.has(value)) return 'xlsx';
+  if (OFFICE_LOCAL_SLIDES_EXTENSIONS.has(value)) return 'pptx';
+  return null;
+}
+
+/** Extensions convertibles en PDF par le backend LibreOffice. */
+export function isOfficeConvertibleExtension(extension = '') {
+  return OFFICE_CONVERTIBLE_EXTENSIONS.has(String(extension).toLowerCase());
+}
+
+/**
  * Extrait l’adresse cible d’un raccourci Windows `.url` (bloc `[InternetShortcut]`).
  */
 export function extractUrlFromShortcut(content = '') {
-  if (typeof content !== 'string') return '';
-  const lines = content.split(/\r?\n/);
-  const urlLine = lines.find((line) => /^url\s*=/i.test(line.trim()));
-  if (!urlLine) return '';
-  return String(urlLine.slice(urlLine.indexOf('=') + 1).trim());
+  return parseInternetShortcut(content).url;
+}
+
+/**
+ * Parse un raccourci Windows `.url` (format INI, bloc `[InternetShortcut]`).
+ * Seule la première valeur de chaque clé est conservée.
+ */
+export function parseInternetShortcut(content = '') {
+  const result = {
+    url: '',
+    baseUrl: '',
+    iconFile: '',
+    iconIndex: '',
+    hotkey: '',
+    modified: '',
+  };
+  if (typeof content !== 'string') return result;
+
+  let section = '';
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith(';') || line.startsWith('#')) continue;
+    const sectionMatch = line.match(/^\[(.+)\]$/);
+    if (sectionMatch) {
+      section = sectionMatch[1].trim().toLowerCase();
+      continue;
+    }
+    if (section !== 'internetshortcut') continue;
+    const separator = line.indexOf('=');
+    if (separator === -1) continue;
+    const key = line.slice(0, separator).trim().toLowerCase();
+    const value = line.slice(separator + 1).trim();
+    if (key === 'url' && !result.url) result.url = value;
+    else if (key === 'baseurl' && !result.baseUrl) result.baseUrl = value;
+    else if (key === 'iconfile' && !result.iconFile) result.iconFile = value;
+    else if (key === 'iconindex' && !result.iconIndex) result.iconIndex = value;
+    else if (key === 'hotkey' && !result.hotkey) result.hotkey = value;
+    else if (key === 'modified' && !result.modified) result.modified = value;
+  }
+  return result;
+}
+
+/**
+ * Qualifie la cible d’un raccourci pour l’affichage.
+ * Retourne `{ kind, label }` avec kind parmi :
+ * `onenote-web`, `onenote-app`, `web`, `file`, `unknown`, `empty`.
+ */
+export function describeShortcutTarget(url = '') {
+  const value = String(url || '').trim();
+  if (!value) return { kind: 'empty', label: 'Lien vide' };
+  if (/^onenote:/i.test(value)) return { kind: 'onenote-app', label: 'Lien OneNote' };
+  if (/^file:/i.test(value)) return { kind: 'file', label: 'Fichier local' };
+
+  let hostname = '';
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return { kind: 'unknown', label: 'Lien externe' };
+    }
+    hostname = parsed.hostname.toLowerCase();
+  } catch {
+    return { kind: 'unknown', label: 'Lien externe' };
+  }
+
+  if (/(^|\.)(onenote\.com|onenote\.officeapps\.live\.com|onedrive\.live\.com|sharepoint\.com)$/.test(hostname)) {
+    return { kind: 'onenote-web', label: 'OneNote en ligne' };
+  }
+  return { kind: 'web', label: 'Page web' };
 }
 
 export function normalizeBucketItem(item) {

@@ -1,5 +1,5 @@
 ---
-title: SolidWorks to GLB Converter
+title: ENISE Converters (3D + Office)
 emoji: 🔄
 colorFrom: blue
 colorTo: green
@@ -9,9 +9,14 @@ pinned: false
 license: mit
 ---
 
-# SolidWorks (.sldprt) to GLB Converter
+# ENISE Converters
 
-This Space converts SolidWorks part files (.sldprt) to GLB format for web visualization using `<model-viewer>`.
+This Space powers the file conversions of the ENISE Docs website:
+
+1. **SolidWorks (.sldprt) → GLB** for web visualization using `<model-viewer>`.
+2. **Office documents → PDF** (Word, Excel, PowerPoint, OpenDocument) with
+   headless LibreOffice, consumed by the Cloudflare Worker
+   (`GET /api/office/pdf` → `POST /api/convert-office`).
 
 ## How it works
 
@@ -93,6 +98,24 @@ console.log("Converted GLB:", result.data);
 </model-viewer>
 ```
 
+## Office → PDF conversion API
+
+`POST /api/convert-office` accepts a multipart upload (`file` field, original
+filename **must keep its extension** so LibreOffice detects the format) and
+returns `application/pdf` on success:
+
+```bash
+curl -X POST https://<your-space>.hf.space/api/convert-office \
+  -F "file=@document.docx;filename=document.docx" \
+  --output document.pdf
+```
+
+Supported inputs: `.doc`, `.docx`, `.docm`, `.xls`, `.xlsx`, `.xlsm`,
+`.ppt`, `.pptx`, `.pptm`, `.odt`, `.ods`, `.odp` (max 25 MB).
+Failures return JSON (`{"detail": "..."}`) with a `4xx`/`5xx` status.
+A `GET /api/health` endpoint is available for monitoring, and the
+"Office to PDF" Gradio tab exposes the same engine for manual testing.
+
 ## Cold Start Notice
 
 ⏱️ **First request may take 30-60 seconds** - Free Hugging Face Spaces go to sleep after inactivity. Subsequent requests are faster.
@@ -124,7 +147,9 @@ The display layer (`<model-viewer>`) remains identical regardless of conversion 
 
 - **Base Image**: `python:3.11-slim`
 - **FreeCAD**: Installed via apt (`freecad`, `freecad-python3`)
-- **Python Dependencies**: gradio, trimesh, numpy
+- **LibreOffice**: headless Writer/Calc/Impress + Liberation/DejaVu fonts
+- **Python Dependencies**: gradio, trimesh, numpy, uvicorn, python-multipart
+- **Server**: FastAPI app (custom `/api/*` routes) with the Gradio UI mounted at `/`
 - **Port**: 7860
 
 ## License
