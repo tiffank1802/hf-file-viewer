@@ -27,12 +27,9 @@ const OFFICE_CONVERTIBLE_EXTENSIONS = new Set([
   'doc', 'docx', 'docm', 'xls', 'xlsx', 'xlsm', 'ppt', 'pptx', 'pptm',
   'odt', 'ods', 'odp',
 ]);
-<<<<<<< HEAD
-=======
 const DEFAULT_LINK_PREVIEW_CACHE_TTL = 24 * 60 * 60;
 const LINK_PREVIEW_TIMEOUT_MS = 10_000;
 const MAX_LINK_PREVIEW_BYTES = 128 * 1024;
->>>>>>> c60a2a396285e3c466b2e681d7b92406389a3e68
 
 const API_SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
@@ -112,14 +109,11 @@ export default {
         return await handleOfficePdf(request, env, ctx);
       }
 
-<<<<<<< HEAD
-=======
       if (url.pathname === '/api/link/preview') {
         assertMethod(request, ['GET']);
         return await handleLinkPreview(request, env, ctx);
       }
 
->>>>>>> c60a2a396285e3c466b2e681d7b92406389a3e68
       return jsonResponse(
         { error: 'Route API introuvable.' },
         { status: 404, cacheControl: 'no-store' },
@@ -1099,8 +1093,6 @@ async function officeConvertHttpError(response) {
   return new HttpError(response.status >= 500 ? 502 : response.status, `Conversion PDF : ${message}`);
 }
 
-<<<<<<< HEAD
-=======
 /**
  * Indique si un nom d’hôte est interdit pour l’aperçu de lien.
  *
@@ -1340,7 +1332,6 @@ async function handleLinkPreview(request, env, ctx) {
   });
 }
 
->>>>>>> c60a2a396285e3c466b2e681d7b92406389a3e68
 export async function fetchBucketTree(env, prefix = '', recursive = false) {
   const bucketId = getBucketId(env);
   const items = [];
