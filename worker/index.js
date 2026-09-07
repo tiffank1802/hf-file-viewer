@@ -27,6 +27,12 @@ const OFFICE_CONVERTIBLE_EXTENSIONS = new Set([
   'doc', 'docx', 'docm', 'xls', 'xlsx', 'xlsm', 'ppt', 'pptx', 'pptm',
   'odt', 'ods', 'odp',
 ]);
+<<<<<<< HEAD
+=======
+const DEFAULT_LINK_PREVIEW_CACHE_TTL = 24 * 60 * 60;
+const LINK_PREVIEW_TIMEOUT_MS = 10_000;
+const MAX_LINK_PREVIEW_BYTES = 128 * 1024;
+>>>>>>> c60a2a396285e3c466b2e681d7b92406389a3e68
 
 const API_SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
@@ -106,6 +112,14 @@ export default {
         return await handleOfficePdf(request, env, ctx);
       }
 
+<<<<<<< HEAD
+=======
+      if (url.pathname === '/api/link/preview') {
+        assertMethod(request, ['GET']);
+        return await handleLinkPreview(request, env, ctx);
+      }
+
+>>>>>>> c60a2a396285e3c466b2e681d7b92406389a3e68
       return jsonResponse(
         { error: 'Route API introuvable.' },
         { status: 404, cacheControl: 'no-store' },
@@ -1085,6 +1099,248 @@ async function officeConvertHttpError(response) {
   return new HttpError(response.status >= 500 ? 502 : response.status, `Conversion PDF : ${message}`);
 }
 
+<<<<<<< HEAD
+=======
+/**
+ * Indique si un nom d’hôte est interdit pour l’aperçu de lien.
+ *
+ * Refuse le localhost, les IP privées/bouclage/lien-local littérales, les
+ * IPv6 littérales et les noms sans domaine : l’URL prévisualisée provient
+ * d’un fichier du bucket, ce garde-fou anti-SSRF reste volontairement
+ * simple (aucune résolution DNS dans un Worker).
+ */
+export function isBlockedLinkHost(hostname = '') {
+  const host = String(hostname || '').trim().toLowerCase().replace(/\.+$/, '');
+  if (!host) return true;
+  if (host === 'localhost' || host === '::1' || host === '[::1]') return true;
+  if (['local', 'localhost', 'internal', 'invalid', 'test', 'example'].includes(host)) return true;
+  if (['.local', '.localhost', '.internal', '.invalid', '.test', '.example'].some((suffix) => host.endsWith(suffix))) {
+    return true;
+  }
+
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4) {
+    const parts = ipv4.slice(1).map(Number);
+    if (parts.some((part) => part > 255)) return true;
+    const [a, b] = parts;
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true;
+    if (a >= 224) return true;
+    return false;
+  }
+
+  if (host.includes(':')) return true;
+  if (!host.includes('.')) return true;
+  return false;
+}
+
+function decodeHtmlEntities(text = '') {
+  return String(text || '')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0*39;|&#x27;|&apos;/gi, "'")
+    .replace(/&#(\d{1,6});/g, (_match, code) => {
+      const point = Number(code);
+      return Number.isFinite(point) && point > 0 && point <= 0x10FFFF
+        ? String.fromCodePoint(point)
+        : _match;
+    })
+    .replace(/&#x([0-9a-f]{1,6});/gi, (_match, code) => {
+      const point = Number.parseInt(code, 16);
+      return Number.isFinite(point) && point > 0 && point <= 0x10FFFF
+        ? String.fromCodePoint(point)
+        : _match;
+    })
+    .replace(/&amp;/gi, '&');
+}
+
+function htmlTagAttribute(tag = '', name = '') {
+  const match = String(tag || '').match(
+    new RegExp(`${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'),
+  );
+  if (!match) return '';
+  return (match[2] ?? match[3] ?? match[4] ?? '').trim();
+}
+
+function resolveLinkUrl(value = '', base = '') {
+  try {
+    const resolved = new URL(String(value || '').trim(), base);
+    if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') return '';
+    return resolved.href;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Extrait titre, description et image d’une page HTML (Open Graph puis
+ * balises classiques). Fonction pure et synchrone : testée unitairement.
+ */
+export function extractLinkMeta(html = '', baseUrl = '') {
+  const source = String(html || '');
+  const clean = (value, max) => decodeHtmlEntities(value).replace(/\s+/g, ' ').trim().slice(0, max);
+
+  let title = '';
+  let description = '';
+  let image = '';
+  let siteName = '';
+  let icon = '';
+
+  const titleMatch = source.match(/<title[^>]*>([^<]{1,500})<\/title\s*>/i);
+  if (titleMatch) title = clean(titleMatch[1], 200);
+
+  // Les balises Open Graph priment sur `<title>` / `description` classiques.
+  for (const tag of source.match(/<meta\s+[^>]*>/gi) || []) {
+    const key = (htmlTagAttribute(tag, 'property') || htmlTagAttribute(tag, 'name')).toLowerCase();
+    const content = htmlTagAttribute(tag, 'content');
+    if (!key || !content) continue;
+    if (key === 'og:title') title = clean(content, 200);
+    else if (key === 'og:description') description = clean(content, 500);
+    else if (key === 'description' && !description) description = clean(content, 500);
+    else if (key === 'og:image' && !image) image = content;
+    else if (key === 'og:site_name' && !siteName) siteName = clean(content, 120);
+  }
+
+  for (const tag of source.match(/<link\s+[^>]*>/gi) || []) {
+    const rel = htmlTagAttribute(tag, 'rel').toLowerCase();
+    if (!rel.split(/\s+/).some((token) => token === 'icon' || token === 'apple-touch-icon')) continue;
+    const href = htmlTagAttribute(tag, 'href');
+    if (href) {
+      icon = href;
+      if (rel.split(/\s+/).includes('icon')) break;
+    }
+  }
+
+  return {
+    title,
+    description,
+    image: image ? resolveLinkUrl(image, baseUrl) : '',
+    siteName,
+    icon: icon ? resolveLinkUrl(icon, baseUrl) : '',
+  };
+}
+
+export async function readCappedText(body, maxBytes) {
+  if (!body || typeof body.getReader !== 'function') return '';
+  const reader = body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (total < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done || !value) break;
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // Le flux est déjà fermé ou consommé : rien à annuler.
+    }
+    reader.releaseLock();
+  }
+
+  const merged = new Uint8Array(Math.min(total, maxBytes));
+  let offset = 0;
+  for (const chunk of chunks) {
+    if (offset >= maxBytes) break;
+    const slice = chunk.slice(0, maxBytes - offset);
+    merged.set(slice, offset);
+    offset += slice.length;
+  }
+  return new TextDecoder('utf-8', { fatal: false }).decode(merged);
+}
+
+/**
+ * Aperçu enrichi d’un lien (fichiers `.url`) : suit les redirections, lit le
+ * début du HTML et renvoie titre/description/image Open Graph en JSON.
+ * Les échecs renvoient `{ ok: false }` (jamais d’erreur HTTP) pour que la
+ * carte de lien dégrade gracieusement côté frontend.
+ */
+async function handleLinkPreview(request, env, ctx) {
+  const target = new URL(request.url).searchParams.get('url') || '';
+  if (!target || target.length > 2000) {
+    throw new HttpError(400, 'Paramètre url manquant ou trop long.');
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(target);
+  } catch {
+    throw new HttpError(400, 'URL de destination invalide.');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new HttpError(400, 'Seules les URL http(s) sont acceptées.');
+  }
+  if (parsed.username || parsed.password) {
+    throw new HttpError(400, 'URL de destination invalide.');
+  }
+  if (isBlockedLinkHost(parsed.hostname)) {
+    throw new HttpError(400, 'Cette adresse ne peut pas être prévisualisée.');
+  }
+
+  const cache = caches.default;
+  const cacheKey = makeCacheKey('link', 'global', { url: hashIdentifier(target) });
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    return responseFromCache(cached, 'HIT', 'public, max-age=3600, stale-while-revalidate=86400');
+  }
+
+  let upstream;
+  try {
+    upstream = await fetch(target, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(LINK_PREVIEW_TIMEOUT_MS),
+      headers: {
+        Accept: 'text/html,application/xhtml+xml',
+        'User-Agent': 'enise-docs-link-preview/1.0',
+      },
+    });
+  } catch {
+    return jsonResponse(
+      { ok: false, url: target, error: 'La page liée est injoignable.' },
+      { cacheControl: 'public, max-age=300' },
+    );
+  }
+
+  if (!upstream.ok) {
+    return jsonResponse(
+      { ok: false, url: target, error: `La page liée répond ${upstream.status}.` },
+      { cacheControl: 'public, max-age=300' },
+    );
+  }
+
+  const contentType = (upstream.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+  const finalUrl = upstream.url || target;
+  const isHtml = contentType === 'text/html' || contentType === 'application/xhtml+xml';
+  const meta = isHtml ? extractLinkMeta(await readCappedText(upstream.body, MAX_LINK_PREVIEW_BYTES), finalUrl) : {
+    title: '',
+    description: '',
+    image: '',
+    siteName: '',
+    icon: '',
+  };
+
+  const body = JSON.stringify({ ok: true, url: finalUrl, contentType, ...meta });
+  storeJsonInCache(
+    ctx,
+    cache,
+    cacheKey,
+    body,
+    positiveInteger(env.LINK_PREVIEW_CACHE_TTL, DEFAULT_LINK_PREVIEW_CACHE_TTL),
+  );
+  return jsonResponse(body, {
+    serialized: true,
+    cacheControl: 'public, max-age=3600, stale-while-revalidate=86400',
+    headers: { 'X-Cache-Status': 'MISS' },
+  });
+}
+
+>>>>>>> c60a2a396285e3c466b2e681d7b92406389a3e68
 export async function fetchBucketTree(env, prefix = '', recursive = false) {
   const bucketId = getBucketId(env);
   const items = [];
