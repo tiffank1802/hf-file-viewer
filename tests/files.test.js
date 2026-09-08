@@ -37,7 +37,13 @@ test('les fichiers 3D sont reconnus pour Autodesk', () => {
   assert.equal(getFileKind('plan.dwg'), 'model');
   assert.equal(isModelExtension('RVT'), true);
   assert.equal(isModelExtension('ifc'), true);
+  assert.equal(isModelExtension('dwf'), true);
+  assert.equal(isModelExtension('sat'), true);
+  assert.equal(isModelExtension('x_t'), true);
   assert.equal(isModelExtension('pdf'), false);
+  assert.equal(getFileKind('plan.dwf'), 'model');
+  assert.equal(getFileKind('volume.sat'), 'model');
+  assert.equal(getFileKind('piece.x_t'), 'model');
 });
 
 test('les documents Office et OneNote sont détectés pour le viewer Office', () => {

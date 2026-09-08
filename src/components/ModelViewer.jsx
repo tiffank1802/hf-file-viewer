@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import { getExtension, isModelExtension, modelViewerKind } from '../utils/files';
+import { getExtension, isModelExtension, isShareCadExtension, modelViewerKind } from '../utils/files';
 import AutodeskViewer from './AutodeskViewer';
 import GlbViewer from './GlbViewer';
+import ShareCadViewer from './ShareCadViewer';
 import OfficeModeTabs from './office/OfficeModeTabs';
 import { ViewerError, ViewerLoader } from './office/common';
 
@@ -37,8 +38,9 @@ function useModel3dStatus(enabled) {
 }
 
 /**
- * Routeur des aperçus 3D : conversion GLB gratuite (pipeline type 3Dfindit)
- * ou viewer Autodesk (fidélité maximale, configuration requise).
+ * Routeur des aperçus 3D : conversion GLB gratuite (pipeline type 3Dfindit),
+ * viewer Autodesk (fidélité maximale, configuration requise) ou plugin
+ * ShareCAD (tiers gratuit, sans conversion, sur clic explicite).
  */
 export default function ModelViewer({ file }) {
   const extension = getExtension(file.path);
@@ -61,6 +63,9 @@ export default function ModelViewer({ file }) {
     modes.push({ id: 'web', label: 'Aperçu Web', hint: 'Modèle converti en GLB (gratuit, fonctionne partout)' });
   }
   modes.push({ id: 'autodesk', label: 'Autodesk', hint: 'Viewer Autodesk (fidélité maximale, configuration requise)' });
+  if (isShareCadExtension(extension)) {
+    modes.push({ id: 'sharecad', label: 'ShareCAD', hint: 'Service tiers gratuit, sans conversion (fichier envoyé à sharecad.org)' });
+  }
 
   // Le statut de conversion est encore inconnu et le mode Web est possible.
   if (glbKind === 'glb' && convertStatus === 'loading') {
@@ -81,6 +86,8 @@ export default function ModelViewer({ file }) {
       <div className="office-viewer-body">
         {activeMode === 'web' ? (
           <GlbViewer file={file} onSwitchMode={switchActionFor('web')} />
+        ) : activeMode === 'sharecad' ? (
+          <ShareCadViewer file={file} />
         ) : (
           <AutodeskViewer file={file} />
         )}

@@ -702,6 +702,11 @@
   .model-meta-item { display: flex; align-items: baseline; gap: 6px; }
   .model-meta-item dt { margin: 0; color: var(--ink-faint); font-size: 0.58rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
   .model-meta-item dd { margin: 0; color: var(--ink); font-size: 0.68rem; font-weight: 700; }
+  .sharecad-viewer { display: flex; flex: 1; min-height: 0; flex-direction: column; background: white; }
+  .sharecad-frame { flex: 1; width: 100%; min-height: 0; border: 0; }
+  .office-viewer-body > .sharecad-viewer { flex: 1; }
+  .sharecad-consent { flex: 1; }
+  .sharecad-consent .viewer-switch { display: inline-flex; align-items: center; gap: 8px; }
   .office-modes { display: flex; flex: 0 0 auto; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: #f6f8f6; }
   .office-modes button { padding: 7px 13px; border: 1px solid var(--line); border-radius: 999px; background: white; color: var(--ink-soft); font-size: 0.6rem; font-weight: 750; cursor: pointer; transition: color 150ms ease, background 150ms ease, border-color 150ms ease; }
   .office-modes button:hover { border-color: rgba(0, 122, 94, 0.3); color: var(--green); }

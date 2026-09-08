@@ -25,9 +25,9 @@ const OFFICE_CONVERTIBLE_EXTENSIONS = new Set([
 ]);
 const ONENOTE_EXTENSIONS = new Set(['one', 'onenote', 'url']);
 const MODEL_EXTENSIONS = new Set([
-  'dwg', 'dxf', 'rvt', 'rfa', 'nwc', 'nwd', 'nwf', 'ifc',
+  'dwg', 'dxf', 'dwf', 'rvt', 'rfa', 'nwc', 'nwd', 'nwf', 'ifc',
   'ipt', 'iam', 'sldprt', 'sldasm', 'stp', 'step', 'igs', 'iges',
-  'obj', 'stl', '3ds', 'fbx', 'dae', 'skp', 'max', 'ma', 'mb',
+  'obj', 'stl', 'sat', 'x_t', 'x_b', '3ds', 'fbx', 'dae', 'skp', 'max', 'ma', 'mb',
 ]);
 const ARCHIVE_EXTENSIONS = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'bz2']);
 
@@ -101,6 +101,16 @@ const MODEL_GLB_EXTENSIONS = new Set(['step', 'stp', 'iges', 'igs', 'stl', 'obj'
  */
 export function modelViewerKind(extension = '') {
   return MODEL_GLB_EXTENSIONS.has(String(extension).toLowerCase()) ? 'glb' : null;
+}
+
+/** Formats visualisables via le plugin iframe gratuit ShareCAD (sans conversion). */
+const SHARECAD_EXTENSIONS = new Set([
+  'dwg', 'dxf', 'dwf', 'stp', 'step', 'igs', 'iges',
+  'stl', 'sldprt', 'sat', 'x_t', 'x_b',
+]);
+
+export function isShareCadExtension(extension = '') {
+  return SHARECAD_EXTENSIONS.has(String(extension).toLowerCase());
 }
 
 /**

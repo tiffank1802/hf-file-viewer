@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { modelViewerKind } from '../src/utils/files.js';
+import { isShareCadExtension, modelViewerKind } from '../src/utils/files.js';
 import worker, {
   getModel3dConvertUrl,
   hasGlbMagic,
@@ -182,4 +182,16 @@ test('/api/model3d/glb refuse les formats et qualités hors contrat', async () =
     globalThis.fetch = originalFetch;
     globalThis.caches = originalCaches;
   }
+});
+
+test('l’onglet ShareCAD couvre les formats du plugin (dont sldprt et dwg)', () => {
+  const sharecad = ['dwg', 'dxf', 'dwf', 'step', 'stp', 'iges', 'igs', 'stl', 'sldprt', 'sat', 'x_t', 'x_b'];
+  for (const extension of sharecad) {
+    assert.equal(isShareCadExtension(extension), true);
+  }
+  const unsupported = ['rvt', 'ifc', 'obj', 'sldasm', '3ds', 'fbx', 'pdf', ''];
+  for (const extension of unsupported) {
+    assert.equal(isShareCadExtension(extension), false);
+  }
+  assert.equal(isShareCadExtension('DWG'), true);
 });

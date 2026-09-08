@@ -101,6 +101,17 @@ export function model3dGlbUrl(file, quality = 'standard') {
   return `/api/model3d/glb?${params}`;
 }
 
+const SHARECAD_FRAME_URL = 'https://iframe.sharecad.org/cadframe/load';
+
+/**
+ * URL de l’iframe ShareCAD pour un fichier (`/api/file` en absolu, encodée).
+ * Les serveurs ShareCAD téléchargent le fichier depuis cette URL publique.
+ */
+export function shareCadFrameUrl(file) {
+  const absoluteUrl = `${window.location.origin}${fileProxyUrl(file.path)}`;
+  return `${SHARECAD_FRAME_URL}?url=${encodeURIComponent(absoluteUrl)}`;
+}
+
 export function huggingFaceFileUrl(path) {
   const encodedPath = path.split('/').map(encodeURIComponent).join('/');
   return `${BUCKET_URL}/resolve/${encodedPath}?download=false`;
