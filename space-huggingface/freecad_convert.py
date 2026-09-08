@@ -18,6 +18,7 @@ def convert_sldprt_to_stl(input_path, output_path):
     """
     try:
         import FreeCAD
+        import Import
         import Mesh
     except ImportError as e:
         return False, f"Failed to import FreeCAD modules: {e}"
@@ -26,9 +27,26 @@ def convert_sldprt_to_stl(input_path, output_path):
     FreeCAD.ParamGet("User parameter:BaseApp/Preferences/General").SetBool("SkipFirstRun", True)
     
     try:
-        # Open the document
-        doc = FreeCAD.openDocument(str(input_path))
-        
+        # Import the file (openDocument only reads native .FCStd files)
+        doc = FreeCAD.newDocument("SldprtImport")
+        try:
+            Import.insert(str(input_path), doc.Name)
+        except Exception as import_error:
+            try:
+                FreeCAD.closeDocument(doc.Name)
+            except Exception:
+                pass
+            return False, (
+                f"Failed to import .sldprt file ({import_error}). "
+                "SolidWorks import is experimental; export the part as STEP "
+                "for reliable conversion."
+            )
+
+        try:
+            doc.recompute()
+        except Exception:
+            pass
+
         if doc is None:
             return False, "Failed to open document. The .sldprt format may not be supported or the file is corrupted."
         

@@ -189,7 +189,7 @@ Ce viewer remplace l’ancienne intégration ONLYOFFICE : aucun document server 
 
 Les fichiers modèles (`.dwg`, `.dxf`, `.rvt`, `.rfa`, `.ifc`, `.ipt`, `.iam`, `.sldprt`, `.sldasm`, `.stp`, `.step`, `.igs`, `.iges`, `.obj`, `.stl`, `.3ds`, `.fbx`, `.dae`, `.skp`, …) sont ouverts dans la modale d’aperçu avec rotation, zoom et panoramique à la souris. Deux moteurs au choix (onglets, préférence mémorisée) :
 
-- **Aperçu Web** (défaut, gratuit) : les formats `.step`, `.stp`, `.iges`, `.igs`, `.stl`, `.obj` et `.sldprt` sont convertis en GLB par le Space FreeCAD puis affichés en WebGL (three.js), avec choix de la qualité du maillage (brouillon/standard/fin), rotation automatique et statistiques (triangles, dimensions, volume).
+- **Aperçu Web** (défaut, gratuit) : les formats `.step`, `.stp`, `.iges`, `.igs`, `.stl`, `.obj` et `.sldprt` (support expérimental : en cas d’échec, exporter en STEP ou basculer sur Autodesk) sont convertis en GLB par le Space FreeCAD puis affichés en WebGL (three.js), avec choix de la qualité du maillage (brouillon/standard/fin), rotation automatique et statistiques (triangles, dimensions, volume).
 - **Autodesk** (fidélité maximale, configuration requise) : tous les formats via APS / Model Derivative.
 
 Les formats non convertibles en GLB (`.dwg`, `.rvt`, `.catpart`, assemblages, …) n’affichent que l’onglet Autodesk ; si Autodesk APS n’est pas configuré, la modale conserve l’écran de téléchargement actuel.

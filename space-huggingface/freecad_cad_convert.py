@@ -4,8 +4,10 @@ FreeCAD batch conversion script: CAD (.step/.stp/.iges/.igs/.sldprt) to .stl.
 Called headless by app.py:
     freecadcmd --console freecad_cad_convert.py <input> <output.stl> <tolerance_mm>
 
-Every solid found in the document is tessellated with the requested linear
-deflection (mm) and all meshes are merged into a single STL by Mesh.export.
+The file is imported with the ``Import`` module (``FreeCAD.openDocument``
+only reads native .FCStd files), every solid found in the document is
+tessellated with the requested linear deflection (mm) and all meshes are
+merged into a single STL by Mesh.export.
 """
 
 import os
@@ -16,6 +18,7 @@ def convert_cad_to_stl(input_path, output_path, tolerance):
     """Convert a CAD file to STL, return (success: bool, message: str)."""
     try:
         import FreeCAD
+        import Import
         import Mesh
     except ImportError as exc:
         return False, f"Failed to import FreeCAD modules: {exc}"
@@ -23,17 +26,25 @@ def convert_cad_to_stl(input_path, output_path, tolerance):
     FreeCAD.ParamGet("User parameter:BaseApp/Preferences/General").SetBool("SkipFirstRun", True)
 
     try:
-        doc = FreeCAD.openDocument(str(input_path))
+        doc = FreeCAD.newDocument("CadImport")
     except Exception as exc:
-        return False, f"Failed to open document ({exc})."
-
-    if doc is None:
-        return False, "Failed to open document (unsupported or corrupted file)."
+        return False, f"Failed to create document ({exc})."
 
     try:
+        try:
+            Import.insert(str(input_path), doc.Name)
+        except Exception as exc:
+            return False, (
+                f"Failed to import '{os.path.basename(str(input_path))}' ({exc})."
+            )
+        try:
+            doc.recompute()
+        except Exception:
+            pass
+
         objects = list(doc.Objects or [])
         if not objects:
-            return False, "No objects found in the document."
+            return False, "Import produced no objects (unsupported or empty file)."
 
         meshes = []
         for obj in objects:

@@ -78,7 +78,7 @@ A `GET /api/health` endpoint is available for monitoring, and the
 
 ## Important Limitations (3D)
 
-⚠️ **Experimental Format Support**: the `.sldprt` import module in FreeCAD is experimental.
+⚠️ **Experimental Format Support**: the `.sldprt` import path in FreeCAD is experimental and often fails (proprietary format, reverse-engineered support at best).
 
 - ✅ Works best with **geometrically simple parts**
 - ⚠️ May fail with complex surfaces or recent SolidWorks features

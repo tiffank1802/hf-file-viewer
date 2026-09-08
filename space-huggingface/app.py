@@ -172,6 +172,29 @@ def _trimesh_to_glb(mesh_or_scene):
     return bytes(scene.export(file_type="glb")), meta
 
 
+def friendly_cad_error(extension: str, raw_details: str = "") -> str:
+    """
+    Map a FreeCAD failure to a short user-facing message (French site).
+
+    The raw freecadcmd output (tracebacks, log noise) is kept as a truncated
+    single-line suffix for debuggability; the actionable guidance comes first.
+    """
+    raw = " ".join((raw_details or "").split())
+    suffix = f" Détail technique : {raw[:200]}" if raw else ""
+    if extension == ".sldprt":
+        return (
+            "FreeCAD n’a pas pu lire ce fichier SolidWorks (format propriétaire, "
+            "support expérimental). Exportez la pièce en STEP depuis SolidWorks, "
+            "ou ouvrez-la avec l’onglet Autodesk." + suffix
+        )
+    if extension in (".step", ".stp", ".iges", ".igs"):
+        return (
+            "La pièce n’a pas pu être importée. Le fichier est peut-être corrompu, "
+            "vide ou utilise des fonctions non supportées." + suffix
+        )
+    return raw[:300] or "Conversion failed."
+
+
 def convert_cad_to_glb_bytes(data: bytes, extension: str, quality: str = "standard"):
     """
     Convert a CAD/mesh document to GLB with headless FreeCAD + trimesh.
@@ -237,7 +260,7 @@ def convert_cad_to_glb_bytes(data: bytes, extension: str, quality: str = "standa
                 ) from exc
             if result.returncode != 0 or not stl_path.exists():
                 details = (result.stderr or result.stdout or "").strip()
-                raise RuntimeError(f"FreeCAD conversion failed: {details[:500]}")
+                raise RuntimeError(friendly_cad_error(extension, details))
             try:
                 loaded = trimesh.load(str(stl_path), force="mesh")
             except Exception as exc:
