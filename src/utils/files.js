@@ -8,7 +8,7 @@ const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'mov', 'mkv', 'avi']);
 const OFFICE_EXTENSIONS = new Set([
   'doc', 'docx', 'docm', 'xls', 'xlsx', 'xlsm', 'ppt', 'pptx', 'pptm',
-  'odt', 'ods', 'odp', 'one', 'onenote', 'url',
+  'odt', 'ods', 'odp', 'odb', 'one', 'onenote', 'url',
 ]);
 const OFFICE_WEB_EXTENSIONS = new Set([
   'doc', 'docx', 'docm', 'xls', 'xlsx', 'xlsm', 'ppt', 'pptx', 'pptm',

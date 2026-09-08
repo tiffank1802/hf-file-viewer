@@ -27,6 +27,7 @@ test('les types de documents sont reconnus', () => {
   assert.equal(getFileKind('GM', 'directory'), 'folder');
   assert.equal(getFileKind('document.doc'), 'office');
   assert.equal(getFileKind('tableur.xls'), 'office');
+  assert.equal(getFileKind('base.odb'), 'office');
 });
 
 test('les fichiers 3D sont reconnus pour Autodesk', () => {

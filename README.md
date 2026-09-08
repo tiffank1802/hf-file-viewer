@@ -150,6 +150,7 @@ La modale d’aperçu propose jusqu’à **3 modes** (sélecteur en haut, préf�
 - Les librairies locales sont chargées en `import()` dynamique : le bundle initial n’augmente pas, aucun CDN externe n’est utilisé (aucune modification CSP requise).
 - Le classeur local offre onglets de feuilles, pagination et **export CSV** de la feuille active.
 - Le mode Microsoft nécessite toujours une URL publique : en développement `localhost`, utiliser l’**Aperçu local** ou l’URL publique exposée par l’environnement (`npm run dev:worker`).
+- Les bases `.odb` (LibreOffice Base) affichent leur **structure lue localement** (tables, requêtes, formulaires, états + moteur source) : aucun service web ne sait afficher une base de données, les données restent consultables après téléchargement dans LibreOffice Base.
 
 ### Conversion PDF via LibreOffice (mode « PDF »)
 

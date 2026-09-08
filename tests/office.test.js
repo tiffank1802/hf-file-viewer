@@ -22,6 +22,7 @@ test('le type de rendu local est détecté par extension', () => {
   assert.equal(officeLocalKind('doc'), null);
   assert.equal(officeLocalKind('ppt'), null);
   assert.equal(officeLocalKind('odt'), null);
+  assert.equal(officeLocalKind('odb'), null);
   assert.equal(officeLocalKind('pdf'), null);
   assert.equal(officeLocalKind(''), null);
 });
@@ -34,7 +35,7 @@ test('les extensions convertibles sont les mêmes côté front et Worker', () =>
     assert.equal(isConvertibleFile(extension.toUpperCase()), true, extension);
     assert.equal(isConvertibleWorker(extension.toUpperCase()), true, extension);
   }
-  for (const extension of ['pdf', 'one', 'url', 'txt', 'potx', 'ppsx', 'zip', '']) {
+  for (const extension of ['pdf', 'one', 'url', 'txt', 'potx', 'ppsx', 'zip', 'odb', '']) {
     assert.equal(isConvertibleFile(extension), false, extension);
     assert.equal(isConvertibleWorker(extension), false, extension);
   }
@@ -72,7 +73,7 @@ test('le viewer Microsoft couvre les formats legacy et OpenDocument', () => {
     assert.equal(isOfficeWebViewerExtension(extension), true, extension);
     assert.equal(isOfficeWebViewerExtension(extension.toUpperCase()), true, extension);
   }
-  for (const extension of ['pdf', 'one', 'onenote', 'url', 'txt', 'rtf', 'zip', '']) {
+  for (const extension of ['pdf', 'one', 'onenote', 'url', 'txt', 'rtf', 'zip', 'odb', '']) {
     assert.equal(isOfficeWebViewerExtension(extension), false, extension);
   }
 });

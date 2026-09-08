@@ -15,6 +15,7 @@ import {
 import { FileTypeIcon } from './Icons';
 import ConvertedPdfViewer from './office/ConvertedPdfViewer';
 import DocxViewer from './office/DocxViewer';
+import OdbViewer from './office/OdbViewer';
 import OfficeModeTabs from './office/OfficeModeTabs';
 import PptxViewer from './office/PptxViewer';
 import UrlViewer from './office/UrlViewer';
@@ -102,6 +103,10 @@ export default function OfficeViewer({ file }) {
 
   if (!isOfficeExtension(extension)) {
     return <OfficeFallback file={file} message="Ce format n’est pas pris en charge par le viewer Office." />;
+  }
+
+  if (extension === 'odb') {
+    return <OdbViewer file={file} />;
   }
 
   if (extension === 'url') {
