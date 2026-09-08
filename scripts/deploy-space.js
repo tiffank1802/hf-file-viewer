@@ -239,7 +239,8 @@ async function waitForDeployment(spaceId, timeout = 600000) {
       }
 
       if (stage === 'RUNTIME_ERROR' || stage === 'BUILD_ERROR') {
-        console.error(`❌ Erreur de déploiement: ${runtime.message || 'Erreur inconnue'}`);
+        const detail = runtime.message || JSON.stringify(runtime);
+        console.error(`❌ Erreur de déploiement: ${detail}`);
         return false;
       }
     } catch (error) {

@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-impress \
     fonts-dejavu \
     fonts-liberation \
-    libgl1-mesa-glx \
-    libegl1-mesa \
+    libgl1 \
+    libegl1 \
     libxrender1 \
     libxi6 \
     libxcursor1 \
