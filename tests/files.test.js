@@ -60,7 +60,9 @@ test('les documents Office et OneNote sont détectés pour le viewer Office', ()
   assert.equal(isOfficeWebViewerExtension('xlsx'), true);
   assert.equal(isOfficeWebViewerExtension('ppt'), true);
   assert.equal(isOfficeWebViewerExtension('pptx'), true);
-  assert.equal(isOfficeWebViewerExtension('odt'), false);
+  assert.equal(isOfficeWebViewerExtension('odt'), true);
+  assert.equal(isOfficeWebViewerExtension('ods'), true);
+  assert.equal(isOfficeWebViewerExtension('odp'), true);
   assert.equal(isOfficeWebViewerExtension('one'), false);
 
   assert.equal(isOneNoteExtension('url'), true);

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isOfficeConvertibleExtension as isConvertibleFile,
+  isOfficeWebViewerExtension,
   officeLocalKind,
 } from '../src/utils/files.js';
 import {
@@ -60,4 +61,18 @@ test('les clés de conversion sont stables, courtes et sensibles au contenu', ()
   assert.notEqual(first, makeOfficeSourceKey('GM/cours.docx', '2048', '2026-01-01'));
   assert.notEqual(first, makeOfficeSourceKey('GM/autre.docx', '1024', '2026-01-01'));
   assert.notEqual(first, makeOfficeSourceKey('GM/cours.docx', '1024', '2026-02-01'));
+});
+
+test('le viewer Microsoft couvre les formats legacy et OpenDocument', () => {
+  const viewer = [
+    'doc', 'docx', 'docm', 'xls', 'xlsx', 'xlsm', 'ppt', 'pptx', 'pptm',
+    'potx', 'ppsx', 'odt', 'ods', 'odp',
+  ];
+  for (const extension of viewer) {
+    assert.equal(isOfficeWebViewerExtension(extension), true, extension);
+    assert.equal(isOfficeWebViewerExtension(extension.toUpperCase()), true, extension);
+  }
+  for (const extension of ['pdf', 'one', 'onenote', 'url', 'txt', 'rtf', 'zip', '']) {
+    assert.equal(isOfficeWebViewerExtension(extension), false, extension);
+  }
 });

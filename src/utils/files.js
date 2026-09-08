@@ -12,7 +12,7 @@ const OFFICE_EXTENSIONS = new Set([
 ]);
 const OFFICE_WEB_EXTENSIONS = new Set([
   'doc', 'docx', 'docm', 'xls', 'xlsx', 'xlsm', 'ppt', 'pptx', 'pptm',
-  'potx', 'ppsx',
+  'potx', 'ppsx', 'odt', 'ods', 'odp',
 ]);
 /** Extensions rendues localement dans le navigateur (sans service externe). */
 const OFFICE_LOCAL_DOC_EXTENSIONS = new Set(['docx', 'docm']);

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { FiDownload } from 'react-icons/fi';
-import { OFFICE_WEB_VIEWER_BASE_URL } from '../config';
+import { MAX_OFFICE_WEB_VIEWER_BYTES, OFFICE_WEB_VIEWER_BASE_URL } from '../config';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { fileProxyUrl } from '../services/api';
 import {
@@ -39,6 +39,16 @@ function OfficeFallback({ file, message }) {
 }
 
 function OfficeWebFrame({ file }) {
+  const size = Number(file.size);
+  if (Number.isFinite(size) && size > MAX_OFFICE_WEB_VIEWER_BYTES) {
+    return (
+      <OfficeFallback
+        file={file}
+        message={`Ce fichier (${formatBytes(size)}) dépasse la limite du viewer Microsoft (${formatBytes(MAX_OFFICE_WEB_VIEWER_BYTES)}). Téléchargez-le pour le consulter.`}
+      />
+    );
+  }
+
   const fileUrl = new URL(fileProxyUrl(file.path), window.location.origin).href;
   const viewerUrl = `${OFFICE_WEB_VIEWER_BASE_URL}?src=${encodeURIComponent(fileUrl)}`;
 
@@ -131,7 +141,7 @@ export default function OfficeViewer({ file }) {
     return (
       <OfficeFallback
         file={file}
-        message="Ce format OpenDocument n’est pas pris en charge par le viewer Office Web de Microsoft et la conversion PDF n’est pas configurée sur ce site. Téléchargez le fichier pour le consulter."
+        message="Aucun aperçu n’est disponible pour ce format sur ce site. Téléchargez le fichier pour le consulter."
       />
     );
   }
