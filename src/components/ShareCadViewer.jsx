@@ -58,6 +58,13 @@ export default function ShareCadViewer({ file }) {
         scrolling="no"
         className="sharecad-frame"
       />
+      <p className="sharecad-fallback">
+        Si le chargement ne se termine pas, ShareCAD ne sait pas convertir ce fichier.{' '}
+        <a href={fileProxyUrl(file.path, true)} download>
+          Téléchargez-le
+        </a>{' '}
+        pour l’ouvrir dans un logiciel CAO.
+      </p>
     </div>
   );
 }

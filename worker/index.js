@@ -79,7 +79,11 @@ export default {
         return await handleIndex(request, env, ctx);
       }
 
-      if (url.pathname === '/api/file') {
+      // Le suffixe optionnel `/api/file/<nom>` expose le vrai nom (et son
+      // extension) dans le chemin : certains visualiseurs tiers (ShareCAD)
+      // détectent le format CAO depuis l’URL. La recherche reste pilotée
+      // uniquement par le paramètre `path`, le suffixe est ignoré.
+      if (url.pathname === '/api/file' || url.pathname.startsWith('/api/file/')) {
         assertMethod(request, ['GET', 'HEAD']);
         return await handleFile(request, env, ctx);
       }

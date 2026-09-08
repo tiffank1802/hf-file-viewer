@@ -1,5 +1,5 @@
-import { BUCKET_ID, BUCKET_URL } from '../config';
-import { normalizeBucketItem } from '../utils/files';
+import { BUCKET_ID, BUCKET_URL } from '../config.js';
+import { normalizeBucketItem } from '../utils/files.js';
 
 export class LibraryApiError extends Error {
   constructor(message, status = 0) {
@@ -104,11 +104,22 @@ export function model3dGlbUrl(file, quality = 'standard') {
 const SHARECAD_FRAME_URL = 'https://iframe.sharecad.org/cadframe/load';
 
 /**
- * URL de l’iframe ShareCAD pour un fichier (`/api/file` en absolu, encodée).
+ * URL proxy du fichier avec son vrai nom dans le chemin (`/api/file/<nom>`).
+ * ShareCAD détecte le format CAO depuis l’extension présente dans l’URL :
+ * sans elle, son convertisseur ne démarre pas (spinner infini).
+ */
+export function shareCadFileUrl(file) {
+  const basename = String(file.path || '').split('/').pop() || 'model';
+  const params = new URLSearchParams({ path: file.path });
+  return `/api/file/${encodeURIComponent(basename)}?${params}`;
+}
+
+/**
+ * URL de l’iframe ShareCAD pour un fichier (proxy ci-dessus en absolu, encodé).
  * Les serveurs ShareCAD téléchargent le fichier depuis cette URL publique.
  */
 export function shareCadFrameUrl(file) {
-  const absoluteUrl = `${window.location.origin}${fileProxyUrl(file.path)}`;
+  const absoluteUrl = `${window.location.origin}${shareCadFileUrl(file)}`;
   return `${SHARECAD_FRAME_URL}?url=${encodeURIComponent(absoluteUrl)}`;
 }
 
