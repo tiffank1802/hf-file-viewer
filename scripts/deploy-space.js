@@ -1,27 +1,24 @@
 /**
- * Script de déploiement automatique du Space Hugging Face
- * 
+ * Script de déploiement du Space Hugging Face (convertisseurs 3D + Office).
+ *
  * Utilisation:
- *   HF_TOKEN=your_token node deploy-space.js
- * 
+ *   HF_TOKEN=... npm run deploy:space -- --space-id <utilisateur>/<space>
+ *
  * Variables d'environnement requises:
- *   - HF_TOKEN: Token Hugging Face avec permissions "write" et "repo.create"
- * 
+ *   - HF_TOKEN: Token Hugging Face avec permissions "write"
+ *
  * Options en ligne de commande:
  *   --space-id <username/space-name>  : ID personnalisé (défaut: <username>/solidworks-viewer)
  *   --private                         : Rendre le Space privé (défaut: public)
  *   --skip-files                      : Ne pas uploader les fichiers (seulement création)
+ *
+ * Si le Space existe déjà, la création est ignorée et les fichiers sont mis
+ * à jour via un commit atomique (format NDJSON officiel du Hub).
  */
 
-import { HfInference } from '@huggingface/inference';
-import { FormData, File } from 'formdata-node';
-import { fileFromPath } from 'formdata-node/file-from-path';
-import { createWriteStream, existsSync } from 'fs';
-import { mkdir } from 'fs/promises';
-import { join, dirname } from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { readFileSync, readdirSync } from 'fs';
-import { pipeline } from 'stream/promises';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -29,63 +26,36 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const SPACE_NAME = 'solidworks-viewer';
 const SPACE_SDK = 'docker';
 const SPACE_HARDWARE = 'cpu-basic'; // cpu-basic, cpu-upgrade, t4-medium, a10g-small, a10g-large
-const README_CONTENT = `---
-title: SolidWorks Viewer
-emoji: 🔧
-colorFrom: blue
-colorTo: gray
-sdk: docker
-pinned: false
-license: mit
-tags:
-  - cad
-  - solidworks
-  - freecad
-  - 3d
-  - converter
----
+const HF_API = 'https://huggingface.co/api';
 
-# SolidWorks to glTF Converter
-
-Convertit les fichiers SolidWorks (.sldprt) en format glTF (.glb) pour visualisation web.
-
-## Comment utiliser
-
-1. Uploadez un fichier \`.sldprt\`
-2. Attendez la conversion (30-60s au premier appel - cold start)
-3. Téléchargez le fichier \`.glb\` résultant
-
-## Limites
-
-- Format expérimental: peut échouer sur des pièces complexes
-- Seule la géométrie est conservée (pas de couleurs/matériaux)
-- Timeout: 120 secondes maximum
-
-## Technologie
-
-- FreeCAD (headless) pour la conversion .sldprt → .stl
-- trimesh pour la conversion .stl → .glb avec mise à l'échelle mm→mètres
-`;
+/** Fichiers synchronisés vers le Space (commit atomique unique). */
+const SPACE_FILES = [
+  'Dockerfile',
+  'requirements.txt',
+  'app.py',
+  'freecad_convert.py',
+  'freecad_cad_convert.py',
+  'README.md',
+];
 
 /**
- * Parse les arguments CLI
+ * Parse les arguments CLI.
  */
-function parseArgs() {
-  const args = process.argv.slice(2);
+function parseArgs(argv = process.argv.slice(2)) {
   const options = {
     spaceId: null,
     private: false,
     skipFiles: false,
   };
 
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--space-id' && args[i + 1]) {
-      options.spaceId = args[++i];
-    } else if (args[i] === '--private') {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--space-id' && argv[i + 1]) {
+      options.spaceId = argv[++i];
+    } else if (argv[i] === '--private') {
       options.private = true;
-    } else if (args[i] === '--skip-files') {
+    } else if (argv[i] === '--skip-files') {
       options.skipFiles = true;
-    } else if (args[i] === '--help' || args[i] === '-h') {
+    } else if (argv[i] === '--help' || argv[i] === '-h') {
       console.log(`
 Usage: node deploy-space.js [options]
 
@@ -105,48 +75,72 @@ Variables d'environnement:
   return options;
 }
 
-/**
- * Récupère le username depuis l'API Hugging Face
- */
-async function getUsername(hf) {
-  try {
-    const response = await fetch('https://huggingface.co/api/whoami-v2', {
-      headers: {
-        Authorization: `Bearer ${process.env.HF_TOKEN}`,
-      },
-    });
-    
-    if (!response.ok) {
-      throw new Error('Impossible de récupérer les informations utilisateur');
-    }
-    
-    const data = await response.json();
-    return data.name;
-  } catch (error) {
-    console.error('Erreur lors de la récupération du username:', error.message);
-    throw error;
-  }
+function authHeaders() {
+  return { Authorization: `Bearer ${process.env.HF_TOKEN}` };
 }
 
 /**
- * Crée le Space via l'API Hugging Face
+ * Récupère le username depuis l'API Hugging Face.
  */
-async function createSpace(hf, spaceId, isPrivate) {
+async function getUsername() {
+  let response;
+  try {
+    response = await fetch(`${HF_API}/whoami-v2`, { headers: authHeaders() });
+  } catch {
+    throw new Error('Connexion à Hugging Face impossible.');
+  }
+
+  if (response.status === 401) {
+    throw new Error('Token HF_TOKEN invalide.');
+  }
+  if (!response.ok) {
+    throw new Error('Impossible de récupérer les informations utilisateur');
+  }
+
+  const data = await response.json();
+  return data.name;
+}
+
+/**
+ * Vérifie si le Space existe déjà (évite un appel de création inutile).
+ */
+async function spaceExists(spaceId) {
+  let response;
+  try {
+    response = await fetch(`${HF_API}/spaces/${spaceId}`, { headers: authHeaders() });
+  } catch {
+    throw new Error('Connexion à Hugging Face impossible.');
+  }
+
+  if (response.status === 401) {
+    throw new Error('Token HF_TOKEN invalide.');
+  }
+  return response.ok;
+}
+
+/**
+ * Crée le Space via l'API Hugging Face.
+ * `name` ne contient que le nom du dépôt, le namespace va dans `organization`
+ * (comme `huggingface_hub.create_repo`).
+ */
+async function createSpace(spaceId, username, isPrivate) {
   console.log(`\n🚀 Création du Space: ${spaceId}`);
   console.log(`   SDK: ${SPACE_SDK}`);
   console.log(`   Hardware: ${SPACE_HARDWARE}`);
   console.log(`   Visibilité: ${isPrivate ? 'privé' : 'public'}`);
 
+  const slash = spaceId.indexOf('/');
+  const name = slash === -1 ? spaceId : spaceId.slice(slash + 1);
+  const organization = slash === -1 ? null : spaceId.slice(0, slash) || null;
+
   try {
-    const response = await fetch('https://huggingface.co/api/repos/create', {
+    const response = await fetch(`${HF_API}/repos/create`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.HF_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({
         type: 'space',
-        name: spaceId,
+        name,
+        organization,
         sdk: SPACE_SDK,
         hardware: SPACE_HARDWARE,
         private: isPrivate,
@@ -172,75 +166,52 @@ async function createSpace(hf, spaceId, isPrivate) {
 }
 
 /**
- * Upload un fichier vers le Space
- */
-async function uploadFile(spaceId, filePath, pathInRepo = null) {
-  const fileName = filePath.split('/').pop();
-  const relativePath = pathInRepo || fileName;
-  
-  console.log(`   📤 Upload: ${relativePath}`);
-
-  try {
-    const fileData = await fileFromPath(filePath);
-    const formData = new FormData();
-    formData.append('file', fileData);
-    formData.append('path_in_repo', relativePath);
-    formData.append('commit_message', `Upload ${relativePath}`);
-
-    const response = await fetch(
-      `https://huggingface.co/api/${spaceId}/commit/main`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.HF_TOKEN}`,
-        },
-        body: formData,
-      }
-    );
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Erreur upload: ${response.status} - ${error}`);
-    }
-
-    return true;
-  } catch (error) {
-    console.error(`   ❌ Erreur upload ${fileName}:`, error.message);
-    throw error;
-  }
-}
-
-/**
- * Upload tous les fichiers du Space
+ * Pousse tous les fichiers du Space en un seul commit atomique
+ * (format NDJSON officiel : en-tête + un objet `file` base64 par fichier).
  */
 async function uploadSpaceFiles(spaceId, sourceDir) {
   console.log(`\n📁 Upload des fichiers depuis ${sourceDir}`);
 
-  const files = [
-    'Dockerfile',
-    'requirements.txt',
-    'app.py',
-    'freecad_convert.py',
-    'freecad_cad_convert.py',
-    'README.md',
-  ];
-
-  for (const file of files) {
+  const operations = [];
+  for (const file of SPACE_FILES) {
     const filePath = join(sourceDir, file);
-    
     if (!existsSync(filePath)) {
-      console.warn(`   ⚠️  Fichier manquant: ${filePath}`);
-      continue;
+      throw new Error(`Fichier source manquant: ${filePath}`);
     }
-
-    await uploadFile(spaceId, filePath, file);
+    console.log(`   📤 Commit: ${file}`);
+    operations.push({
+      key: 'file',
+      value: { content: readFileSync(filePath).toString('base64'), path: file, encoding: 'base64' },
+    });
   }
 
-  console.log(`✅ Tous les fichiers ont été uploadés`);
+  const lines = [
+    { key: 'header', value: { summary: 'Deploy converters (3D + Office)', description: '' } },
+    ...operations,
+  ];
+  const body = lines.map((line) => JSON.stringify(line)).join('\n');
+
+  let response;
+  try {
+    response = await fetch(`${HF_API}/spaces/${spaceId}/commit/main`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/x-ndjson' },
+      body,
+    });
+  } catch {
+    throw new Error('Connexion à Hugging Face impossible pendant l’upload.');
+  }
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Erreur upload: ${response.status} - ${error}`);
+  }
+
+  console.log(`✅ Commit poussé (${operations.length} fichiers)`);
 }
 
 /**
- * Attend que le Space soit déployé
+ * Attend que le Space soit déployé.
  */
 async function waitForDeployment(spaceId, timeout = 600000) {
   console.log(`\n⏳ Attente du déploiement (timeout: ${timeout / 60000}min)...`);
@@ -250,14 +221,7 @@ async function waitForDeployment(spaceId, timeout = 600000) {
 
   while (Date.now() - startTime < timeout) {
     try {
-      const response = await fetch(
-        `https://huggingface.co/api/spaces/${spaceId}`,
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.HF_TOKEN}`,
-          },
-        }
-      );
+      const response = await fetch(`${HF_API}/spaces/${spaceId}`, { headers: authHeaders() });
 
       if (!response.ok) {
         throw new Error(`Erreur status: ${response.status}`);
@@ -274,7 +238,7 @@ async function waitForDeployment(spaceId, timeout = 600000) {
         return true;
       }
 
-      if (stage === 'RUNTIME_ERROR') {
+      if (stage === 'RUNTIME_ERROR' || stage === 'BUILD_ERROR') {
         console.error(`❌ Erreur de déploiement: ${runtime.message || 'Erreur inconnue'}`);
         return false;
       }
@@ -282,7 +246,7 @@ async function waitForDeployment(spaceId, timeout = 600000) {
       console.error(`   Erreur vérification status:`, error.message);
     }
 
-    await new Promise(resolve => setTimeout(resolve, checkInterval));
+    await new Promise((resolveTimer) => setTimeout(resolveTimer, checkInterval));
   }
 
   console.error(`⏰ Timeout atteint - le déploiement est toujours en cours`);
@@ -290,7 +254,7 @@ async function waitForDeployment(spaceId, timeout = 600000) {
 }
 
 /**
- * Fonction principale
+ * Fonction principale.
  */
 async function main() {
   const options = parseArgs();
@@ -300,13 +264,12 @@ async function main() {
     return; // Déjà affiché par parseArgs
   }
 
-  console.log('🔧 Déploiement automatique du Space SolidWorks Viewer\n');
+  console.log('🔧 Déploiement automatique du Space ENISE Converters (3D + Office)\n');
 
   // Vérification du token
   if (!process.env.HF_TOKEN) {
     console.error('❌ Variable HF_TOKEN manquante');
-    console.error('   Usage: HF_TOKEN=your_token node deploy-space.js');
-    console.error('   Ou: HF_TOKEN=your_token npm run deploy:space');
+    console.error('   Usage: HF_TOKEN=your_token npm run deploy:space -- --space-id <user>/<space>');
     process.exit(1);
   }
   const sourceDir = join(__dirname, '..', 'space-huggingface');
@@ -321,13 +284,17 @@ async function main() {
     // Récupérer le username
     console.log('📋 Récupération des informations utilisateur...');
     const username = await getUsername();
-    
+
     // Déterminer le spaceId
     const spaceId = options.spaceId || `${username}/${SPACE_NAME}`;
     console.log(`🎯 Space ID cible: ${spaceId}`);
 
-    // Créer le Space
-    await createSpace(spaceId, options.private);
+    // Créer le Space sauf s'il existe déjà
+    if (await spaceExists(spaceId)) {
+      console.log(`⚠️  Le Space ${spaceId} existe déjà — mise à jour des fichiers.`);
+    } else {
+      await createSpace(spaceId, username, options.private);
+    }
 
     // Upload des fichiers
     if (!options.skipFiles) {
@@ -338,27 +305,31 @@ async function main() {
     console.log('\n🔄 Le déploiement va prendre quelques minutes...');
     console.log(`   Vous pouvez suivre la progression sur:`);
     console.log(`   https://huggingface.co/spaces/${spaceId}`);
-    
+
     const deployed = await waitForDeployment(spaceId);
 
     if (deployed) {
       console.log('\n✅ DÉPLOIEMENT TERMINÉ AVEC SUCCÈS!');
       console.log(`\n📍 URL du Space: https://huggingface.co/spaces/${spaceId}`);
-      console.log(`\n💡 Pour appeler ce Space depuis votre application:`);
-      console.log(`   - Utilisez gradio_client (Python) ou @gradio/client (JS)`);
-      console.log(`   - Endpoint: https://${spaceId.replace('/', '-')}.hf.space`);
+      console.log(`\n💡 Endpoints utilisés par le Worker Cloudflare:`);
+      console.log(`   - POST https://${spaceId.replace('/', '-')}.hf.space/api/convert-3d`);
+      console.log(`   - POST https://${spaceId.replace('/', '-')}.hf.space/api/convert-office`);
       console.log(`\n⚠️  Note: Le Space se met en veille après inactivité.`);
       console.log(`   Premier appel = cold start (30-60 secondes)`);
     } else {
       console.log('\n⚠️  Déploiement en cours ou échoué - vérifiez les logs manuellement');
       console.log(`   https://huggingface.co/spaces/${spaceId}/tree/main`);
     }
-
   } catch (error) {
     console.error('\n❌ ERREUR CRITIQUE:', error.message);
     process.exit(1);
   }
 }
 
-// Exécution
-main().catch(console.error);
+// Exécution uniquement en appel direct (pas à l'import pour les tests)
+const invokedAsScript = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedAsScript) {
+  main().catch(console.error);
+}
+
+export { HF_API, SPACE_FILES, createSpace, parseArgs, spaceExists, uploadSpaceFiles, waitForDeployment };
