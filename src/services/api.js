@@ -90,6 +90,17 @@ export function officePdfUrl(file) {
   return `/api/office/pdf?${params}`;
 }
 
+/**
+ * URL du GLB généré par le backend FreeCAD pour un modèle 3D.
+ * `quality` vaut draft, standard ou fine et fait partie de la clé de cache.
+ */
+export function model3dGlbUrl(file, quality = 'standard') {
+  const params = new URLSearchParams({ path: file.path, quality });
+  if (Number.isFinite(Number(file.size))) params.set('size', String(file.size));
+  if (file.mtime) params.set('mtime', String(file.mtime));
+  return `/api/model3d/glb?${params}`;
+}
+
 export function huggingFaceFileUrl(path) {
   const encodedPath = path.split('/').map(encodeURIComponent).join('/');
   return `${BUCKET_URL}/resolve/${encodedPath}?download=false`;

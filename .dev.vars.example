@@ -19,3 +19,8 @@ APS_CLIENT_SECRET="your_aps_client_secret"
 # (voir space-huggingface/). Vide = mode « PDF » désactivé, les aperçus
 # locaux et le viewer Microsoft restent disponibles.
 # OFFICE_CONVERT_URL="https://votre-espace-office.hf.space"
+
+# Conversion 3D → GLB (FreeCAD) pour l’aperçu Web des modèles STEP/IGES/STL/
+# OBJ/SolidWorks. URL publique du Space de conversion (défaut : Rupture).
+# Vide = mode « Web » désactivé, seul Autodesk reste disponible.
+# MODEL3D_CONVERT_URL="https://ktongue-rupture.hf.space"

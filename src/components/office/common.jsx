@@ -16,7 +16,7 @@ export function ViewerError({ file, message, action }) {
   return (
     <div className="download-prompt office-fallback">
       <span className={`download-prompt-icon kind-${file.kind || 'office'}`}>
-        <FileTypeIcon kind="office" size={34} />
+        <FileTypeIcon kind={file.kind || 'office'} size={34} />
       </span>
       <h3>Aperçu indisponible</h3>
       <p>{message}</p>

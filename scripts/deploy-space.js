@@ -221,6 +221,7 @@ async function uploadSpaceFiles(spaceId, sourceDir) {
     'requirements.txt',
     'app.py',
     'freecad_convert.py',
+    'freecad_cad_convert.py',
     'README.md',
   ];
 

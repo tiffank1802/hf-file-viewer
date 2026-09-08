@@ -28,6 +28,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py .
 COPY freecad_convert.py .
+COPY freecad_cad_convert.py .
 
 EXPOSE 7860
 

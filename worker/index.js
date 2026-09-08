@@ -30,6 +30,11 @@ const OFFICE_CONVERTIBLE_EXTENSIONS = new Set([
 const DEFAULT_LINK_PREVIEW_CACHE_TTL = 24 * 60 * 60;
 const LINK_PREVIEW_TIMEOUT_MS = 10_000;
 const MAX_LINK_PREVIEW_BYTES = 128 * 1024;
+const DEFAULT_MODEL3D_CACHE_TTL = 7 * 24 * 60 * 60;
+const DEFAULT_MAX_MODEL3D_BYTES = 25 * 1024 * 1024;
+const DEFAULT_MODEL3D_CONVERT_URL = 'https://ktongue-rupture.hf.space';
+const MODEL3D_GLB_EXTENSIONS = new Set(['step', 'stp', 'iges', 'igs', 'stl', 'obj', 'sldprt']);
+const MODEL3D_QUALITIES = new Set(['draft', 'standard', 'fine']);
 
 const API_SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
@@ -112,6 +117,16 @@ export default {
       if (url.pathname === '/api/link/preview') {
         assertMethod(request, ['GET']);
         return await handleLinkPreview(request, env, ctx);
+      }
+
+      if (url.pathname === '/api/model3d/status') {
+        assertMethod(request, ['GET']);
+        return handleModel3dStatus(env);
+      }
+
+      if (url.pathname === '/api/model3d/glb') {
+        assertMethod(request, ['GET']);
+        return await handleModel3dGlb(request, env, ctx);
       }
 
       return jsonResponse(
@@ -1362,6 +1377,159 @@ async function handleLinkPreview(request, env, ctx) {
     cacheControl: 'public, max-age=3600, stale-while-revalidate=86400',
     headers: { 'X-Cache-Status': 'MISS' },
   });
+}
+
+/** Extensions 3D convertibles en GLB par le Space (FreeCAD + trimesh). */
+export function isModelGlbExtension(extension = '') {
+  return MODEL3D_GLB_EXTENSIONS.has(String(extension).toLowerCase());
+}
+
+/** Qualités de tessellation acceptées (`?quality=`). */
+export function isModel3dQuality(value = '') {
+  return MODEL3D_QUALITIES.has(String(value || '').toLowerCase());
+}
+
+/**
+ * URL publique du Space de conversion 3D (sans slash final).
+ * Par défaut le Space Rupture ; surchargeable via `MODEL3D_CONVERT_URL`.
+ * Une valeur explicitement vide désactive la conversion.
+ */
+export function getModel3dConvertUrl(env) {
+  if (env && Object.hasOwn(env, 'MODEL3D_CONVERT_URL')) {
+    return String(env.MODEL3D_CONVERT_URL || '').trim().replace(/\/+$/, '');
+  }
+  return DEFAULT_MODEL3D_CONVERT_URL;
+}
+
+/** Clé courte et stable identifiant la source d’un modèle à convertir. */
+export function makeModel3dSourceKey(filePath, size = '', mtime = '', quality = 'standard') {
+  const source = `${String(filePath || '')}|${String(size || '')}|${String(mtime || '')}|${String(quality || '')}`;
+  return `${hashIdentifier(source)}${hashIdentifier(`model3d:${source}`)}`.slice(0, 32);
+}
+
+/** Vérifie la signature binaire `glTF` d’un GLB (octets 0-3). */
+export function hasGlbMagic(buffer) {
+  if (!buffer || buffer.byteLength < 4) return false;
+  const magic = String.fromCharCode(...new Uint8Array(buffer.slice(0, 4)));
+  return magic === 'glTF';
+}
+
+function handleModel3dStatus(env) {
+  if (!getModel3dConvertUrl(env)) {
+    return jsonResponse(
+      { status: 'not-configured', error: 'La conversion 3D n’est pas configurée.' },
+      { cacheControl: 'public, max-age=300' },
+    );
+  }
+  return jsonResponse({ status: 'ready' }, { cacheControl: 'public, max-age=300' });
+}
+
+/**
+ * Convertit un modèle 3D en GLB via le Space FreeCAD (pipeline type 3Dfindit).
+ *
+ * Pipeline : Hugging Face (source) → Space `/api/convert-3d` → GLB mis en
+ * cache dans le Cache API. Les métadonnées viewer (triangles, bbox, volume)
+ * transitent dans l’en-tête `X-Model3D-Meta` (base64url JSON).
+ */
+async function handleModel3dGlb(request, env, ctx) {
+  const url = new URL(request.url);
+  const filePath = normalizeFilePath(url.searchParams.get('path'));
+  const extension = getExtension(filePath);
+  if (!isModelGlbExtension(extension)) {
+    throw new HttpError(400, 'Ce format ne peut pas être converti en GLB.');
+  }
+
+  const quality = String(url.searchParams.get('quality') || 'standard').toLowerCase();
+  if (!isModel3dQuality(quality)) {
+    throw new HttpError(400, 'Qualité inconnue (draft, standard ou fine attendue).');
+  }
+
+  const convertBase = getModel3dConvertUrl(env);
+  if (!convertBase) {
+    return jsonResponse(
+      { error: 'La conversion 3D n’est pas configurée sur ce site.', status: 'not-configured' },
+      { status: 501, cacheControl: 'no-store' },
+    );
+  }
+
+  const size = normalizeNumericSearchParam(url.searchParams.get('size'));
+  const mtime = String(url.searchParams.get('mtime') || '');
+  const sourceKey = makeModel3dSourceKey(filePath, size, mtime, quality);
+  const bucketId = getBucketId(env);
+  const cache = caches.default;
+  const cacheKey = makeCacheKey('model3d', bucketId, { file: sourceKey });
+
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    const hit = new Response(cached.body, cached);
+    hit.headers.set('X-Cache-Status', 'HIT');
+    applySecurityHeaders(hit.headers);
+    return hit;
+  }
+
+  const maxBytes = positiveInteger(env.MAX_MODEL3D_BYTES, DEFAULT_MAX_MODEL3D_BYTES);
+  const edgeTtl = positiveInteger(env.MODEL3D_CACHE_TTL, DEFAULT_MODEL3D_CACHE_TTL);
+
+  const sourceBytes = await downloadConvertibleSource(env, bucketId, filePath, maxBytes);
+
+  const filename = filePath.split('/').pop() || `model.${extension}`;
+  const form = new FormData();
+  form.append('file', new Blob([sourceBytes], { type: 'application/octet-stream' }), filename);
+  form.append('quality', quality);
+
+  let converted;
+  try {
+    converted = await fetch(`${convertBase}/api/convert-3d`, { method: 'POST', body: form });
+  } catch {
+    throw new HttpError(502, 'Connexion au service de conversion 3D impossible.');
+  }
+  if (!converted.ok) throw await model3dConvertHttpError(converted);
+
+  const glbBytes = await converted.arrayBuffer();
+  if (!hasGlbMagic(glbBytes)) {
+    throw new HttpError(502, 'Le service de conversion n’a pas renvoyé un GLB valide.');
+  }
+
+  const baseName = filename.includes('.') ? filename.slice(0, filename.lastIndexOf('.')) : filename;
+  const headers = {
+    'Content-Type': 'model/gltf-binary',
+    'Content-Disposition': contentDisposition(`${baseName}.glb`, false),
+    'Cache-Control': 'public, max-age=3600, stale-while-revalidate=86400',
+    'X-Cache-Status': 'MISS',
+    ...API_SECURITY_HEADERS,
+  };
+  const meta = converted.headers.get('X-Model3D-Meta');
+  if (meta) headers['X-Model3D-Meta'] = meta;
+  const response = new Response(glbBytes, { headers });
+
+  if (glbBytes.byteLength <= maxBytes) {
+    const edgeResponse = response.clone();
+    edgeResponse.headers.set('Cache-Control', `public, max-age=${edgeTtl}`);
+    edgeResponse.headers.delete('X-Cache-Status');
+    ctx.waitUntil(
+      cache.put(cacheKey, edgeResponse).catch((error) => {
+        console.error('Unable to persist converted GLB in Cache API', error);
+      }),
+    );
+  }
+
+  return response;
+}
+
+async function model3dConvertHttpError(response) {
+  let detail = 'La conversion en GLB a échoué.';
+  try {
+    const body = await response.json();
+    detail = body.detail || body.error || body.message || detail;
+  } catch {
+    // Le service n’a pas renvoyé un JSON lisible, garder le message générique.
+  }
+  const message = String(detail).slice(0, 300);
+  if (response.status === 413) return new HttpError(413, message);
+  if (response.status === 400 || response.status === 422) {
+    return new HttpError(422, `Modèle non convertible : ${message}`);
+  }
+  return new HttpError(response.status >= 500 ? 502 : response.status, `Conversion 3D : ${message}`);
 }
 
 export async function fetchBucketTree(env, prefix = '', recursive = false) {

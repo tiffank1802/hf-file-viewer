@@ -10,7 +10,7 @@ Bibliothèque étudiante moderne pour les ressources de **Centrale Lyon ENISE**,
 - navigation par dossier, fil d’Ariane, tri, grille/liste ;
 - aperçu PDF, image, audio, vidéo, texte et **visionneuse Office hybride** : rendu local (`.docx`, `.xlsx`/`.xls`, texte `.pptx`), conversion PDF serveur (LibreOffice) et **Viewer Office Web** (`.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`) ;
 - raccourcis **Microsoft OneNote** (`.url`) affichés avec leur cible ouvrable, blocs-notes `.one` disponibles au téléchargement ;
-- visionneuse **Autodesk APS** (Model Derivative) pour les fichiers 3D (`.dwg`, `.rvt`, `.ifc`, `.ipt`, `.sldprt`, `.stp`, `.stl`, `.obj`, …) avec rotation, zoom et déplacement ;
+- aperçu 3D hybride : conversion **GLB gratuite** (FreeCAD) pour `.step`, `.iges`, `.stl`, `.obj`, `.sldprt` avec rotation, zoom et déplacement, sinon **Autodesk APS** (Model Derivative) pour les autres formats (`.dwg`, `.rvt`, `.ifc`, `.catpart`, …) ;
 - téléchargement, partage et favoris enregistrés dans le navigateur ;
 - recherche globale à partir d’un index Hugging Face mis en cache ;
 - effectifs par dossier calculés **une seule fois à l’indexation** et stockés dans le JSON d’index ;
@@ -50,6 +50,7 @@ Le frontend et le Worker sont sur **le même domaine**. Le navigateur n’appell
 | Comptage `/api/counts` | 30 min | Cache API, 12 h | JSON d’index (aucun appel HF) |
 | Fichier `/api/file` | 1 h | Cache API, 7 j | bucket Hugging Face |
 | PDF Office `/api/office/pdf` | 1 h | Cache API, 7 j | Space LibreOffice |
+| GLB 3D `/api/model3d/glb` | 1 h | Cache API, 7 j | Space FreeCAD |
 | Aperçu lien `/api/link/preview` | 1 h | Cache API, 24 h | page cible |
 
 Les fichiers ne sont ajoutés au Cache API que si une réponse complète possède une taille connue inférieure ou égale à **25 Mio**. Les requêtes `Range` et les fichiers plus grands sont transmis sans mise en cache par le Worker (`BYPASS-RANGE` ou `BYPASS-SIZE`) ; le CDN de Hugging Face peut néanmoins les optimiser.
@@ -184,9 +185,42 @@ Les raccourcis Windows `.url` s’ouvrent dans une **carte de lien enrichie** : 
 
 Ce viewer remplace l’ancienne intégration ONLYOFFICE : aucun document server externe n’est plus nécessaire et aucun secret n’est exposé.
 
-## Visualisation 3D avec Autodesk APS (Forge)
+## Visualisation 3D (Aperçu Web + Autodesk APS)
 
-Les fichiers modèles (`.dwg`, `.dxf`, `.rvt`, `.rfa`, `.ifc`, `.ipt`, `.iam`, `.sldprt`, `.sldasm`, `.stp`, `.step`, `.igs`, `.iges`, `.obj`, `.stl`, `.3ds`, `.fbx`, `.dae`, `.skp`, …) sont ouverts dans la modale d’aperçu avec le **Viewer Autodesk** (rotation, zoom, panoramique à la souris). Si Autodesk APS n’est pas configuré, la modale conserve l’écran de téléchargement actuel.
+Les fichiers modèles (`.dwg`, `.dxf`, `.rvt`, `.rfa`, `.ifc`, `.ipt`, `.iam`, `.sldprt`, `.sldasm`, `.stp`, `.step`, `.igs`, `.iges`, `.obj`, `.stl`, `.3ds`, `.fbx`, `.dae`, `.skp`, …) sont ouverts dans la modale d’aperçu avec rotation, zoom et panoramique à la souris. Deux moteurs au choix (onglets, préférence mémorisée) :
+
+- **Aperçu Web** (défaut, gratuit) : les formats `.step`, `.stp`, `.iges`, `.igs`, `.stl`, `.obj` et `.sldprt` sont convertis en GLB par le Space FreeCAD puis affichés en WebGL (three.js), avec choix de la qualité du maillage (brouillon/standard/fin), rotation automatique et statistiques (triangles, dimensions, volume).
+- **Autodesk** (fidélité maximale, configuration requise) : tous les formats via APS / Model Derivative.
+
+Les formats non convertibles en GLB (`.dwg`, `.rvt`, `.catpart`, assemblages, …) n’affichent que l’onglet Autodesk ; si Autodesk APS n’est pas configuré, la modale conserve l’écran de téléchargement actuel.
+
+### Aperçu Web via FreeCAD (mode « Web »)
+
+Le Worker exécute le pipeline **FreeCAD → GLB** (style 3Dfindit) :
+
+```text
+Navigateur
+   ├── GET /api/model3d/status        -> conversion configurée ou non
+   ├── GET /api/model3d/glb?path=...  -> Worker : HF (source) → Space → GLB caché
+   └── three.js -> modèle 3D interactif (+ X-Model3D-Meta : triangles, bbox…)
+```
+
+Le Space par défaut est `ktongue/Rupture` (public, aucun token côté Worker). Pour utiliser un autre Space, définir `MODEL3D_CONVERT_URL` (vide = mode Web désactivé) :
+
+```bash
+# wrangler.jsonc (vars) ou .dev.vars en local :
+MODEL3D_CONVERT_URL="https://<votre-space>.hf.space"
+```
+
+Déployer le Space depuis ce dépôt (sauvegarder l’éventuelle application existante du Space, l’upload écrase son contenu) :
+
+```bash
+HF_TOKEN="hf_..." npm run deploy:space -- --space-id <utilisateur>/<space>
+```
+
+Par défaut, les fichiers de plus de 25 Mo sont refusés (`MAX_MODEL3D_BYTES`) et les GLB sont mis en cache 7 jours (`MODEL3D_CACHE_TTL`). Le premier appel après une mise en veille du Space peut prendre jusqu’à une minute (réveil + conversion).
+
+### Visualisation 3D avec Autodesk APS (Forge)
 
 Le Worker exécute le pipeline **APS / Model Derivative** :
 
@@ -281,6 +315,8 @@ Pour un déploiement CI GitHub, stocker `CLOUDFLARE_API_TOKEN` et `CLOUDFLARE_AC
 | `GET /api/aps/token` | jeton public Autodesk pour la visionneuse 3D |
 | `POST /api/aps/view?path=...` | prépare le fichier 3D : OSS + conversion SVF2 |
 | `GET /api/aps/status?path=...` | état et progression de la conversion 3D |
+| `GET /api/model3d/status` | conversion GLB FreeCAD configurée ou non |
+| `GET /api/model3d/glb?path=...&quality=...` | GLB converti via FreeCAD (mis en cache, métadonnées `X-Model3D-Meta`) |
 | `GET /api/office/status` | conversion PDF Office configurée ou non |
 | `GET /api/office/pdf?path=...` | PDF converti via LibreOffice (mis en cache) |
 | `GET /api/link/preview?url=...` | aperçu enrichi d’un lien `.url` (Open Graph, mis en cache) |

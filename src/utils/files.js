@@ -92,6 +92,17 @@ export function isOfficeConvertibleExtension(extension = '') {
   return OFFICE_CONVERTIBLE_EXTENSIONS.has(String(extension).toLowerCase());
 }
 
+/** Extensions 3D convertibles en GLB par le Space FreeCAD. */
+const MODEL_GLB_EXTENSIONS = new Set(['step', 'stp', 'iges', 'igs', 'stl', 'obj', 'sldprt']);
+
+/**
+ * Type de rendu Web disponible pour un modèle 3D.
+ * Retourne `'glb'` (conversion FreeCAD) ou `null` (Autodesk/téléchargement).
+ */
+export function modelViewerKind(extension = '') {
+  return MODEL_GLB_EXTENSIONS.has(String(extension).toLowerCase()) ? 'glb' : null;
+}
+
 /**
  * Extrait l’adresse cible d’un raccourci Windows `.url` (bloc `[InternetShortcut]`).
  */
