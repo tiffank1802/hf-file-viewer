@@ -79,10 +79,10 @@ export default {
         return await handleIndex(request, env, ctx);
       }
 
-      // Le suffixe optionnel `/api/file/<nom>` expose le vrai nom (et son
-      // extension) dans le chemin : certains visualiseurs tiers (ShareCAD)
-      // détectent le format CAO depuis l’URL. La recherche reste pilotée
-      // uniquement par le paramètre `path`, le suffixe est ignoré.
+      // Le suffixe `/api/file/<...>` expose le vrai nom (et son extension)
+      // dans le chemin : ShareCAD détecte le format CAO depuis l’URL et ne
+      // gère pas forcément les query strings. Avec `path`, le suffixe est
+      // décoratif ; sans `path`, il porte le chemin complet du fichier.
       if (url.pathname === '/api/file' || url.pathname.startsWith('/api/file/')) {
         assertMethod(request, ['GET', 'HEAD']);
         return await handleFile(request, env, ctx);
@@ -344,7 +344,12 @@ export function selectCountsForPrefix(document, prefix = '') {
 
 async function handleFile(request, env, ctx) {
   const url = new URL(request.url);
-  const filePath = normalizeFilePath(url.searchParams.get('path'));
+  // `path` reste la source de vérité ; à défaut, le suffixe `/api/file/<chemin>`
+  // porte le chemin complet (URL « propre », sans query string, pour ShareCAD).
+  const suffixedPath = url.pathname.startsWith('/api/file/')
+    ? decodeFilePathSuffix(url.pathname.slice('/api/file/'.length))
+    : '';
+  const filePath = normalizeFilePath(url.searchParams.get('path') || suffixedPath);
   const shouldDownload = url.searchParams.get('download') === '1';
   const bucketId = getBucketId(env);
   const edgeTtl = positiveInteger(env.FILE_CACHE_TTL, DEFAULT_FILE_TTL);
@@ -1629,6 +1634,15 @@ export function normalizePrefix(value) {
   const prefix = String(value ?? '').trim().replace(/^\/+|\/+$/g, '');
   validatePath(prefix, true);
   return prefix;
+}
+
+/** Décode le suffixe `/api/file/<chemin>` (400 si le percent-encoding est invalide). */
+function decodeFilePathSuffix(suffix) {
+  try {
+    return decodeURIComponent(suffix);
+  } catch {
+    throw new HttpError(400, 'Le chemin du document est invalide.');
+  }
 }
 
 export function normalizeFilePath(value) {

@@ -104,14 +104,16 @@ export function model3dGlbUrl(file, quality = 'standard') {
 const SHARECAD_FRAME_URL = 'https://iframe.sharecad.org/cadframe/load';
 
 /**
- * URL proxy du fichier avec son vrai nom dans le chemin (`/api/file/<nom>`).
- * ShareCAD détecte le format CAO depuis l’extension présente dans l’URL :
- * sans elle, son convertisseur ne démarre pas (spinner infini).
+ * URL proxy « propre » du fichier (`/api/file/<chemin>`, sans query string).
+ * ShareCAD détecte le format CAO depuis l’extension dans l’URL : sans elle
+ * (ou avec une URL à paramètres), son convertisseur ne démarre pas.
  */
 export function shareCadFileUrl(file) {
-  const basename = String(file.path || '').split('/').pop() || 'model';
-  const params = new URLSearchParams({ path: file.path });
-  return `/api/file/${encodeURIComponent(basename)}?${params}`;
+  const suffix = String(file.path || '')
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+  return `/api/file/${suffix}`;
 }
 
 /**

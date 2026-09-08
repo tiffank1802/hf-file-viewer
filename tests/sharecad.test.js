@@ -52,35 +52,60 @@ const hfFetch = async (input) => {
   throw new Error(`unexpected fetch ${url}`);
 };
 
-test('la route /api/file/<nom> sert le fichier comme /api/file (extension visible pour ShareCAD)', async () => {
+test('les trois formes /api/file servent le fichier (query, suffixe décoratif, chemin complet)', async () => {
   const cache = createCache();
   const restore = useMocks(hfFetch, cache);
   try {
-    for (const pathname of ['/api/file', '/api/file/piece.stp']) {
+    const cases = [
+      // Forme historique à paramètres.
+      { url: 'https://docs.example/api/file?path=GM%2Fpiece.stp', filename: 'piece.stp' },
+      // Suffixe décoratif : `path` reste la source de vérité.
+      { url: 'https://docs.example/api/file/piece.stp?path=GM%2Fpiece.stp', filename: 'piece.stp' },
+      // Chemin complet dans le path, sans query string (URL ShareCAD).
+      { url: 'https://docs.example/api/file/GM/autre.stp', filename: 'autre.stp' },
+    ];
+    for (const { url, filename } of cases) {
       const ctx = createContext();
-      const response = await worker.fetch(
-        new Request(`https://docs.example${pathname}?path=GM%2Fpiece.stp`),
-        env,
-        ctx,
-      );
+      const response = await worker.fetch(new Request(url), env, ctx);
       await ctx.done();
       assert.equal(response.status, 200);
-      assert.match(response.headers.get('Content-Disposition') || '', /piece\.stp/);
+      assert.match(
+        response.headers.get('Content-Disposition') || '',
+        new RegExp(filename.replace('.', '\\.')),
+      );
     }
   } finally {
     restore();
   }
 });
 
-test('shareCadFrameUrl expose le nom du fichier avec extension dans l’URL', () => {
+test('un suffixe /api/file invalide ou vide répond 400, pas 500', async () => {
+  const cache = createCache();
+  const restore = useMocks(hfFetch, cache);
+  try {
+    for (const url of [
+      'https://docs.example/api/file/%zz',
+      'https://docs.example/api/file/',
+    ]) {
+      const ctx = createContext();
+      const response = await worker.fetch(new Request(url), env, ctx);
+      await ctx.done();
+      assert.equal(response.status, 400);
+    }
+  } finally {
+    restore();
+  }
+});
+
+test('shareCadFrameUrl expose une URL propre se terminant par le vrai nom de fichier', () => {
   const originalWindow = globalThis.window;
   globalThis.window = { location: { origin: 'https://docs.example' } };
   try {
-    const frame = new URL(shareCadFrameUrl({ path: 'GM/piece.stp' }));
+    const frame = new URL(shareCadFrameUrl({ path: 'GM/sous dossier/piece.stp' }));
     assert.equal(frame.origin, 'https://iframe.sharecad.org');
     assert.equal(
       frame.searchParams.get('url'),
-      'https://docs.example/api/file/piece.stp?path=GM%2Fpiece.stp',
+      'https://docs.example/api/file/GM/sous%20dossier/piece.stp',
     );
   } finally {
     if (originalWindow === undefined) delete globalThis.window;

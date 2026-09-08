@@ -313,6 +313,7 @@ Pour un déploiement CI GitHub, stocker `CLOUDFLARE_API_TOKEN` et `CLOUDFLARE_AC
 | `GET /api/counts?prefix=GM` | effectifs extraits du JSON d’index (`X-Data-Source: index-json`) |
 | `GET /api/file?path=...` | aperçu/stream d’un document |
 | `GET /api/file?path=...&download=1` | téléchargement avec `Content-Disposition: attachment` |
+| `GET /api/file/<chemin>` | même document via une URL « propre » sans query string (iframe ShareCAD) |
 | `GET /api/aps/token` | jeton public Autodesk pour la visionneuse 3D |
 | `POST /api/aps/view?path=...` | prépare le fichier 3D : OSS + conversion SVF2 |
 | `GET /api/aps/status?path=...` | état et progression de la conversion 3D |
