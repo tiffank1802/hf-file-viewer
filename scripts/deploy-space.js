@@ -313,8 +313,9 @@ async function main() {
       console.log('\n✅ DÉPLOIEMENT TERMINÉ AVEC SUCCÈS!');
       console.log(`\n📍 URL du Space: https://huggingface.co/spaces/${spaceId}`);
       console.log(`\n💡 Endpoints utilisés par le Worker Cloudflare:`);
-      console.log(`   - POST https://${spaceId.replace('/', '-')}.hf.space/api/convert-3d`);
-      console.log(`   - POST https://${spaceId.replace('/', '-')}.hf.space/api/convert-office`);
+      const runtimeHost = `https://${spaceId.replace('/', '-').toLowerCase()}.hf.space`;
+      console.log(`   - POST ${runtimeHost}/api/convert-3d`);
+      console.log(`   - POST ${runtimeHost}/api/convert-office`);
       console.log(`\n⚠️  Note: Le Space se met en veille après inactivité.`);
       console.log(`   Premier appel = cold start (30-60 secondes)`);
     } else {
