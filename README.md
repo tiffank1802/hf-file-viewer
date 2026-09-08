@@ -10,7 +10,7 @@ Bibliothèque étudiante moderne pour les ressources de **Centrale Lyon ENISE**,
 - navigation par dossier, fil d’Ariane, tri, grille/liste ;
 - aperçu PDF, image, audio, vidéo, texte et **visionneuse Office hybride** : rendu local (`.docx`, `.xlsx`/`.xls`, texte `.pptx`), conversion PDF serveur (LibreOffice) et **Viewer Office Web** (`.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`) ;
 - raccourcis **Microsoft OneNote** (`.url`) affichés avec leur cible ouvrable, blocs-notes `.one` disponibles au téléchargement ;
-- aperçu 3D hybride : conversion **GLB gratuite** (FreeCAD) pour `.step`, `.iges`, `.stl`, `.obj`, `.sldprt` avec rotation, zoom et déplacement, sinon **Autodesk APS** (Model Derivative) pour les autres formats (`.dwg`, `.rvt`, `.ifc`, `.catpart`, …) ;
+- aperçu 3D hybride : conversion **GLB gratuite** (FreeCAD) pour `.step`, `.iges`, `.stl`, `.obj` avec rotation, zoom et déplacement, sinon **Autodesk APS** (Model Derivative) pour les autres formats (`.dwg`, `.rvt`, `.sldprt`, `.ifc`, `.catpart`, … — FreeCAD ne lit pas les formats propriétaires) ;
 - téléchargement, partage et favoris enregistrés dans le navigateur ;
 - recherche globale à partir d’un index Hugging Face mis en cache ;
 - effectifs par dossier calculés **une seule fois à l’indexation** et stockés dans le JSON d’index ;
@@ -189,7 +189,7 @@ Ce viewer remplace l’ancienne intégration ONLYOFFICE : aucun document server 
 
 Les fichiers modèles (`.dwg`, `.dxf`, `.rvt`, `.rfa`, `.ifc`, `.ipt`, `.iam`, `.sldprt`, `.sldasm`, `.stp`, `.step`, `.igs`, `.iges`, `.obj`, `.stl`, `.3ds`, `.fbx`, `.dae`, `.skp`, …) sont ouverts dans la modale d’aperçu avec rotation, zoom et panoramique à la souris. Deux moteurs au choix (onglets, préférence mémorisée) :
 
-- **Aperçu Web** (défaut, gratuit) : les formats `.step`, `.stp`, `.iges`, `.igs`, `.stl`, `.obj` et `.sldprt` (support expérimental : en cas d’échec, exporter en STEP ou basculer sur Autodesk) sont convertis en GLB par le Space FreeCAD puis affichés en WebGL (three.js), avec choix de la qualité du maillage (brouillon/standard/fin), rotation automatique et statistiques (triangles, dimensions, volume).
+- **Aperçu Web** (défaut, gratuit) : les formats `.step`, `.stp`, `.iges`, `.igs`, `.stl` et `.obj` sont convertis en GLB par le Space FreeCAD puis affichés en WebGL (three.js), avec choix de la qualité du maillage (brouillon/standard/fin), rotation automatique et statistiques (triangles, dimensions, volume). FreeCAD ne lit pas les formats propriétaires : `.sldprt`, `.dwg`, assemblages… restent sur Autodesk.
 - **Autodesk** (fidélité maximale, configuration requise) : tous les formats via APS / Model Derivative.
 
 Les formats non convertibles en GLB (`.dwg`, `.rvt`, `.catpart`, assemblages, …) n’affichent que l’onglet Autodesk ; si Autodesk APS n’est pas configuré, la modale conserve l’écran de téléchargement actuel.

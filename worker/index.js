@@ -33,7 +33,7 @@ const MAX_LINK_PREVIEW_BYTES = 128 * 1024;
 const DEFAULT_MODEL3D_CACHE_TTL = 7 * 24 * 60 * 60;
 const DEFAULT_MAX_MODEL3D_BYTES = 25 * 1024 * 1024;
 const DEFAULT_MODEL3D_CONVERT_URL = 'https://ktongue-rupture.hf.space';
-const MODEL3D_GLB_EXTENSIONS = new Set(['step', 'stp', 'iges', 'igs', 'stl', 'obj', 'sldprt']);
+const MODEL3D_GLB_EXTENSIONS = new Set(['step', 'stp', 'iges', 'igs', 'stl', 'obj']);
 const MODEL3D_QUALITIES = new Set(['draft', 'standard', 'fine']);
 
 const API_SECURITY_HEADERS = {

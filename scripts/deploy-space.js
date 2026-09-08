@@ -33,7 +33,6 @@ const SPACE_FILES = [
   'Dockerfile',
   'requirements.txt',
   'app.py',
-  'freecad_convert.py',
   'freecad_cad_convert.py',
   'README.md',
 ];

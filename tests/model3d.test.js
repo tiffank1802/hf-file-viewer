@@ -44,18 +44,20 @@ const env = {
 };
 
 test('le rendu GLB est détecté côté front et Worker pour les mêmes extensions', () => {
-  const glb = ['step', 'stp', 'iges', 'igs', 'stl', 'obj', 'sldprt'];
+  const glb = ['step', 'stp', 'iges', 'igs', 'stl', 'obj'];
   for (const extension of glb) {
     assert.equal(modelViewerKind(extension), 'glb');
     assert.equal(isModelGlbExtension(extension), true);
   }
-  const autodeskOnly = ['dwg', 'rvt', 'rfa', 'catpart', 'catproduct', 'ifc', '3dm', 'f3d', 'sldasm', 'pdf', ''];
+  // .sldprt : FreeCAD ne sait pas lire ce format propriétaire (Autodesk uniquement).
+  const autodeskOnly = ['dwg', 'rvt', 'rfa', 'catpart', 'catproduct', 'ifc', '3dm', 'f3d', 'sldasm', 'sldprt', 'pdf', ''];
   for (const extension of autodeskOnly) {
     assert.equal(modelViewerKind(extension), null);
     assert.equal(isModelGlbExtension(extension), false);
   }
   assert.equal(modelViewerKind('STEP'), 'glb');
-  assert.equal(isModelGlbExtension('SLDPRT'), true);
+  assert.equal(modelViewerKind('SLDPRT'), null);
+  assert.equal(isModelGlbExtension('SLDPRT'), false);
 });
 
 test('les qualités de tessellation sont validées', () => {

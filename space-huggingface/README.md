@@ -14,7 +14,7 @@ license: mit
 This Space powers the file conversions of the ENISE Docs website:
 
 1. **CAD → GLB** for web visualization: `.step`, `.stp`, `.iges`, `.igs`,
-   `.stl`, `.obj` and `.sldprt` are tessellated (headless FreeCAD + trimesh)
+   `.stl` and `.obj` are tessellated (headless FreeCAD + trimesh)
    and served as `.glb` with viewer metadata. Consumed by the Cloudflare
    Worker (`GET /api/model3d/glb` → `POST /api/convert-3d`).
 2. **Office documents → PDF** (Word, Excel, PowerPoint, OpenDocument) with
@@ -39,20 +39,20 @@ curl -X POST https://<your-space>.hf.space/api/convert-3d \
 Pipeline:
 
 ```text
-.step/.stp/.iges/.igs/.sldprt → FreeCAD (freecadcmd) → .stl → trimesh → .glb
-.stl/.obj                      → trimesh directly → .glb
+.step/.stp/.iges/.igs → FreeCAD (freecadcmd) → .stl → trimesh → .glb
+.stl/.obj              → trimesh directly → .glb
 ```
 
-- **FreeCAD** parses STEP/IGES and the experimental SolidWorks importer, then
-  tessellates (`Shape.tessellate`) with a tolerance of 0.5 mm (`draft`),
-  0.1 mm (`standard`) or 0.03 mm (`fine`).
+- **FreeCAD** parses STEP/IGES, then tessellates (`Shape.tessellate`) with a
+  tolerance of 0.5 mm (`draft`), 0.1 mm (`standard`) or 0.03 mm (`fine`).
 - **trimesh** converts STL/OBJ to GLB with proper scaling (mm → meters,
   factor `0.001`) and computes the metadata.
 - Conversions run in a thread pool (5 min tessellation timeout, 15 min total)
   so the Gradio UI stays responsive; files are capped at 25 MB.
 
-Supported inputs: `.step`, `.stp`, `.iges`, `.igs`, `.stl`, `.obj`, `.sldprt`
-(DWG, RVT, CATIA and assemblies stay on the Autodesk pipeline).
+Supported inputs: `.step`, `.stp`, `.iges`, `.igs`, `.stl`, `.obj`.
+Proprietary formats (`.sldprt`, `.dwg`, `.rvt`, CATIA…) and assemblies stay
+on the Autodesk pipeline: FreeCAD has no importer for them.
 Failures return JSON (`{"detail": "..."}`) with a `4xx`/`5xx` status
 (`422` = unsupported format or corrupt model, `413` = file too large).
 A `GET /api/health` endpoint is available for monitoring, and the
@@ -78,17 +78,16 @@ A `GET /api/health` endpoint is available for monitoring, and the
 
 ## Important Limitations (3D)
 
-⚠️ **Experimental Format Support**: the `.sldprt` import path in FreeCAD is experimental and often fails (proprietary format, reverse-engineered support at best).
+⚠️ **No proprietary formats**: FreeCAD cannot read `.sldprt`, `.dwg`, `.rvt`,
+CATIA or other vendor-locked formats — there is no importer for them, so such
+files are rejected with a `422`. SolidWorks users should export their parts
+as **STEP** first (or use the website's Autodesk viewer tab).
 
-- ✅ Works best with **geometrically simple parts**
-- ⚠️ May fail with complex surfaces or recent SolidWorks features
 - ❌ Does **not** preserve:
   - Parametric feature history
   - Colors or materials
   - Assembly structure (only single parts supported)
 - ✅ Preserves: **Geometry only** (tessellated mesh)
-
-For best results with recent SolidWorks files, export to **STEP** first.
 
 ## Display the GLB in your webpage
 
@@ -119,7 +118,7 @@ quality switch, triangle/bounding-box metadata from `X-Model3D-Meta`).
 
 The converter provides clear error messages for:
 
-- Unsupported format (anything outside `.step`/`.iges`/`.stl`/`.obj`/`.sldprt`)
+- Unsupported format (anything outside `.step`/`.iges`/`.stl`/`.obj`, including `.sldprt`)
 - Corrupt or empty models (`422`)
 - Oversized files (`413`, max 25 MB)
 - FreeCAD parsing failures (unsupported features)
@@ -133,7 +132,7 @@ From the repository root (requires a Hugging Face write token, never commit it):
 HF_TOKEN="hf_..." npm run deploy:space -- --space-id <user>/<space-id>
 ```
 
-This uploads `Dockerfile`, `requirements.txt`, `app.py`, the FreeCAD helpers
+This uploads `Dockerfile`, `requirements.txt`, `app.py`, the FreeCAD helper
 and this README (which switches the Space to the Docker SDK). It overwrites
 the Space content — back up any existing Space app first.
 

@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Install system dependencies: FreeCAD (sldprt → stl) and headless
+# Install system dependencies: FreeCAD (STEP/IGES → stl) and headless
 # LibreOffice (office documents → pdf). Liberation/DejaVu fonts improve the
 # fidelity of converted Office documents.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -27,7 +27,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py .
-COPY freecad_convert.py .
 COPY freecad_cad_convert.py .
 
 EXPOSE 7860

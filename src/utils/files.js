@@ -93,7 +93,7 @@ export function isOfficeConvertibleExtension(extension = '') {
 }
 
 /** Extensions 3D convertibles en GLB par le Space FreeCAD. */
-const MODEL_GLB_EXTENSIONS = new Set(['step', 'stp', 'iges', 'igs', 'stl', 'obj', 'sldprt']);
+const MODEL_GLB_EXTENSIONS = new Set(['step', 'stp', 'iges', 'igs', 'stl', 'obj']);
 
 /**
  * Type de rendu Web disponible pour un modèle 3D.

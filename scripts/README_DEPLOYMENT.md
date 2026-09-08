@@ -1,6 +1,6 @@
 # Déploiement automatique du Space Hugging Face
 
-Ce script crée et déploie automatiquement le Space Hugging Face pour la conversion de fichiers SolidWorks.
+Ce script crée et déploie automatiquement le Space Hugging Face ENISE Converters (conversion 3D → GLB via FreeCAD et Office → PDF via LibreOffice).
 
 ## Prérequis
 
@@ -33,8 +33,8 @@ HF_TOKEN=votre_token npm run deploy:space
 
 Le script va:
 - Récupérer votre username Hugging Face automatiquement
-- Créer un Space nommé `<username>/solidworks-viewer`
-- Uploader tous les fichiers du dossier `space-huggingface/`
+- Créer le Space s'il n'existe pas (défaut : `<username>/solidworks-viewer`), sinon mettre à jour ses fichiers
+- Pousser les fichiers du dossier `space-huggingface/` en un commit atomique
 - Attendre le déploiement (quelques minutes)
 
 ### Options avancées
@@ -56,24 +56,20 @@ npm run deploy:space -- --help
 ## Sortie attendue
 
 ```
-🔧 Déploiement automatique du Space SolidWorks Viewer
+🔧 Déploiement automatique du Space ENISE Converters (3D + Office)
 
 📋 Récupération des informations utilisateur...
-🎯 Space ID cible: mon-username/solidworks-viewer
+🎯 Space ID cible: mon-username/mon-space
 
-🚀 Création du Space: mon-username/solidworks-viewer
-   SDK: docker
-   Hardware: cpu-basic
-   Visibilité: public
-✅ Space créé avec succès
+⚠️  Le Space mon-username/mon-space existe déjà — mise à jour des fichiers.
 
 📁 Upload des fichiers depuis ./space-huggingface
-   📤 Upload: Dockerfile
-   📤 Upload: requirements.txt
-   📤 Upload: app.py
-   📤 Upload: freecad_convert.py
-   📤 Upload: README.md
-✅ Tous les fichiers ont été uploadés
+   📤 Commit: Dockerfile
+   📤 Commit: requirements.txt
+   📤 Commit: app.py
+   📤 Commit: freecad_cad_convert.py
+   📤 Commit: README.md
+✅ Commit poussé (5 fichiers)
 
 ⏳ Attente du déploiement (timeout: 10min)...
    Status: BUILDING
@@ -82,39 +78,36 @@ npm run deploy:space -- --help
 
 ✅ DÉPLOIEMENT TERMINÉ AVEC SUCCÈS!
 
-📍 URL du Space: https://huggingface.co/spaces/mon-username/solidworks-viewer
+📍 URL du Space: https://huggingface.co/spaces/mon-username/mon-space
+
+💡 Endpoints utilisés par le Worker Cloudflare:
+   - POST https://mon-username-mon-space.hf.space/api/convert-3d
+   - POST https://mon-username-mon-space.hf.space/api/convert-office
 ```
 
 ## Après le déploiement
 
 ### URL d'accès
-- Interface web: `https://huggingface.co/spaces/<username>/solidworks-viewer`
-- API endpoint: `https://<username>-solidworks-viewer.hf.space`
+- Interface web : `https://huggingface.co/spaces/<username>/<space>`
+- API runtime : `https://<username>-<space>.hf.space`
 
 ### Intégration dans votre site
 
-Utilisez l'un des clients fournis:
+Le Worker Cloudflare appelle l'API REST du Space (pas de client Gradio) :
 
-**Python:**
-```python
-from gradio_client import Client
+```bash
+# Conversion 3D : STEP/IGES/STL/OBJ → GLB (+ X-Model3D-Meta)
+curl -X POST https://<username>-<space>.hf.space/api/convert-3d \
+  -F "file=@piece.step;filename=piece.step" -F "quality=standard" \
+  --output piece.glb
 
-client = Client("username/solidworks-viewer")
-result = client.predict(
-    file="piece.sldprt",
-    api_name="/convertir"
-)
+# Conversion Office → PDF
+curl -X POST https://<username>-<space>.hf.space/api/convert-office \
+  -F "file=@doc.docx;filename=doc.docx" --output doc.pdf
 ```
 
-**JavaScript:**
-```javascript
-import { Client } from '@gradio/client';
-
-const client = await Client.connect('username/solidworks-viewer');
-const result = await client.predict('/convertir', {
-  file: new File([...], 'piece.sldprt')
-});
-```
+Exemples complets : `client-examples/python-client.py` et
+`client-examples/javascript-client.js`.
 
 ## Dépannage
 
@@ -133,7 +126,7 @@ const timeout = 1200000; // 20 minutes
 
 ### Erreur de build Docker
 Consultez les logs du Space:
-https://huggingface.co/spaces/<username>/solidworks-viewer/tree/main
+https://huggingface.co/spaces/<username>/<space>/tree/main
 
 ## Coûts
 

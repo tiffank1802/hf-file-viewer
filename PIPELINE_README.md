@@ -1,6 +1,18 @@
-# Pipeline de conversion et visualisation web de fichiers SolidWorks (.sldprt)
+# ⚠️ Document obsolète — Pipeline de conversion et visualisation web CAO
 
-Ce projet contient tous les éléments nécessaires pour mettre en place un pipeline complet de conversion de fichiers SolidWorks (.sldprt) vers un format visualisable dans le navigateur (GLB), ainsi que l'intégration d'un viewer 3D interactif.
+> **Ce document n'est plus à jour et n'est conservé qu'à titre d'archive.**
+> La documentation de référence est [`README.md`](README.md) (site + Worker)
+> et [`space-huggingface/README.md`](space-huggingface/README.md) (Space).
+>
+> Prémisse devenue fausse : **FreeCAD ne sait pas lire les fichiers
+> SolidWorks (`.sldprt`)** — aucun importeur n'existe pour ce format
+> propriétaire (vérifié : `Import.insert()` répond `File format not
+> supported`, aucun module SolidWorks dans le paquet Debian). Le pipeline
+> GLB gratuit couvre `.step`, `.iges`, `.stl`, `.obj` ; les `.sldprt`
+> passent par la visionneuse Autodesk (ou un export STEP préalable).
+
+Ancien contenu ci-dessous (exemples `gradio_client` / `/process_file` et
+mentions `.sldprt` : ne plus utiliser) :
 
 ## 📁 Structure du projet
 

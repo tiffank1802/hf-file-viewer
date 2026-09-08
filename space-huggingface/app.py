@@ -2,22 +2,21 @@
 ENISE conversion Space.
 
 Pipelines:
-1. SolidWorks .sldprt → .glb (FreeCAD + trimesh), exposed as a Gradio UI.
+1. CAD (.step/.stp/.iges/.igs/.stl/.obj) → .glb (FreeCAD + trimesh),
+   exposed as a plain HTTP API (`POST /api/convert-3d`, quality levels) and
+   as a Gradio tab. This is the 3Dfindit-style mesh pipeline feeding the
+   website WebGL viewer.
 2. Office documents (.doc/.docx/.xls/.xlsx/.ppt/.pptx/.odt/...) → .pdf
    (headless LibreOffice), exposed as a plain HTTP API for the Cloudflare
    Worker (`POST /api/convert-office`) and as a second Gradio tab.
-3. CAD (.step/.stp/.iges/.igs/.stl/.obj/.sldprt) → .glb (FreeCAD + trimesh),
-   exposed as a plain HTTP API (`POST /api/convert-3d`, quality levels) and
-   as a third Gradio tab. This is the 3Dfindit-style mesh pipeline feeding
-   the website WebGL viewer.
 
-Note: The .sldprt import module in FreeCAD is experimental.
-Test with geometrically simple parts first before validating on complex parts.
+Note: FreeCAD cannot read proprietary formats (.sldprt, .dwg, ...).
+SolidWorks users should export their parts as STEP; other formats stay on
+the Autodesk pipeline of the website.
 """
 
 import base64
 import json
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -110,7 +109,7 @@ def convert_office_to_pdf_bytes(data: bytes, extension: str) -> bytes:
 # ---------------------------------------------------------------------------
 
 CAD_CONVERTIBLE_EXTENSIONS = frozenset({
-    ".step", ".stp", ".iges", ".igs", ".stl", ".obj", ".sldprt",
+    ".step", ".stp", ".iges", ".igs", ".stl", ".obj",
 })
 # Tessellation linear deflection in mm per quality level (FreeCAD Shape.tessellate).
 CAD_QUALITY_TOLERANCES = {
@@ -172,21 +171,21 @@ def _trimesh_to_glb(mesh_or_scene):
     return bytes(scene.export(file_type="glb")), meta
 
 
+def _last_stdout_line(output: str) -> str:
+    """Return the last non-empty stdout line (the converter script's message)."""
+    lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
+    return lines[-1] if lines else ""
+
+
 def friendly_cad_error(extension: str, raw_details: str = "") -> str:
     """
     Map a FreeCAD failure to a short user-facing message (French site).
 
-    The raw freecadcmd output (tracebacks, log noise) is kept as a truncated
-    single-line suffix for debuggability; the actionable guidance comes first.
+    The converter script's own message is kept as a truncated single-line
+    suffix for debuggability; the actionable guidance comes first.
     """
     raw = " ".join((raw_details or "").split())
     suffix = f" Détail technique : {raw[:200]}" if raw else ""
-    if extension == ".sldprt":
-        return (
-            "FreeCAD n’a pas pu lire ce fichier SolidWorks (format propriétaire, "
-            "support expérimental). Exportez la pièce en STEP depuis SolidWorks, "
-            "ou ouvrez-la avec l’onglet Autodesk." + suffix
-        )
     if extension in (".step", ".stp", ".iges", ".igs"):
         return (
             "La pièce n’a pas pu être importée. Le fichier est peut-être corrompu, "
@@ -259,8 +258,10 @@ def convert_cad_to_glb_bytes(data: bytes, extension: str, quality: str = "standa
                     "freecadcmd not found. FreeCAD may not be installed."
                 ) from exc
             if result.returncode != 0 or not stl_path.exists():
-                details = (result.stderr or result.stdout or "").strip()
-                raise RuntimeError(friendly_cad_error(extension, details))
+                # Prefer our script's message (stdout) over freecadcmd log noise.
+                script_msg = _last_stdout_line(result.stdout)
+                fallback = " ".join((result.stderr or "").split())
+                raise RuntimeError(friendly_cad_error(extension, script_msg or fallback))
             try:
                 loaded = trimesh.load(str(stl_path), force="mesh")
             except Exception as exc:
@@ -388,132 +389,8 @@ async def http_exception_handler(_request, exc: HTTPException):
 
 
 # ---------------------------------------------------------------------------
-# SolidWorks .sldprt → .glb conversion (FreeCAD + trimesh)
+# CAD → .glb conversion (FreeCAD + trimesh)
 # ---------------------------------------------------------------------------
-
-
-def convert_sldprt_to_glb(sldprt_file_path):
-    """
-    Convert a .sldprt file to .glb format.
-
-    Args:
-        sldprt_file_path: Path to the uploaded .sldprt file
-
-    Returns:
-        tuple: (success: bool, result_path_or_error_message: str)
-    """
-    # Create temporary directory for conversion
-    temp_dir = tempfile.mkdtemp()
-
-    try:
-        # Define paths
-        input_sldprt = Path(sldprt_file_path)
-        output_stl = Path(temp_dir) / "output.stl"
-        output_glb = Path(temp_dir) / "output.glb"
-
-        # Step 1: Convert .sldprt to .stl using FreeCAD
-        freecad_script = Path(__file__).parent / "freecad_convert.py"
-
-        if not freecad_script.exists():
-            return False, "FreeCAD conversion script not found."
-
-        # Run freecadcmd in headless mode
-        cmd = [
-            "freecadcmd",
-            "--console",
-            str(freecad_script),
-            str(input_sldprt),
-            str(output_stl)
-        ]
-
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=120  # 2 minute timeout for complex parts
-            )
-
-            if result.returncode != 0:
-                error_msg = result.stderr.strip() or result.stdout.strip()
-                return False, f"FreeCAD conversion failed: {error_msg}"
-
-            # Verify STL was created
-            if not output_stl.exists():
-                return False, "STL file was not created by FreeCAD."
-
-        except subprocess.TimeoutExpired:
-            return False, "FreeCAD conversion timed out. The part may be too complex."
-        except FileNotFoundError:
-            return False, "freecadcmd not found. FreeCAD may not be properly installed."
-
-        # Step 2: Convert .stl to .glb using trimesh
-        try:
-            # Load the STL mesh
-            mesh = trimesh.load(str(output_stl))
-
-            # Handle Scene objects (multiple meshes)
-            if isinstance(mesh, trimesh.Scene):
-                # Apply scaling to all geometries in the scene
-                for geom in mesh.geometry.values():
-                    # Scale from mm to meters (SolidWorks uses mm, glTF expects meters)
-                    geom.apply_scale(0.001)
-            else:
-                # Single mesh - apply scaling directly
-                mesh.apply_scale(0.001)
-
-            # Export to GLB
-            mesh.export(str(output_glb), file_type='glb')
-
-            # Verify GLB was created
-            if not output_glb.exists():
-                return False, "GLB file was not created."
-
-            # Move GLB to a permanent location (Gradio will handle cleanup)
-            final_glb_path = Path(tempfile.gettempdir()) / f"{Path(sldprt_file_path).stem}.glb"
-            final_glb_path.write_bytes(output_glb.read_bytes())
-
-            return True, str(final_glb_path)
-
-        except Exception as e:
-            return False, f"STL to GLB conversion failed: {str(e)}"
-
-    except Exception as e:
-        return False, f"Conversion pipeline error: {str(e)}"
-
-    finally:
-        # Cleanup temporary directory
-        try:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-        except Exception:
-            pass
-
-
-def process_file(input_file):
-    """
-    Gradio interface function to process uploaded file.
-
-    Args:
-        input_file: Path to uploaded .sldprt file
-
-    Returns:
-        Path to converted .glb file or raises gr.Error
-    """
-    if input_file is None:
-        raise gr.Error("No file uploaded. Please upload a .sldprt file.")
-
-    # Validate file extension
-    file_ext = Path(input_file).suffix.lower()
-    if file_ext != '.sldprt':
-        raise gr.Error(f"Invalid file format. Expected .sldprt, got {file_ext}")
-
-    # Perform conversion
-    success, result = convert_sldprt_to_glb(input_file)
-
-    if not success:
-        raise gr.Error(result)
-
-    return result
 
 
 def process_cad_file(input_file, quality="standard"):
@@ -522,6 +399,11 @@ def process_cad_file(input_file, quality="standard"):
         raise gr.Error("No file uploaded. Please upload a CAD document.")
 
     file_ext = Path(input_file).suffix.lower()
+    if file_ext == ".sldprt":
+        raise gr.Error(
+            "FreeCAD cannot read SolidWorks files. Export the part as STEP "
+            "from SolidWorks and retry."
+        )
     if file_ext not in CAD_CONVERTIBLE_EXTENSIONS:
         raise gr.Error(f"Invalid file format. Got {file_ext}, expected a CAD document.")
     if quality not in CAD_QUALITY_TOLERANCES:
@@ -564,45 +446,14 @@ with gr.Blocks(title="ENISE Converters") as converter_ui:
     gr.Markdown("""
     # ENISE Converters
 
-    - **SolidWorks (.sldprt) → GLB** : visualisation web des pièces.
+    - **CAD → GLB** : STEP/IGES/STL/OBJ vers maillage web
+      (utilisée par le site via `POST /api/convert-3d`).
     - **Office → PDF** : conversion fidèle des documents Word/Excel/PowerPoint
       et OpenDocument (utilisée par le site via `POST /api/convert-office`).
-    - **CAD → GLB** : STEP/IGES/STL/OBJ/SolidWorks vers maillage web
-      (utilisée par le site via `POST /api/convert-3d`).
+
+    FreeCAD ne lit pas les formats propriétaires (.sldprt, .dwg…) : exportez
+    vos pièces en STEP depuis votre CAO.
     """)
-
-    with gr.Tab("SolidWorks (.sldprt) to GLB"):
-        gr.Markdown("""
-        Upload a SolidWorks part file (.sldprt) to convert it to GLB format for web visualization.
-
-        **Important Notes:**
-        - The .sldprt import module in FreeCAD is **experimental**
-        - Test with geometrically simple parts first
-        - Complex surfaces or recent SolidWorks features may not be supported
-        - Only geometry (tessellated mesh) is preserved - no parametric history, colors, or materials
-        - Conversion may take 30-60 seconds for the first request (cold start)
-        """)
-
-        with gr.Row():
-            with gr.Column():
-                sldprt_input = gr.File(
-                    label="Upload .sldprt file",
-                    file_types=[".sldprt"],
-                    type="filepath"
-                )
-                sldprt_btn = gr.Button("Convert to GLB", variant="primary")
-
-            with gr.Column():
-                sldprt_output = gr.File(
-                    label="Download converted .glb file",
-                    file_types=[".glb"]
-                )
-
-        sldprt_btn.click(
-            fn=process_file,
-            inputs=sldprt_input,
-            outputs=sldprt_output
-        )
 
     with gr.Tab("Office to PDF"):
         gr.Markdown("""
@@ -634,8 +485,8 @@ with gr.Blocks(title="ENISE Converters") as converter_ui:
 
     with gr.Tab("CAD to GLB"):
         gr.Markdown("""
-        Upload a CAD or mesh file (STEP, IGES, STL, OBJ, simple SolidWorks
-        parts) to convert it to GLB with FreeCAD + trimesh. Same engine as the
+        Upload a CAD or mesh file (STEP, IGES, STL, OBJ) to convert it to
+        GLB with FreeCAD + trimesh. Same engine as the
         automated `POST /api/convert-3d` endpoint used by the website WebGL
         viewer. Quality controls the tessellation density.
         """)

@@ -1,176 +1,140 @@
 """
-Client example for calling the SolidWorks to GLB Converter Space
+Client example for calling the ENISE Converters Space (REST API).
 
-This Python example shows how to call the Hugging Face Space from your 
-backend server. Never expose HF_TOKEN to the client side.
+This Python example shows how to call the Hugging Face Space from your
+backend server with the standard library only (no extra dependency).
+The Space is public: no HF token needed. Never expose HF_TOKEN client-side.
 
-Install dependencies:
-    pip install gradio_client
+Supported 3D inputs: .step, .stp, .iges, .igs, .stl, .obj.
+Note: FreeCAD cannot read .sldprt — export SolidWorks parts as STEP first.
 """
 
-from gradio_client import Client
-from typing import Optional
+import base64
+import json
 import os
+import urllib.request
+
+CONVERTIBLE_3D = (".step", ".stp", ".iges", ".igs", ".stl", ".obj")
 
 
-def convert_sldprt_to_glb(
-    sldprt_file_path: str,
-    hf_space_name: str,
-    hf_token: Optional[str] = None
-) -> str:
+def convert_cad_to_glb(cad_file_path, space_runtime_url, quality="standard", timeout=600):
     """
-    Convert a SolidWorks .sldprt file to GLB using the Hugging Face Space.
-    
+    Convert a CAD file to GLB via POST /api/convert-3d.
+
     Args:
-        sldprt_file_path: Path to the .sldprt file on your server
-        hf_space_name: Hugging Face Space name (e.g., "username/sldprt-to-glb")
-        hf_token: Optional HF token for private spaces
-    
+        cad_file_path: Path to the CAD file on your server.
+        space_runtime_url: Space runtime URL (e.g. "https://user-space.hf.space").
+        quality: One of "draft", "standard", "fine" (tessellation density).
+        timeout: Request timeout in seconds (cold start can take a minute).
+
     Returns:
-        str: Path/URL to the converted .glb file
-    
+        Tuple (glb_bytes, meta dict from the X-Model3D-Meta header).
+
     Raises:
-        TimeoutError: If conversion takes too long (complex part)
-        ConnectionError: If space is unavailable or rate limited
-        ValueError: If file format is invalid
+        ValueError: invalid file format or rejected conversion (4xx).
+        TimeoutError: conversion took too long.
+        ConnectionError: Space unavailable.
     """
+    extension = os.path.splitext(cad_file_path)[1].lower()
+    if extension not in CONVERTIBLE_3D:
+        raise ValueError(f"Invalid file format: {extension or '(none)'}")
+
+    boundary = "----hfspaceboundary7MA4YWxkTrZu0gW"
+    with open(cad_file_path, "rb") as handle:
+        file_bytes = handle.read()
+    filename = os.path.basename(cad_file_path)
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        "Content-Type: application/octet-stream\r\n\r\n"
+    ).encode() + file_bytes + (
+        f"\r\n--{boundary}\r\n"
+        'Content-Disposition: form-data; name="quality"\r\n\r\n'
+        f"{quality}\r\n--{boundary}--\r\n"
+    ).encode()
+
+    request = urllib.request.Request(
+        f"{space_runtime_url}/api/convert-3d",
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
     try:
-        # Create client with optional token for private spaces
-        if hf_token:
-            client = Client(hf_space_name, hf_token=hf_token)
-        else:
-            client = Client(hf_space_name)
-        
-        print(f"Converting {sldprt_file_path} to GLB...")
-        
-        # Call the Space API
-        result = client.predict(
-            uploaded_file=sldprt_file_path,
-            api_name="/process_file"
-        )
-        
-        print("Conversion successful!")
-        print(f"GLB file: {result}")
-        
-        return result
-        
-    except Exception as e:
-        error_msg = str(e)
-        
-        # Handle common errors
-        if "timeout" in error_msg.lower():
-            raise TimeoutError(
-                "Conversion timed out. The part may be too complex."
-            ) from e
-        
-        if "429" in error_msg:
-            raise ConnectionError(
-                "Rate limit exceeded. Please wait before trying again."
-            ) from e
-        
-        if "cold start" in error_msg.lower() or "starting" in error_msg.lower():
-            raise ConnectionError(
-                "Space is starting up. This may take 30-60 seconds on first request."
-            ) from e
-        
-        raise
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            glb_bytes = response.read()
+            meta_header = response.headers.get("X-Model3D-Meta", "")
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read().decode())["detail"]
+        except Exception:
+            detail = f"HTTP {exc.code}"
+        raise ValueError(f"Conversion rejected: {detail}") from exc
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, TimeoutError):
+            raise TimeoutError("Conversion timed out.") from exc
+        raise ConnectionError(f"Space unavailable: {exc.reason}") from exc
+
+    meta = json.loads(base64.urlsafe_b64decode(meta_header + "==")) if meta_header else {}
+    print(f"Converted {filename} -> GLB ({len(glb_bytes)} bytes, {meta.get('triangles')} triangles)")
+    return glb_bytes, meta
 
 
 # Flask endpoint example
 def create_flask_endpoint():
     """
     Example Flask endpoint for converting files.
-    
+
     Usage in your Flask app:
         from convert_client import create_flask_endpoint
-        app.add_url_rule('/api/convert-sldprt', 'convert_sldprt', 
-                        create_flask_endpoint(), methods=['POST'])
+        app.add_url_rule('/api/convert-3d', 'convert_3d',
+                         create_flask_endpoint(), methods=['POST'])
     """
-    from flask import Flask, request, jsonify
-    
+    from flask import request, send_file
+
+    import io
+    import tempfile
+
     def convert_endpoint():
+        from flask import jsonify
+
+        if "file" not in request.files:
+            return jsonify({"status": "error", "message": "No file uploaded"}), 400
+
+        file = request.files["file"]
+        extension = os.path.splitext(file.filename or "")[1].lower()
+        if extension not in CONVERTIBLE_3D:
+            return jsonify({"status": "error", "message": f"Invalid file format: {extension}"}), 400
+
+        temp_dir = tempfile.mkdtemp()
+        temp_path = os.path.join(temp_dir, os.path.basename(file.filename))
+        file.save(temp_path)
+
+        space_runtime_url = os.environ.get("SPACE_RUNTIME_URL", "https://user-space.hf.space")
         try:
-            if 'file' not in request.files:
-                return jsonify({
-                    'status': 'error',
-                    'message': 'No file uploaded'
-                }), 400
-            
-            file = request.files['file']
-            
-            if file.filename == '':
-                return jsonify({
-                    'status': 'error',
-                    'message': 'No file selected'
-                }), 400
-            
-            if not file.filename.lower().endswith('.sldprt'):
-                return jsonify({
-                    'status': 'error',
-                    'message': 'Invalid file format. Expected .sldprt'
-                }), 400
-            
-            # Save uploaded file temporarily
-            import tempfile
-            temp_dir = tempfile.mkdtemp()
-            temp_path = os.path.join(temp_dir, file.filename)
-            file.save(temp_path)
-            
-            # Configuration
-            HF_SPACE_NAME = "your-username/sldprt-to-glb"
-            HF_TOKEN = os.environ.get('HF_TOKEN')  # Store in environment variable
-            
-            print(f"Processing file: {temp_path}")
-            
-            # Perform conversion
-            glb_path = convert_sldprt_to_glb(temp_path, HF_SPACE_NAME, HF_TOKEN)
-            
-            # Return the GLB URL/path to the client
-            return jsonify({
-                'status': 'success',
-                'glbUrl': glb_path,
-                'message': 'File converted successfully'
-            })
-            
-        except TimeoutError as e:
-            return jsonify({
-                'status': 'error',
-                'message': str(e)
-            }), 408  # Request Timeout
-        
-        except ConnectionError as e:
-            return jsonify({
-                'status': 'error',
-                'message': str(e)
-            }), 503  # Service Unavailable
-        
-        except ValueError as e:
-            return jsonify({
-                'status': 'error',
-                'message': str(e)
-            }), 400  # Bad Request
-        
-        except Exception as e:
-            print(f"Conversion error: {e}")
-            return jsonify({
-                'status': 'error',
-                'message': 'Conversion failed'
-            }), 500  # Internal Server Error
-    
+            glb_bytes, meta = convert_cad_to_glb(temp_path, space_runtime_url)
+        except ValueError as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 422
+        except (TimeoutError, ConnectionError) as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 503
+
+        return send_file(
+            io.BytesIO(glb_bytes),
+            mimetype="model/gltf-binary",
+            as_attachment=False,
+            download_name=f"{os.path.splitext(file.filename)[0]}.glb",
+        )
+
     return convert_endpoint
 
 
 if __name__ == "__main__":
     # Example usage
-    HF_SPACE_NAME = "your-username/sldprt-to-glb"
-    HF_TOKEN = os.environ.get("HF_TOKEN")
-    
+    SPACE_RUNTIME_URL = os.environ.get("SPACE_RUNTIME_URL", "https://user-space.hf.space")
+
     try:
-        glb_path = convert_sldprt_to_glb(
-            "./example-part.sldprt",
-            HF_SPACE_NAME,
-            HF_TOKEN
-        )
-        print(f"Converted file available at: {glb_path}")
-    except Exception as e:
-        print(f"Error: {e}")
+        glb_bytes, _meta = convert_cad_to_glb("./example-part.step", SPACE_RUNTIME_URL)
+        with open("example-part.glb", "wb") as handle:
+            handle.write(glb_bytes)
+        print("Converted file available at: example-part.glb")
+    except Exception as exc:
+        print(f"Error: {exc}")

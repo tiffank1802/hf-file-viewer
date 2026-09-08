@@ -1,5 +1,8 @@
 """
-FreeCAD batch conversion script: CAD (.step/.stp/.iges/.igs/.sldprt) to .stl.
+FreeCAD batch conversion script: CAD (.step/.stp/.iges/.igs) to .stl.
+
+Note: FreeCAD cannot read proprietary formats such as .sldprt (no importer
+exists); SolidWorks parts must be exported as STEP first.
 
 Called headless by app.py:
     freecadcmd --console freecad_cad_convert.py <input> <output.stl> <tolerance_mm>
