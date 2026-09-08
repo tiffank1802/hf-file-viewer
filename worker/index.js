@@ -458,7 +458,9 @@ async function handleApsToken(_request, env) {
     );
   }
 
-  const { accessToken, expiresIn } = await getApsAccessToken(env);
+  // Jeton public à privilèges minimaux : la visionneuse n'a besoin que de
+  // `viewables:read`. Le jeton complet (buckets, écriture) reste côté Worker.
+  const { accessToken, expiresIn } = await getApsAccessToken(env, 'viewables:read');
   return jsonResponse(
     { access_token: accessToken, expires_in: expiresIn, token_type: 'Bearer' },
     { cacheControl: 'no-store', headers: { 'X-APS-Status': 'ready' } },
@@ -508,13 +510,9 @@ async function handleApsView(request, env, ctx) {
   const { accessToken } = await getApsAccessToken(env);
 
   if (existing && !force) {
-    if (existing.status === 'success') {
-      return jsonResponse(
-        { ...stripApsRecordForClient(existing), cacheStatus: 'cached' },
-        { cacheControl: 'no-store' },
-      );
-    }
-    if (existing.urn) {
+    if (existing.status === 'success' || existing.urn) {
+      // Les paniers `transient` expirent après 24 h : un succès en cache
+      // n'est réutilisé qu'après vérification du manifeste Autodesk.
       const refreshed = await refreshApsRecord(
         env,
         ctx,
@@ -524,7 +522,10 @@ async function handleApsView(request, env, ctx) {
         existing,
         accessToken,
       );
-      return jsonResponse(refreshed, { cacheControl: 'no-store' });
+      // Manifeste disparu (objet expiré) : relancer une traduction complète.
+      if (refreshed.status !== 'expired') {
+        return jsonResponse(refreshed, { cacheControl: 'no-store' });
+      }
     }
   }
 
@@ -535,7 +536,10 @@ async function handleApsView(request, env, ctx) {
   );
 }
 
-async function getApsAccessToken(env) {
+async function getApsAccessToken(
+  env,
+  scope = 'bucket:create bucket:read data:read data:write viewables:read',
+) {
   if (!isApsConfigured(env)) {
     throw new HttpError(501, 'Autodesk APS non configuré.');
   }
@@ -544,7 +548,7 @@ async function getApsAccessToken(env) {
     grant_type: 'client_credentials',
     client_id: String(env.APS_CLIENT_ID || '').trim(),
     client_secret: String(env.APS_CLIENT_SECRET || '').trim(),
-    scope: 'bucket:create bucket:read data:read data:write viewables:read',
+    scope,
   });
 
   let response;
@@ -783,6 +787,19 @@ async function refreshApsRecord(env, ctx, filePath, size, mtime, record, accessT
     throw new HttpError(502, 'Vérification de la conversion Autodesk impossible.');
   }
   if (response.status === 404) {
+    // Manifeste absent : soit le job vient d'être posté (traduction pas
+    // encore démarrée), soit l'objet a expiré du panier `transient` (24 h).
+    if (record.status === 'success') {
+      const expired = {
+        ...record,
+        status: 'expired',
+        progress: 0,
+        message: 'Conversion 3D expirée côté Autodesk, à relancer.',
+        updatedAt: new Date().toISOString(),
+      };
+      await storeApsRecord(ctx, env, filePath, size, mtime, expired);
+      return { ...stripApsRecordForClient(expired), cacheStatus: 'expired' };
+    }
     const pending = {
       ...record,
       status: 'inprogress',
@@ -865,7 +882,7 @@ function apsAuthHeaders(accessToken) {
   };
 }
 
-function normalizeApsManifestStatus(status) {
+export function normalizeApsManifestStatus(status) {
   const value = String(status || '').toLowerCase();
   if (value === 'success' || value === 'complete') return 'success';
   if (value === 'failed' || value === 'timeout' || value === 'canceled' || value === 'cancelled') {

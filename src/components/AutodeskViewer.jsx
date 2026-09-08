@@ -51,6 +51,7 @@ export default function AutodeskViewer({ file }) {
     let viewerTimer = 0;
     let initTimer = 0;
     let forceRequested = false;
+    let expiredRestarts = 0;
     let tokenError = '';
     let pendingUrn = '';
 
@@ -92,7 +93,14 @@ export default function AutodeskViewer({ file }) {
         requestModel(true);
         return;
       }
-      setError('Le modèle 3D n’est pas disponible. Téléchargez le fichier pour le consulter.');
+      // Le code/message du Viewer est conservé : indispensable au diagnostic
+      // (réseau, droits, URN expiré…), voir la console pour le détail.
+      const detail = [viewerErrorCode, viewerErrorMessage].filter(Boolean).join(' — ');
+      setError(
+        detail
+          ? `Le modèle 3D n’est pas disponible (Autodesk : ${detail}). Téléchargez le fichier pour le consulter.`
+          : 'Le modèle 3D n’est pas disponible. Téléchargez le fichier pour le consulter.',
+      );
     };
 
     const initViewer = () =>
@@ -202,6 +210,16 @@ export default function AutodeskViewer({ file }) {
           if (payload.status === 'success' && payload.urn) {
             setMessage('Modèle 3D prêt.');
             loadModel(payload.urn);
+            return;
+          }
+          if (payload.status === 'expired') {
+            expiredRestarts += 1;
+            if (expiredRestarts > 1) {
+              setError('La conversion 3D a expiré côté Autodesk. Réessayez ou téléchargez le fichier.');
+              return;
+            }
+            setMessage('Conversion expirée, relance en cours…');
+            requestModel(true);
             return;
           }
           if (payload.status === 'failed') {

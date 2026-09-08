@@ -272,7 +272,7 @@ Pour un aperçu 3D fiable, privilégier les formats d’échange largement suppo
 
 S’il s’agit d’un fichier SolidWorks récent non supporté, l’exporter en **STEP** (ou OBJ/STL) puis le ré-ajouter au bucket permet de le visualiser.
 
-> Le Viewer Autodesk télécharge ses assets depuis `https://developer.api.autodesk.com` ; le token n’est jamais partagé avec le navigateur, seul le jeton public renvoyé par `/api/aps/token` lui est transmis.
+> Le Viewer Autodesk télécharge ses assets depuis `https://developer.api.autodesk.com` ; le token complet n’est jamais partagé avec le navigateur, seul un jeton public limité au scope `viewables:read` (renvoyé par `/api/aps/token`) lui est transmis. Les succès en cache sont revérifiés via le manifeste avant réutilisation : si l’objet a expiré du panier `transient` (24 h), la traduction est relancée automatiquement.
 
 ## Clés et secrets
 
