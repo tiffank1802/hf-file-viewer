@@ -277,3 +277,61 @@ Le choix recommandé est :
 
 Ce choix évite de dépendre d’une API cross-origin non documentée tout en
 permettant de créer et publier de vrais fichiers FreeCAD.
+
+## 11. Évolution possible vers une CAO/FEM web native
+
+Le guide modulaire fourni — géométrie OpenCascade WASM, maillage Gmsh WASM,
+solveur FEM et visualisation Three.js — décrit un **produit supplémentaire**,
+plus ambitieux que l’intégration de FreeCAD Web. Il ne doit pas être chargé
+sur la page `/atelier-3d` au premier jalon.
+
+### Découpage recommandé
+
+```text
+Jalon 1 : FreeCAD Web externe
+  création paramétrique → téléchargement .FCStd → upload sécurisé
+
+Jalon 2 : viewer/post-traitement local
+  .FCStd/STEP → GLB → Three.js dans le site
+
+Jalon 3 : CAO code-first optionnelle
+  replicad ou cascade-core → géométrie B-Rep → export STEP/GLB
+
+Jalon 4 : maillage
+  géométrie validée → Gmsh WASM dans un Web Worker → .msh
+
+Jalon 5 : étude FEM
+  .msh + matériaux + charges + appuis → solveur WASM/JS → résultats
+
+Jalon 6 : post-traitement
+  déplacements/contraintes → color map Three.js → export résultats
+```
+
+### Choix d’architecture
+
+- `FreeCAD Web` reste l’atelier de création immédiatement disponible ; son
+  état interne n’est pas piloté par ENISE Docs sans API cross-origin explicite.
+- Le modèle de données FEM futur doit être indépendant de l’interface FreeCAD :
+  géométrie source, maillage, étude, conditions limites, matériaux et résultats
+  doivent être sérialisables séparément.
+- Les opérations Gmsh, solveur et gros exports doivent s’exécuter dans des Web
+  Workers afin de ne pas bloquer React.
+- Three.js est déjà présent dans le dépôt via le viewer GLB et peut être
+  réutilisé pour le post-traitement, sans charger Gmsh/FEM sur les pages
+  documentaires.
+- STEP reste un format d’échange ; `.msh` devient le format de calcul et GLB
+  le format de visualisation web.
+
+### Garde-fous avant d’ajouter les dépendances
+
+Les bibliothèques proposées dans le guide (`replicad`, `cascade-core`, Gmsh
+WASM, FEAScript ou un solveur Rust/WASM) doivent d’abord être validées sur un
+petit prototype : taille du bundle, API réellement publiée, compatibilité avec
+Vite/Workers, licence, précision numérique et support des navigateurs ciblés.
+Aucune de ces dépendances ne doit être ajoutée au bundle principal avant cette
+validation.
+
+La simulation FEM doit également afficher clairement son périmètre : un
+prototype pédagogique ne constitue pas une validation industrielle. Les
+résultats devront comporter les hypothèses, unités, éléments, qualité du
+maillage et conditions aux limites utilisées.
