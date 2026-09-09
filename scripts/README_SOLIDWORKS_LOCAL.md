@@ -40,10 +40,54 @@ echo
 
 Dans ce cas, ne définissez pas `HOOPS_LICENSE_FILE` en même temps.
 
-## 3. Tester sans téléverser
+## 3. Préparer les fichiers sources
 
-Supposons que `./bucket-export` soit une copie locale de l’arborescence du
-bucket :
+`./bucket-export` est seulement un exemple de dossier local : le script ne le
+crée pas et ne télécharge pas automatiquement le bucket. Si les fichiers
+SolidWorks ne sont pas encore présents sur la machine, télécharge uniquement
+les `.sldprt` et `.sldasm` avec le token HF :
+
+```bash
+mkdir -p ./bucket-export
+python3 - <<'PY'
+import os
+from pathlib import Path
+from huggingface_hub import HfApi
+
+bucket = "ktongue/ENISE-SITE"
+destination = Path("bucket-export")
+token = os.environ["HF_TOKEN"]
+api = HfApi(token=token)
+items = [
+    item for item in api.list_bucket_tree(bucket, recursive=True, token=token)
+    if getattr(item, "type", "") == "file"
+    and Path(item.path).suffix.lower() in {".sldprt", ".sldasm"}
+]
+if not items:
+    raise SystemExit("Aucun fichier .sldprt/.sldasm dans le bucket.")
+for item in items:
+    target = destination / item.path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    api.download_bucket_files(
+        bucket,
+        [(item.path, target)],
+        raise_on_missing_files=True,
+        token=token,
+    )
+    print(target)
+PY
+```
+
+Tu peux aussi simplement utiliser le vrai dossier contenant déjà tes fichiers :
+
+```bash
+find . -type f \( -iname '*.sldprt' -o -iname '*.sldasm' \) -print
+```
+
+## 4. Tester sans téléverser
+
+Supposons que `./bucket-export` soit maintenant une copie locale de
+l’arborescence du bucket :
 
 ```bash
 python3 scripts/convert-solidworks-local.py \
@@ -68,7 +112,7 @@ sous-dossiers sont copiés dans le workspace temporaire HOOPS. Ils ne sont pas
 
 Retirez `--no-xvfb` si HOOPS a besoin de Xvfb et que `xvfb-run` est installé.
 
-## 4. Vérifier puis téléverser
+## 5. Vérifier puis téléverser
 
 Après vérification des fichiers dans `./converted-step`, relancez avec
 `--upload` :
