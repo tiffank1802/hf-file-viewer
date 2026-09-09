@@ -272,8 +272,8 @@ Pour convertir avec HOOPS sur une machine locale puis envoyer les résultats au
 bucket, utiliser [`scripts/convert-solidworks-local.py`](scripts/convert-solidworks-local.py)
 et sa documentation ([`scripts/README_SOLIDWORKS_LOCAL.md`](scripts/README_SOLIDWORKS_LOCAL.md)).
 Le mode `--output-mode original` écrit `GM/piece.step` à côté de
-`GM/piece.sldprt`; le mode `derived` conserve la convention `derived/step/` du
-Worker.
+`GM/piece.sldprt`; le Worker sait réutiliser ce STEP pré-calculé grâce à son
+manifest. Le mode `derived` conserve la convention `derived/step/` du Worker.
 
 ### Visualisation 3D avec Autodesk APS (Forge)
 

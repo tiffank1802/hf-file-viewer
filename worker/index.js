@@ -1536,6 +1536,20 @@ export function buildSolidworksManifestPath(filePath) {
   return `${buildSolidworksStepPath(filePath)}.json`;
 }
 
+/** Chemin STEP conservé à côté du source par le script local. */
+export function buildSolidworksOriginalStepPath(filePath) {
+  const normalized = normalizeFilePath(filePath);
+  const parts = normalized.split('/');
+  const filename = parts.pop() || 'model.sldprt';
+  const stem = filename.replace(/\.[^.]+$/u, '') || 'model';
+  const directory = parts.length ? `${parts.join('/')}/` : '';
+  return `${directory}${stem}.step`;
+}
+
+export function buildSolidworksOriginalManifestPath(filePath) {
+  return `${buildSolidworksOriginalStepPath(filePath)}.json`;
+}
+
 /** Clé stable d’un source SolidWorks pour les appels de diagnostic/cache. */
 export function makeSolidworksSourceKey(filePath, size = '', mtime = '') {
   const source = `${String(filePath || '')}|${String(size || '')}|${String(mtime || '')}`;
@@ -1602,16 +1616,11 @@ async function handleSolidworksStep(request, env) {
   }
 
   const convertBase = getSolidworksConvertUrl(env);
-  if (!convertBase) {
-    return jsonResponse(
-      { status: 'not-configured', error: 'La conversion SolidWorks → STEP n’est pas configurée sur ce site.' },
-      { status: 501, cacheControl: 'no-store' },
-    );
-  }
-
   const maxBytes = positiveInteger(env.MAX_SOLIDWORKS_BYTES, DEFAULT_MAX_SOLIDWORKS_BYTES);
   const outputPath = buildSolidworksStepPath(filePath);
   const manifestPath = buildSolidworksManifestPath(filePath);
+  const originalOutputPath = buildSolidworksOriginalStepPath(filePath);
+  const originalManifestPath = buildSolidworksOriginalManifestPath(filePath);
   const force = url.searchParams.get('force') === '1';
   const bucketId = getBucketId(env);
   const sourceBytes = await downloadConvertibleSource(env, bucketId, filePath, maxBytes);
@@ -1626,26 +1635,39 @@ async function handleSolidworksStep(request, env) {
   const dependencyManifest = solidworksDependencyManifest(dependencies);
 
   if (!force) {
-    const manifest = await readSolidworksManifest(env, manifestPath);
-    if (
-      manifest?.sourceSha256 === sourceSha256
-      && hasSameSolidworksDependencies(manifest, dependencies)
-    ) {
-      return jsonResponse(
-        {
-          status: 'success',
-          cached: true,
-          sourcePath: filePath,
-          sourceSha256,
-          dependencies: dependencyManifest,
-          stepPath: outputPath,
-          manifestPath,
-          downloadUrl: solidworksDownloadPath(outputPath),
-          size: Number(manifest.size) || null,
-        },
-        { cacheControl: 'no-store' },
-      );
+    const cacheCandidates = [
+      { stepPath: outputPath, manifestPath },
+      { stepPath: originalOutputPath, manifestPath: originalManifestPath },
+    ];
+    for (const candidate of cacheCandidates) {
+      const manifest = await readSolidworksManifest(env, candidate.manifestPath);
+      if (
+        manifest?.sourceSha256 === sourceSha256
+        && hasSameSolidworksDependencies(manifest, dependencies)
+      ) {
+        return jsonResponse(
+          {
+            status: 'success',
+            cached: true,
+            sourcePath: filePath,
+            sourceSha256,
+            dependencies: dependencyManifest,
+            stepPath: candidate.stepPath,
+            manifestPath: candidate.manifestPath,
+            downloadUrl: solidworksDownloadPath(candidate.stepPath),
+            size: Number(manifest.size) || null,
+          },
+          { cacheControl: 'no-store' },
+        );
+      }
     }
+  }
+
+  if (!convertBase) {
+    return jsonResponse(
+      { status: 'not-configured', error: 'La conversion SolidWorks → STEP n’est pas configurée sur ce site.' },
+      { status: 501, cacheControl: 'no-store' },
+    );
   }
 
   const filename = filePath.split('/').pop() || `model.${extension}`;

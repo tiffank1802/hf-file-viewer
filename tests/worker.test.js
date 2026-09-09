@@ -5,6 +5,8 @@ import worker, {
   buildHfFileUrl,
   buildHfTreeUrl,
   buildSolidworksManifestPath,
+  buildSolidworksOriginalManifestPath,
+  buildSolidworksOriginalStepPath,
   buildSolidworksStepPath,
   countFilesByDirectory,
   describeApsFailure,
@@ -16,6 +18,7 @@ import worker, {
   isBlockedLinkHost,
   isSolidworksExtension,
   readCappedText,
+  sha256Hex,
   isApsConfigured,
   makeApsSourceKey,
   makeKvKey,
@@ -61,6 +64,14 @@ test('les chemins SolidWorks dérivés restent stables et hors du dossier source
   assert.equal(
     buildSolidworksManifestPath('GM/Tutos SolidWorks/piece.sldprt'),
     'derived/step/GM/Tutos SolidWorks/piece.step.json',
+  );
+  assert.equal(
+    buildSolidworksOriginalStepPath('GM/Tutos SolidWorks/piece.sldprt'),
+    'GM/Tutos SolidWorks/piece.step',
+  );
+  assert.equal(
+    buildSolidworksOriginalManifestPath('GM/Tutos SolidWorks/piece.sldprt'),
+    'GM/Tutos SolidWorks/piece.step.json',
   );
   assert.equal(isSolidworksExtension('SLDASM'), true);
   assert.equal(isSolidworksExtension('step'), false);
@@ -125,6 +136,43 @@ test('POST /api/solidworks/step transmet le fichier et le chemin de sortie au se
     assert.equal(converterForm.get('output_path'), 'derived/step/GM/piece.step');
     assert.match(String(converterForm.get('source_sha256')), /^[a-f0-9]{64}$/);
     assert.equal(calls.some((url) => url.includes('/api/convert-solidworks-step')), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('un STEP local déjà présent à côté du source est servi sans service HOOPS', async () => {
+  const originalFetch = globalThis.fetch;
+  const source = new TextEncoder().encode('local-solidworks-source');
+  const sourceSha256 = await sha256Hex(source);
+  globalThis.fetch = async (input) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.includes('/GM/piece.sldprt')) return new Response(source);
+    if (url.includes('/derived/step/')) return new Response('missing', { status: 404 });
+    if (url.includes('/GM/piece.step.json')) {
+      return new Response(JSON.stringify({
+        sourceSha256,
+        dependencies: [],
+        size: 456,
+      }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    throw new Error(`Le service HOOPS ne devrait pas être appelé : ${url}`);
+  };
+
+  try {
+    const response = await worker.fetch(
+      new Request('https://docs.example/api/solidworks/step?path=GM%2Fpiece.sldprt', { method: 'POST' }),
+      {
+        HF_BUCKET_ID: 'ktongue/ENISE-SITE',
+        ASSETS: { fetch: () => new Response('asset') },
+      },
+      { waitUntil() {} },
+    );
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.cached, true);
+    assert.equal(payload.stepPath, 'GM/piece.step');
+    assert.equal(payload.downloadUrl, '/api/file?path=GM%2Fpiece.step&download=1');
   } finally {
     globalThis.fetch = originalFetch;
   }

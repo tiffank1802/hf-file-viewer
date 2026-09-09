@@ -128,7 +128,8 @@ derived/step/GM/piece.step.json
 ```
 
 `--output-mode original` est prévu pour votre demande de dépôt à côté du
-fichier source. `--output-mode derived` reste compatible avec le contrat du
+fichier source ; le Worker réutilise ce résultat s’il trouve le manifest. Le
+mode `--output-mode derived` reste compatible avec la convention de cache du
 Worker et de l’interface web.
 
 ## Options utiles
