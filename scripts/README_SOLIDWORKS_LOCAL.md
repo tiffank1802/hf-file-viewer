@@ -56,7 +56,9 @@ from huggingface_hub import HfApi
 
 bucket = "ktongue/ENISE-SITE"
 destination = Path("bucket-export")
-token = os.environ["HF_TOKEN"]
+token = os.environ.get("HF_TOKEN", "").strip()
+if not token:
+    raise SystemExit("HF_TOKEN est vide. Configure un token Hugging Face Write avant de continuer.")
 api = HfApi(token=token)
 items = [
     item for item in api.list_bucket_tree(bucket, recursive=True, token=token)
