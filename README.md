@@ -266,6 +266,15 @@ références externes à ce périmètre doivent être regroupées dans le bucket
 l’assemblage peut rester incomplet. Le STEP ne conserve pas l’historique
 paramétrique SolidWorks.
 
+### Conversion locale avant déploiement
+
+Pour convertir avec HOOPS sur une machine locale puis envoyer les résultats au
+bucket, utiliser [`scripts/convert-solidworks-local.py`](scripts/convert-solidworks-local.py)
+et sa documentation ([`scripts/README_SOLIDWORKS_LOCAL.md`](scripts/README_SOLIDWORKS_LOCAL.md)).
+Le mode `--output-mode original` écrit `GM/piece.step` à côté de
+`GM/piece.sldprt`; le mode `derived` conserve la convention `derived/step/` du
+Worker.
+
 ### Visualisation 3D avec Autodesk APS (Forge)
 
 Le Worker exécute le pipeline **APS / Model Derivative** :
