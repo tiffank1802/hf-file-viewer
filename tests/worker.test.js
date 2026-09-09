@@ -1,20 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
+import worker, {
   buildApsObjectKey,
   buildHfFileUrl,
   buildHfTreeUrl,
+  buildSolidworksManifestPath,
+  buildSolidworksStepPath,
   countFilesByDirectory,
   describeApsFailure,
   describeApsManifest,
   extractLinkMeta,
   getNextLink,
+  getSolidworksConvertUrl,
   isAuthWallUrl,
   isBlockedLinkHost,
+  isSolidworksExtension,
   readCappedText,
   isApsConfigured,
   makeApsSourceKey,
   makeKvKey,
+  makeSolidworksSourceKey,
   normalizeFilePath,
   normalizePrefix,
   selectCountsForPrefix,
@@ -46,6 +51,135 @@ test('getNextLink lit le lien de pagination relatif', () => {
     'https://huggingface.co/api/buckets/u/b/tree',
   );
   assert.equal(next, 'https://huggingface.co/api/buckets/u/b/tree?cursor=abc');
+});
+
+test('les chemins SolidWorks dérivés restent stables et hors du dossier source', () => {
+  assert.equal(
+    buildSolidworksStepPath('GM/Tutos SolidWorks/piece.sldprt'),
+    'derived/step/GM/Tutos SolidWorks/piece.step',
+  );
+  assert.equal(
+    buildSolidworksManifestPath('GM/Tutos SolidWorks/piece.sldprt'),
+    'derived/step/GM/Tutos SolidWorks/piece.step.json',
+  );
+  assert.equal(isSolidworksExtension('SLDASM'), true);
+  assert.equal(isSolidworksExtension('step'), false);
+  assert.equal(
+    makeSolidworksSourceKey('GM/piece.sldprt', '123', '2026-09-09'),
+    makeSolidworksSourceKey('GM/piece.sldprt', '123', '2026-09-09'),
+  );
+  assert.notEqual(
+    makeSolidworksSourceKey('GM/piece.sldprt', '123', '2026-09-09'),
+    makeSolidworksSourceKey('GM/other.sldprt', '123', '2026-09-09'),
+  );
+});
+
+test('le convertisseur SolidWorks est désactivé par défaut et normalise son URL', () => {
+  assert.equal(getSolidworksConvertUrl({}), '');
+  assert.equal(
+    getSolidworksConvertUrl({ SOLIDWORKS_CONVERT_URL: 'https://hoops.example///' }),
+    'https://hoops.example',
+  );
+});
+
+test('POST /api/solidworks/step transmet le fichier et le chemin de sortie au service HOOPS', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  let converterForm = null;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input instanceof Request ? input.url : input);
+    calls.push(url);
+    if (url.endsWith('.step.json?download=false')) return new Response('missing', { status: 404 });
+    if (url.includes('/api/convert-solidworks-step')) {
+      converterForm = init.body;
+      assert.equal(init.headers.Authorization, 'Bearer internal-secret');
+      return new Response(JSON.stringify({
+        status: 'success',
+        stepPath: 'derived/step/GM/piece.step',
+        manifestPath: 'derived/step/GM/piece.step.json',
+        size: 321,
+      }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Response(new TextEncoder().encode('solidworks-source').buffer);
+  };
+
+  try {
+    const response = await worker.fetch(
+      new Request('https://docs.example/api/solidworks/step?path=GM%2Fpiece.sldprt', { method: 'POST' }),
+      {
+        HF_BUCKET_ID: 'ktongue/ENISE-SITE',
+        SOLIDWORKS_CONVERT_URL: 'https://hoops.example/',
+        SOLIDWORKS_CONVERTER_TOKEN: 'internal-secret',
+        MAX_SOLIDWORKS_BYTES: '1000000',
+        ASSETS: { fetch: () => new Response('asset') },
+      },
+      { waitUntil() {} },
+    );
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.status, 'success');
+    assert.equal(payload.stepPath, 'derived/step/GM/piece.step');
+    assert.equal(payload.downloadUrl, '/api/file?path=derived%2Fstep%2FGM%2Fpiece.step&download=1');
+    assert.ok(converterForm instanceof FormData);
+    assert.equal(converterForm.get('source_path'), 'GM/piece.sldprt');
+    assert.equal(converterForm.get('output_path'), 'derived/step/GM/piece.step');
+    assert.match(String(converterForm.get('source_sha256')), /^[a-f0-9]{64}$/);
+    assert.equal(calls.some((url) => url.includes('/api/convert-solidworks-step')), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('un assemblage transmet ses dépendances SolidWorks et leurs empreintes', async () => {
+  const originalFetch = globalThis.fetch;
+  let converterForm = null;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.includes('/tree/GM')) {
+      return new Response(JSON.stringify([
+        { type: 'file', path: 'GM/assembly.sldasm' },
+        { type: 'file', path: 'GM/parts/base.sldprt' },
+        { type: 'file', path: 'GM/sub/plate.sldprt' },
+      ]), { headers: { 'Content-Type': 'application/json' } });
+    }
+    if (url.endsWith('.step.json?download=false')) return new Response('missing', { status: 404 });
+    if (url.includes('/api/convert-solidworks-step')) {
+      converterForm = init.body;
+      return new Response(JSON.stringify({
+        status: 'success',
+        stepPath: 'derived/step/GM/assembly.step',
+      }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    if (url.includes('/GM/parts/base.sldprt')) return new Response(new TextEncoder().encode('base-part'));
+    if (url.includes('/GM/sub/plate.sldprt')) return new Response(new TextEncoder().encode('plate-part'));
+    return new Response(new TextEncoder().encode('assembly-source'));
+  };
+
+  try {
+    const response = await worker.fetch(
+      new Request('https://docs.example/api/solidworks/step?path=GM%2Fassembly.sldasm', { method: 'POST' }),
+      {
+        HF_BUCKET_ID: 'ktongue/ENISE-SITE',
+        SOLIDWORKS_CONVERT_URL: 'https://hoops.example',
+        MAX_SOLIDWORKS_BYTES: '1000000',
+        MAX_SOLIDWORKS_BUNDLE_BYTES: '1000000',
+        ASSETS: { fetch: () => new Response('asset') },
+      },
+      { waitUntil() {} },
+    );
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.dependencies.length, 2);
+    assert.deepEqual(payload.dependencies.map(({ path }) => path), ['parts/base.sldprt', 'sub/plate.sldprt']);
+    assert.ok(converterForm instanceof FormData);
+    assert.equal(converterForm.getAll('dependencies').length, 2);
+    assert.deepEqual(
+      JSON.parse(converterForm.get('dependency_manifest')),
+      payload.dependencies,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('les clés Workers KV sont courtes, stables et spécifiques au chemin', () => {

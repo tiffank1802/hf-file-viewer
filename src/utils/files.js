@@ -94,6 +94,7 @@ export function isOfficeConvertibleExtension(extension = '') {
 
 /** Extensions 3D convertibles en GLB par le Space FreeCAD. */
 const MODEL_GLB_EXTENSIONS = new Set(['step', 'stp', 'iges', 'igs', 'stl', 'obj']);
+const SOLIDWORKS_EXTENSIONS = new Set(['sldprt', 'sldasm']);
 
 /**
  * Type de rendu Web disponible pour un modèle 3D.
@@ -101,6 +102,11 @@ const MODEL_GLB_EXTENSIONS = new Set(['step', 'stp', 'iges', 'igs', 'stl', 'obj'
  */
 export function modelViewerKind(extension = '') {
   return MODEL_GLB_EXTENSIONS.has(String(extension).toLowerCase()) ? 'glb' : null;
+}
+
+/** Formats SolidWorks pris en charge par l’export serveur vers STEP. */
+export function isSolidworksExtension(extension = '') {
+  return SOLIDWORKS_EXTENSIONS.has(String(extension).toLowerCase());
 }
 
 /** Formats visualisables via le plugin iframe gratuit ShareCAD (sans conversion). */

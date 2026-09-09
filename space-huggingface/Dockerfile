@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxcomposite1 \
     libxdamage1 \
     libxtst6 \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

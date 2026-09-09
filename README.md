@@ -188,9 +188,10 @@ Ce viewer remplace l’ancienne intégration ONLYOFFICE : aucun document server 
 
 ## Visualisation 3D (Aperçu Web + Autodesk APS + ShareCAD)
 
-Les fichiers modèles (`.dwg`, `.dxf`, `.dwf`, `.rvt`, `.rfa`, `.ifc`, `.ipt`, `.iam`, `.sldprt`, `.sldasm`, `.stp`, `.step`, `.igs`, `.iges`, `.obj`, `.stl`, `.sat`, `.x_t`, `.x_b`, `.3ds`, `.fbx`, `.dae`, `.skp`, …) sont ouverts dans la modale d’aperçu avec rotation, zoom et panoramique à la souris. Trois moteurs au choix (onglets, préférence mémorisée) :
+Les fichiers modèles (`.dwg`, `.dxf`, `.dwf`, `.rvt`, `.rfa`, `.ifc`, `.ipt`, `.iam`, `.sldprt`, `.sldasm`, `.stp`, `.step`, `.igs`, `.iges`, `.obj`, `.stl`, `.sat`, `.x_t`, `.x_b`, `.3ds`, `.fbx`, `.dae`, `.skp`, …) sont ouverts dans la modale d’aperçu avec rotation, zoom et panoramique à la souris. Les modes disponibles (onglets, préférence mémorisée) sont :
 
 - **Aperçu Web** (défaut, gratuit) : les formats `.step`, `.stp`, `.iges`, `.igs`, `.stl` et `.obj` sont convertis en GLB par le Space FreeCAD puis affichés en WebGL (three.js), avec choix de la qualité du maillage (brouillon/standard/fin), rotation automatique et statistiques (triangles, dimensions, volume). FreeCAD ne lit pas les formats propriétaires : `.sldprt`, `.dwg`, assemblages… restent sur Autodesk ou ShareCAD.
+- **Export SolidWorks → STEP** (nouveau, configuration HOOPS requise) : pour `.sldprt` et `.sldasm`, le bouton « Exporter STEP » appelle le service HOOPS Converter, écrit le résultat sous `derived/step/` dans le bucket et conserve un manifest SHA-256. Le fichier source original n’est jamais écrasé.
 - **Autodesk** (fidélité maximale, configuration requise) : tous les formats via APS / Model Derivative.
 - **ShareCAD** (tiers gratuit, sans conversion) : `.dwg`, `.dxf`, `.dwf`, `.step`, `.iges`, `.stl`, `.sldprt`, `.sat`, `.x_t`, `.x_b` affichés via le plugin iframe `iframe.sharecad.org`, sans compte ni conversion. Le fichier est téléchargé et stocké sur les serveurs ShareCAD (limite 50 Mo) : chargement sur clic explicite uniquement, à réserver aux documents non confidentiels.
 
@@ -221,6 +222,49 @@ HF_TOKEN="hf_..." npm run deploy:space -- --space-id <utilisateur>/<space>
 ```
 
 Par défaut, les fichiers de plus de 25 Mo sont refusés (`MAX_MODEL3D_BYTES`) et les GLB sont mis en cache 7 jours (`MODEL3D_CACHE_TTL`). Le premier appel après une mise en veille du Space peut prendre jusqu’à une minute (réveil + conversion).
+
+### Export SolidWorks vers STEP et enregistrement dans le bucket
+
+Le Worker expose un déclenchement explicite :
+
+```text
+GET  /api/solidworks/status
+POST /api/solidworks/step?path=GM/piece.sldprt
+```
+
+Le Worker télécharge le source depuis Hugging Face, calcule son SHA-256, puis
+appelle le service privé configuré par `SOLIDWORKS_CONVERT_URL`. Ce service
+exécute **HOOPS Converter** et écrit le `.step` ainsi qu’un manifest sous
+`derived/step/`. Un résultat dont l’empreinte source et les empreintes des
+références d’assemblage sont identiques est réutilisé sans nouvelle conversion ;
+`force=1` régénère le fichier.
+
+Configuration Worker :
+
+```bash
+# wrangler.jsonc / .dev.vars
+SOLIDWORKS_CONVERT_URL="https://<service-hoops>.hf.space"
+MAX_SOLIDWORKS_BYTES="104857600"
+MAX_SOLIDWORKS_DEPENDENCY_FILES="64"
+MAX_SOLIDWORKS_BUNDLE_BYTES="262144000"
+
+# secret partagé uniquement avec le service HOOPS
+npx wrangler secret put SOLIDWORKS_CONVERTER_TOKEN
+```
+
+Configuration du service (voir [`space-huggingface/README.md`](space-huggingface/README.md)) :
+`HOOPS_CONVERTER_PATH`, `HOOPS_LICENSE_FILE` ou `HOOPS_LICENSE_KEY`,
+`HF_BUCKET_ID`, `HF_TOKEN` avec permission d’écriture et
+`SOLIDWORKS_CONVERTER_TOKEN`. Le package propriétaire HOOPS n’est pas inclus
+dans Git et doit être ajouté à une image privée autorisée.
+
+L’interface conserve Autodesk comme fallback. Pour un `.sldasm`, le Worker
+transfère automatiquement les `.sldprt` et sous-assemblages présents dans le
+même dossier ou ses sous-dossiers, avec leurs chemins relatifs. Le transfert
+est limité à 64 dépendances et 250 Mo par défaut (`MAX_SOLIDWORKS_*`) ; les
+références externes à ce périmètre doivent être regroupées dans le bucket ou
+l’assemblage peut rester incomplet. Le STEP ne conserve pas l’historique
+paramétrique SolidWorks.
 
 ### Visualisation 3D avec Autodesk APS (Forge)
 
@@ -278,7 +322,10 @@ S’il s’agit d’un fichier SolidWorks récent non supporté, l’exporter en
 
 ## Clés et secrets
 
-Le bucket actuel est public : **aucune clé Hugging Face n’est requise**.
+Le bucket actuel est public pour la lecture : **aucune clé Hugging Face n’est
+requise dans le navigateur**. Le service HOOPS garde séparément un token HF
+avec droit d’écriture (`HF_TOKEN`) pour publier les STEP ; il ne doit jamais
+être placé dans le Worker ou le frontend.
 
 Si le bucket devient privé, créer un token Hugging Face en lecture seule puis l’enregistrer comme secret Worker :
 
@@ -320,6 +367,8 @@ Pour un déploiement CI GitHub, stocker `CLOUDFLARE_API_TOKEN` et `CLOUDFLARE_AC
 | `GET /api/aps/status?path=...` | état et progression de la conversion 3D |
 | `GET /api/model3d/status` | conversion GLB FreeCAD configurée ou non |
 | `GET /api/model3d/glb?path=...&quality=...` | GLB converti via FreeCAD (mis en cache, métadonnées `X-Model3D-Meta`) |
+| `GET /api/solidworks/status` | export SolidWorks → STEP configuré ou non |
+| `POST /api/solidworks/step?path=...&force=1` | convertit `.sldprt`/`.sldasm` avec HOOPS et enregistre le STEP dans le bucket |
 | `GET /api/office/status` | conversion PDF Office configurée ou non |
 | `GET /api/office/pdf?path=...` | PDF converti via LibreOffice (mis en cache) |
 | `GET /api/link/preview?url=...` | aperçu enrichi d’un lien `.url` (Open Graph, mis en cache) |

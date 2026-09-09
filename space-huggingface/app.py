@@ -9,21 +9,28 @@ Pipelines:
 2. Office documents (.doc/.docx/.xls/.xlsx/.ppt/.pptx/.odt/...) → .pdf
    (headless LibreOffice), exposed as a plain HTTP API for the Cloudflare
    Worker (`POST /api/convert-office`) and as a second Gradio tab.
+3. SolidWorks (.sldprt/.sldasm) → .step via a separately installed HOOPS
+   Converter binary, followed by an upload into a Hugging Face Storage Bucket.
+   This endpoint is disabled until the licensed HOOPS binary, license and
+   write-scoped HF token are configured.
 
-Note: FreeCAD cannot read proprietary formats (.sldprt, .dwg, ...).
-SolidWorks users should export their parts as STEP; other formats stay on
-the Autodesk pipeline of the website.
+Note: FreeCAD cannot read proprietary formats (.sldprt, .dwg, ...). The
+SolidWorks pipeline is deliberately isolated from the free FreeCAD pipeline.
 """
 
 import base64
+import hashlib
+import hmac
 import json
+import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
 import gradio as gr
 import trimesh
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, Response
 
 # ---------------------------------------------------------------------------
@@ -102,6 +109,356 @@ def convert_office_to_pdf_bytes(data: bytes, extension: str) -> bytes:
             raise RuntimeError(f"LibreOffice conversion failed: {details[:500]}")
 
         return pdf_path.read_bytes()
+
+
+# ---------------------------------------------------------------------------
+# SolidWorks → STEP conversion (licensed HOOPS Converter)
+# ---------------------------------------------------------------------------
+
+SOLIDWORKS_EXTENSIONS = frozenset({".sldprt", ".sldasm"})
+SOLIDWORKS_OUTPUT_PREFIX = "derived/step/"
+DEFAULT_HOOPS_CONVERTER_PATH = "/opt/hoops/bin/converter"
+DEFAULT_HOOPS_STEP_EXPORT_FORMAT = "2"  # AP242
+DEFAULT_HOOPS_TIMEOUT_SECONDS = 600
+DEFAULT_SOLIDWORKS_UPLOAD_BYTES = 100 * 1024 * 1024
+DEFAULT_SOLIDWORKS_BUNDLE_BYTES = 250 * 1024 * 1024
+DEFAULT_HF_BUCKET_ID = "ktongue/ENISE-SITE"
+STEP_MAGIC = b"ISO-10303-21;"
+
+
+class SolidworksNotConfiguredError(RuntimeError):
+    """The licensed HOOPS runtime or the bucket writer is not configured."""
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _solidworks_output_path(value: str) -> str:
+    """Validate the bucket-relative derived STEP path supplied by the Worker."""
+    path = str(value or "").strip().replace("\\", "/")
+    if not path.startswith(SOLIDWORKS_OUTPUT_PREFIX):
+        raise ValueError("The STEP output path must be under derived/step/.")
+    if len(path) > 1500 or "\x00" in path:
+        raise ValueError("Invalid STEP output path.")
+    parts = path.split("/")
+    if any(not part or part in {".", ".."} for part in parts):
+        raise ValueError("Invalid STEP output path.")
+    if not path.lower().endswith(".step"):
+        raise ValueError("The STEP output path must end with .step.")
+    return path
+
+
+def _solidworks_manifest_path(output_path: str) -> str:
+    return f"{output_path}.json"
+
+
+def _sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _redact_secrets(value: str) -> str:
+    text = str(value or "")
+    for name, replacement in (
+        ("HOOPS_LICENSE_KEY", "[redacted-license]"),
+        ("HF_TOKEN", "[redacted-hf-token]"),
+        ("SOLIDWORKS_CONVERTER_TOKEN", "[redacted-service-token]"),
+    ):
+        secret = os.getenv(name, "").strip()
+        if secret:
+            text = text.replace(secret, replacement)
+    return text
+
+
+def _redact_converter_output(value: str) -> str:
+    """Keep diagnostics useful without ever echoing a configured secret."""
+    return " ".join(_redact_secrets(value).split())[:800]
+
+
+def _write_hoops_license(workdir: Path):
+    """Return a temporary license file path, or the configured file path."""
+    configured = os.getenv("HOOPS_LICENSE_FILE", "").strip()
+    if configured:
+        license_path = Path(configured)
+        if not license_path.is_file():
+            raise SolidworksNotConfiguredError("HOOPS_LICENSE_FILE does not exist.")
+        return license_path, False
+
+    license_value = os.getenv("HOOPS_LICENSE_KEY", "").strip()
+    if not license_value:
+        raise SolidworksNotConfiguredError(
+            "HOOPS license missing. Configure HOOPS_LICENSE_FILE or HOOPS_LICENSE_KEY."
+        )
+
+    license_path = workdir / "hoops-license.key"
+    license_path.write_text(license_value, encoding="utf-8")
+    try:
+        license_path.chmod(0o600)
+    except OSError:
+        pass
+    return license_path, True
+
+
+def _run_hoops_converter(input_path: Path, output_path: Path, workdir: Path) -> None:
+    """Run the licensed native converter without shell interpolation."""
+    converter_value = os.getenv("HOOPS_CONVERTER_PATH", DEFAULT_HOOPS_CONVERTER_PATH).strip()
+    converter = Path(converter_value)
+    if not converter.is_file() or not os.access(converter, os.X_OK):
+        raise SolidworksNotConfiguredError(
+            f"HOOPS Converter introuvable ou non exécutable : {converter}."
+        )
+
+    export_format = os.getenv(
+        "HOOPS_STEP_EXPORT_FORMAT", DEFAULT_HOOPS_STEP_EXPORT_FORMAT
+    ).strip()
+    if export_format not in {"0", "1", "2"}:
+        raise ValueError("HOOPS_STEP_EXPORT_FORMAT must be 0 (AP203), 1 (AP214) or 2 (AP242).")
+
+    license_path, temporary_license = _write_hoops_license(workdir)
+    command = [
+        str(converter),
+        "--input", str(input_path),
+        "--license_file", str(license_path),
+        "--output_step", str(output_path),
+        "--step_export_format", export_format,
+        "--read_geometry", "true",
+        "--search_directories", str(workdir),
+        "--output_logfile", str(workdir / "hoops-converter.log"),
+    ]
+
+    use_xvfb = _env_flag("HOOPS_USE_XVFB", default=True)
+    if use_xvfb:
+        xvfb = shutil.which("xvfb-run")
+        if not xvfb:
+            raise SolidworksNotConfiguredError(
+                "HOOPS_USE_XVFB est activé mais xvfb-run est introuvable."
+            )
+        command = [
+            xvfb,
+            "--auto-servernum",
+            "--server-args=-screen 0 640x480x24",
+            *command,
+        ]
+
+    timeout = int(os.getenv("HOOPS_TIMEOUT_SECONDS", str(DEFAULT_HOOPS_TIMEOUT_SECONDS)))
+    if timeout <= 0:
+        raise ValueError("HOOPS_TIMEOUT_SECONDS must be positive.")
+
+    try:
+        result = subprocess.run(
+            command,
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError("HOOPS Converter a dépassé le délai de conversion.") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Impossible de lancer HOOPS Converter : {exc}") from exc
+    finally:
+        if temporary_license:
+            try:
+                license_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    if result.returncode != 0 or not output_path.is_file():
+        details = _redact_converter_output(result.stderr or result.stdout)
+        raise RuntimeError(
+            "HOOPS Converter a échoué."
+            + (f" Détail technique : {details}" if details else "")
+        )
+
+
+def _validate_step_bytes(data: bytes) -> None:
+    """Reject empty/non-STEP output before publishing it to the bucket."""
+    if not data:
+        raise RuntimeError("HOOPS Converter a produit un fichier STEP vide.")
+    header = data[:512].lstrip(b"\xef\xbb\xbf \t\r\n")
+    if not header.startswith(STEP_MAGIC):
+        raise RuntimeError("La sortie HOOPS n’est pas un fichier STEP valide.")
+
+
+def _upload_solidworks_step(output_path: str, step_bytes: bytes, manifest: dict) -> None:
+    """Publish the STEP and its provenance manifest to the HF Storage Bucket."""
+    bucket_id = os.getenv("HF_BUCKET_ID", DEFAULT_HF_BUCKET_ID).strip()
+    token = os.getenv("HF_TOKEN", "").strip()
+    if not bucket_id or "/" not in bucket_id:
+        raise SolidworksNotConfiguredError("HF_BUCKET_ID est requis pour publier le STEP.")
+    if not token:
+        raise SolidworksNotConfiguredError(
+            "HF_TOKEN avec droit d’écriture est requis pour publier le STEP."
+        )
+
+    try:
+        from huggingface_hub import HfApi
+    except ImportError as exc:
+        raise SolidworksNotConfiguredError(
+            "huggingface_hub est requis pour écrire dans le bucket."
+        ) from exc
+
+    manifest_path = _solidworks_manifest_path(output_path)
+    try:
+        api = HfApi(token=token)
+        api.batch_bucket_files(
+            bucket_id,
+            add=[
+                (step_bytes, output_path),
+                (json.dumps(manifest, ensure_ascii=False, separators=(",", ":")).encode("utf-8"), manifest_path),
+            ],
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"Écriture du STEP dans le bucket impossible : {_redact_secrets(exc)}"
+        ) from exc
+
+
+def _normalize_dependency_path(value: str) -> str:
+    """Validate a relative assembly reference before writing it to the workspace."""
+    path = str(value or "").strip().replace("\\", "/").lstrip("/")
+    parts = path.split("/")
+    if not path or any(not part or part in {".", ".."} for part in parts):
+        raise ValueError("Référence d’assemblage invalide.")
+    if Path(path).suffix.lower() not in SOLIDWORKS_EXTENSIONS:
+        raise ValueError("Les dépendances d’assemblage doivent être .sldprt ou .sldasm.")
+    if len(path) > 1500:
+        raise ValueError("Référence d’assemblage trop longue.")
+    return path
+
+
+def convert_solidworks_to_step_and_upload(
+    data: bytes,
+    extension: str,
+    output_path: str,
+    source_path: str = "",
+    source_sha256: str = "",
+    dependencies: list[tuple[str, bytes]] | None = None,
+    dependency_manifest: list[dict] | None = None,
+):
+    """Convert one SolidWorks part/assembly and publish STEP + manifest."""
+    extension = str(extension or "").lower()
+    if extension not in SOLIDWORKS_EXTENSIONS:
+        raise ValueError(f"Format SolidWorks non supporté : {extension or '(inconnu)'}.")
+    if not data:
+        raise ValueError("Le fichier SolidWorks est vide.")
+    max_bytes = int(os.getenv("MAX_SOLIDWORKS_UPLOAD_BYTES", str(DEFAULT_SOLIDWORKS_UPLOAD_BYTES)))
+    if max_bytes <= 0 or len(data) > max_bytes:
+        raise ValueError(
+            f"Le fichier SolidWorks dépasse la limite de {max_bytes // 1024 // 1024} Mo."
+        )
+    max_dependency_files = int(
+        os.getenv("MAX_SOLIDWORKS_DEPENDENCY_FILES", "64")
+    )
+    max_bundle_bytes = int(
+        os.getenv("MAX_SOLIDWORKS_BUNDLE_BYTES", str(DEFAULT_SOLIDWORKS_BUNDLE_BYTES))
+    )
+    if max_dependency_files <= 0 or max_bundle_bytes <= 0:
+        raise ValueError("Les limites des dépendances SolidWorks doivent être positives.")
+
+    normalized_output = _solidworks_output_path(output_path)
+    actual_source_sha256 = _sha256_bytes(data)
+    if source_sha256 and source_sha256 != actual_source_sha256:
+        raise ValueError("L’empreinte du fichier SolidWorks ne correspond pas au contenu reçu.")
+
+    source_name = Path(source_path or f"source{extension}").name
+    if Path(source_name).suffix.lower() != extension:
+        source_name = f"source{extension}"
+
+    dependency_entries = []
+    dependency_records = []
+    total_input_bytes = len(data)
+    for dependency in dependencies or []:
+        try:
+            relative_path, dependency_data = dependency
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Format de dépendance d’assemblage invalide.") from exc
+        relative_path = _normalize_dependency_path(relative_path)
+        if relative_path == source_name or any(
+            item[0] == relative_path for item in dependency_entries
+        ):
+            raise ValueError("Une dépendance d’assemblage est dupliquée.")
+        if not isinstance(dependency_data, bytes):
+            dependency_data = bytes(dependency_data)
+        if not dependency_data or len(dependency_data) > max_bytes:
+            raise ValueError("Une dépendance SolidWorks est vide ou trop volumineuse.")
+        if len(dependency_entries) >= max_dependency_files:
+            raise ValueError(
+                f"Trop de dépendances SolidWorks (limite {max_dependency_files})."
+            )
+        total_input_bytes += len(dependency_data)
+        if total_input_bytes > max_bundle_bytes:
+            raise ValueError(
+                f"Les fichiers de l’assemblage dépassent la limite de {max_bundle_bytes // 1024 // 1024} Mo."
+            )
+        dependency_entries.append((relative_path, dependency_data))
+        dependency_records.append({
+            "path": relative_path,
+            "sha256": _sha256_bytes(dependency_data),
+            "size": len(dependency_data),
+        })
+
+    if dependency_manifest is not None:
+        expected_records = [
+            {
+                "path": _normalize_dependency_path(item.get("path", "")),
+                "sha256": str(item.get("sha256", "")).lower(),
+            }
+            for item in dependency_manifest
+            if isinstance(item, dict)
+        ]
+        actual_signature = [
+            {"path": item["path"], "sha256": item["sha256"]}
+            for item in dependency_records
+        ]
+        if expected_records != actual_signature:
+            raise ValueError("L’empreinte des dépendances SolidWorks ne correspond pas au contenu reçu.")
+
+    with tempfile.TemporaryDirectory(prefix="solidworks-step-") as tmp:
+        workdir = Path(tmp)
+        input_path = workdir / source_name
+        output_file = workdir / "converted.step"
+        input_path.write_bytes(data)
+        for relative_path, dependency_data in dependency_entries:
+            dependency_path = workdir / relative_path
+            dependency_path.parent.mkdir(parents=True, exist_ok=True)
+            dependency_path.write_bytes(dependency_data)
+        _run_hoops_converter(input_path, output_file, workdir)
+        step_bytes = output_file.read_bytes()
+
+    _validate_step_bytes(step_bytes)
+    step_sha256 = _sha256_bytes(step_bytes)
+    export_format = os.getenv(
+        "HOOPS_STEP_EXPORT_FORMAT", DEFAULT_HOOPS_STEP_EXPORT_FORMAT
+    ).strip()
+    manifest = {
+        "kind": "solidworks-step",
+        "sourcePath": source_path or None,
+        "sourceSha256": actual_source_sha256,
+        "sourceFormat": extension.lstrip("."),
+        "dependencies": dependency_records,
+        "stepPath": normalized_output,
+        "stepSha256": step_sha256,
+        "size": len(step_bytes),
+        "stepExportFormat": {"0": "AP203", "1": "AP214", "2": "AP242"}.get(export_format, export_format),
+        "converter": "HOOPS Converter",
+        "converterVersion": os.getenv("HOOPS_CONVERTER_VERSION", "configured-runtime"),
+    }
+    _upload_solidworks_step(normalized_output, step_bytes, manifest)
+    return {
+        "status": "success",
+        "stepPath": normalized_output,
+        "manifestPath": _solidworks_manifest_path(normalized_output),
+        "sourceSha256": actual_source_sha256,
+        "dependencies": dependency_records,
+        "stepSha256": step_sha256,
+        "size": len(step_bytes),
+        "stepExportFormat": manifest["stepExportFormat"],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +644,108 @@ api = FastAPI(title="ENISE conversion API")
 
 @api.get("/api/health")
 async def api_health():
-    return {"ok": True, "service": "enise-convert"}
+    return {
+        "ok": True,
+        "service": "enise-convert",
+        "solidworks": {
+            "converterConfigured": bool(
+                Path(os.getenv("HOOPS_CONVERTER_PATH", DEFAULT_HOOPS_CONVERTER_PATH)).is_file()
+            ),
+            "bucketConfigured": bool(
+                os.getenv("HF_BUCKET_ID", DEFAULT_HF_BUCKET_ID).strip()
+                and os.getenv("HF_TOKEN", "").strip()
+            ),
+        },
+    }
+
+
+def _solidworks_request_is_authorized(authorization: str | None) -> bool:
+    expected = os.getenv("SOLIDWORKS_CONVERTER_TOKEN", "").strip()
+    if not expected:
+        # Local development can run without an internal token. Production
+        # should always set it when the endpoint is exposed publicly.
+        return True
+    provided = str(authorization or "")
+    scheme, separator, token = provided.partition(" ")
+    return (
+        scheme.lower() == "bearer"
+        and bool(separator)
+        and hmac.compare_digest(token.strip(), expected)
+    )
+
+
+@api.post("/api/convert-solidworks-step")
+async def convert_solidworks_step_endpoint(
+    file: UploadFile = File(...),
+    output_path: str = Form(...),
+    source_path: str = Form(""),
+    source_sha256: str = Form(""),
+    dependency_manifest: str = Form(""),
+    dependencies: list[UploadFile] | None = File(default=None),
+    authorization: str | None = Header(default=None),
+):
+    """Convert one SolidWorks file with HOOPS and publish STEP + manifest."""
+    if not _solidworks_request_is_authorized(authorization):
+        raise HTTPException(status_code=401, detail="Service de conversion non autorisé.")
+
+    extension = Path(file.filename or "").suffix.lower()
+    if extension not in SOLIDWORKS_EXTENSIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Format {extension or '(inconnu)'} non supporté. Attendu : .sldprt ou .sldasm.",
+        )
+
+    data = await file.read()
+    max_bytes = int(os.getenv("MAX_SOLIDWORKS_UPLOAD_BYTES", str(DEFAULT_SOLIDWORKS_UPLOAD_BYTES)))
+    if len(data) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Fichier SolidWorks trop volumineux (limite {max_bytes // 1024 // 1024} Mo).",
+        )
+    if not data:
+        raise HTTPException(status_code=422, detail="Le fichier SolidWorks est vide.")
+
+    dependency_files = dependencies or []
+    manifest_items = []
+    manifest_supplied = bool(str(dependency_manifest or "").strip())
+    if manifest_supplied:
+        try:
+            manifest_items = json.loads(dependency_manifest)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail="Manifest de dépendances invalide.") from exc
+        if not isinstance(manifest_items, list) or len(manifest_items) != len(dependency_files):
+            raise HTTPException(status_code=422, detail="Le manifest des dépendances ne correspond pas aux fichiers reçus.")
+        if any(not isinstance(item, dict) for item in manifest_items):
+            raise HTTPException(status_code=422, detail="Manifest de dépendances invalide.")
+
+    dependency_data = []
+    for index, dependency_file in enumerate(dependency_files):
+        relative_path = (
+            manifest_items[index].get("path")
+            if manifest_supplied
+            else dependency_file.filename
+        )
+        content = await dependency_file.read()
+        dependency_data.append((relative_path, content))
+
+    try:
+        return convert_solidworks_to_step_and_upload(
+            data,
+            extension,
+            output_path,
+            source_path=source_path,
+            source_sha256=source_sha256,
+            dependencies=dependency_data,
+            dependency_manifest=manifest_items if manifest_supplied else None,
+        )
+    except SolidworksNotConfiguredError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)[:500]) from exc
 
 
 @api.post("/api/convert-office")

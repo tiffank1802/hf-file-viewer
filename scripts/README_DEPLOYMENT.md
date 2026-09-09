@@ -106,6 +106,13 @@ curl -X POST https://<username>-<space>.hf.space/api/convert-office \
   -F "file=@doc.docx;filename=doc.docx" --output doc.pdf
 ```
 
+Le pipeline SolidWorks → STEP est également présent, mais le binaire HOOPS
+propriétaire n’est pas uploadé par ce script. Il faut utiliser une image privée
+ou un montage contenant HOOPS Converter, puis configurer `HOOPS_LICENSE_FILE`
+ou `HOOPS_LICENSE_KEY`, `HF_BUCKET_ID`, un `HF_TOKEN` avec droit d’écriture et
+`SOLIDWORKS_CONVERTER_TOKEN`. Le Worker appelle alors
+`POST /api/convert-solidworks-step` et le service écrit sous `derived/step/`.
+
 Exemples complets : `client-examples/python-client.py` et
 `client-examples/javascript-client.js`.
 

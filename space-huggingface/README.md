@@ -20,6 +20,9 @@ This Space powers the file conversions of the ENISE Docs website:
 2. **Office documents → PDF** (Word, Excel, PowerPoint, OpenDocument) with
    headless LibreOffice, consumed by the Cloudflare Worker
    (`GET /api/office/pdf` → `POST /api/convert-office`).
+3. **SolidWorks → STEP** (`.sldprt` / `.sldasm`) with the separately supplied
+   licensed HOOPS Converter, then publication of the STEP and a provenance
+   manifest in the Hugging Face Storage Bucket.
 
 ## 3D → GLB conversion API
 
@@ -58,6 +61,63 @@ Failures return JSON (`{"detail": "..."}`) with a `4xx`/`5xx` status
 A `GET /api/health` endpoint is available for monitoring, and the
 "CAD to GLB" Gradio tab exposes the same engine for manual testing.
 
+## SolidWorks → STEP + bucket API
+
+`POST /api/convert-solidworks-step` accepts a multipart upload and publishes
+both the generated STEP and a JSON manifest to the configured bucket. It is
+called by the Cloudflare Worker, not directly by the browser:
+
+```bash
+curl -X POST https://<hoops-space>.hf.space/api/convert-solidworks-step \\
+  -H "Authorization: Bearer <internal-service-token>" \\
+  -F "file=@piece.sldprt;filename=piece.sldprt" \\
+  -F "source_path=GM/piece.sldprt" \\
+  -F "output_path=derived/step/GM/piece.step" \\
+  -F "source_sha256=<sha256>"
+```
+
+For an assembly, the Worker repeats the `dependencies` field and sends a JSON
+`dependency_manifest` with relative paths and SHA-256 values. The Space writes
+those files beside the `.sldasm` before launching HOOPS:
+
+```bash
+curl -X POST https://<hoops-space>.hf.space/api/convert-solidworks-step \\
+  -H "Authorization: Bearer <internal-service-token>" \\
+  -F "file=@assembly.sldasm;filename=assembly.sldasm" \\
+  -F 'dependency_manifest=[{"path":"parts/base.sldprt","sha256":"<sha256>"}]' \\
+  -F "dependencies=@parts/base.sldprt;filename=parts/base.sldprt" \\
+  -F "source_path=GM/assembly.sldasm" \\
+  -F "output_path=derived/step/GM/assembly.step" \\
+  -F "source_sha256=<sha256>"
+```
+
+Required runtime configuration:
+
+- `HOOPS_CONVERTER_PATH` (default `/opt/hoops/bin/converter`) pointing to the
+  licensed native HOOPS Converter binary;
+- `HOOPS_LICENSE_FILE` **or** `HOOPS_LICENSE_KEY` (secret; never commit it);
+- `HOOPS_STEP_EXPORT_FORMAT=2` for AP242, `1` for AP214 or `0` for AP203;
+- `HF_BUCKET_ID=ktongue/ENISE-SITE` (surchargeable avec `namespace/bucket`);
+- `HF_TOKEN` with write permission on that bucket;
+- `SOLIDWORKS_CONVERTER_TOKEN` shared only with the Worker;
+- `HOOPS_USE_XVFB=1` when the converter needs the headless X server;
+- `MAX_SOLIDWORKS_UPLOAD_BYTES=104857600` per file, plus
+  `MAX_SOLIDWORKS_BUNDLE_BYTES=262144000` and
+  `MAX_SOLIDWORKS_DEPENDENCY_FILES=64` for assembly workspaces.
+
+The proprietary HOOPS package is intentionally not committed or uploaded by
+this repository’s deployment script. Build a private image/Space containing
+the package or set `HOOPS_CONVERTER_PATH` to a mounted installation. Without
+it, the endpoint returns `501` and the existing Autodesk viewer remains the
+fallback.
+
+The result is written under `derived/step/`, and the source SolidWorks file is
+never overwritten. The manifest records the source SHA-256, dependency paths
+and SHA-256 values, STEP SHA-256, export AP and converter version. The Worker
+collects referenced-looking `.sldprt`/`.sldasm` files from the assembly folder
+and its subfolders; external references outside that workspace still require
+manual packaging or may produce an incomplete assembly.
+
 ## Office → PDF conversion API
 
 `POST /api/convert-office` accepts a multipart upload (`file` field, original
@@ -78,16 +138,14 @@ A `GET /api/health` endpoint is available for monitoring, and the
 
 ## Important Limitations (3D)
 
-⚠️ **No proprietary formats**: FreeCAD cannot read `.sldprt`, `.dwg`, `.rvt`,
-CATIA or other vendor-locked formats — there is no importer for them, so such
-files are rejected with a `422`. SolidWorks users should export their parts
-as **STEP** first (or use the website's Autodesk viewer tab).
+⚠️ The free **FreeCAD → GLB** pipeline cannot read `.sldprt`, `.sldasm`,
+`.dwg`, `.rvt`, CATIA or other vendor-locked formats. SolidWorks conversion is
+a separate licensed HOOPS pipeline described above.
 
-- ❌ Does **not** preserve:
-  - Parametric feature history
-  - Colors or materials
-  - Assembly structure (only single parts supported)
-- ✅ Preserves: **Geometry only** (tessellated mesh)
+The STEP export does not preserve SolidWorks feature history, equations or
+mates. AP242 may preserve PMI and validation properties, but this must be
+verified on representative files. Assemblies need their referenced parts and
+sub-assemblies; drawings (`.slddrw`) are not converted to STEP.
 
 ## Display the GLB in your webpage
 

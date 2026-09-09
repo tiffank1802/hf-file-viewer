@@ -25,3 +25,12 @@ APS_CLIENT_SECRET="your_aps_client_secret"
 # URL publique du Space de conversion (défaut : Rupture).
 # Vide = mode « Web » désactivé, seul Autodesk reste disponible.
 # MODEL3D_CONVERT_URL="https://ktongue-rupture.hf.space"
+
+# Export SolidWorks (.sldprt/.sldasm) → STEP avec un service HOOPS Converter
+# séparé. Le service doit convertir puis écrire le STEP dans le bucket avec
+# son propre HF_TOKEN (write) ; le Worker ne reçoit jamais ce token.
+# SOLIDWORKS_CONVERT_URL="https://votre-convertisseur-hoops.example"
+# SOLIDWORKS_CONVERTER_TOKEN="secret-partage-avec-le-service"
+# MAX_SOLIDWORKS_BYTES="104857600"
+# MAX_SOLIDWORKS_DEPENDENCY_FILES="64"
+# MAX_SOLIDWORKS_BUNDLE_BYTES="262144000"

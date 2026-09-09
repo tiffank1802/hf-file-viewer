@@ -101,6 +101,17 @@ export function model3dGlbUrl(file, quality = 'standard') {
   return `/api/model3d/glb?${params}`;
 }
 
+/**
+ * Endpoint de génération et d’enregistrement SolidWorks → STEP.
+ * La conversion est déclenchée explicitement pour éviter un coût CPU
+ * inattendu à l’ouverture d’un fichier public.
+ */
+export function solidworksStepUrl(file, force = false) {
+  const params = new URLSearchParams({ path: file.path });
+  if (force) params.set('force', '1');
+  return `/api/solidworks/step?${params}`;
+}
+
 const SHARECAD_FRAME_URL = 'https://iframe.sharecad.org/cadframe/load';
 
 /**

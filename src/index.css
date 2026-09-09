@@ -708,6 +708,26 @@
   .sharecad-consent { flex: 1; }
   .sharecad-consent .viewer-switch { display: inline-flex; align-items: center; gap: 8px; }
   .sharecad-fallback { margin: 0; padding: 6px 12px; font-size: 12px; opacity: 0.75; }
+  .solidworks-step-viewer { display: flex; flex: 1; min-height: 0; align-items: center; justify-content: center; padding: 24px; overflow: auto; background: radial-gradient(circle at 50% 28%, rgba(0, 122, 94, 0.1), transparent 44%), #f3f7f4; }
+  .solidworks-step-card { width: min(620px, 100%); padding: 30px; border: 1px solid var(--line); border-radius: 22px; background: white; box-shadow: var(--shadow-sm); text-align: center; }
+  .solidworks-step-icon { display: grid; width: 76px; height: 80px; place-items: center; margin: 0 auto 17px; border-radius: 22px; background: #edf3e9; color: #4f7a3a; }
+  .solidworks-step-card h3 { font-size: 1.05rem; }
+  .solidworks-step-card > p { max-width: 470px; margin: 9px auto 0; color: var(--ink-faint); font-size: 0.68rem; line-height: 1.65; }
+  .solidworks-step-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; margin-top: 22px; background: var(--green-dark); color: white; }
+  .solidworks-step-button:hover:not(:disabled) { border-color: var(--green-dark); background: var(--green); color: white; }
+  .solidworks-step-button:disabled { cursor: wait; opacity: 0.7; }
+  .solidworks-step-spinner { width: 13px; height: 13px; border: 2px solid rgba(255, 255, 255, 0.38); border-top-color: white; border-radius: 50%; animation: spin 800ms linear infinite; }
+  .solidworks-step-error { display: flex; align-items: flex-start; gap: 8px; margin-top: 17px; padding: 11px 13px; border: 1px solid #f0c7c7; border-radius: 11px; background: #fff1f1; color: #9b3333; font-size: 0.64rem; line-height: 1.5; text-align: left; }
+  .solidworks-step-error svg { flex: 0 0 auto; margin-top: 2px; }
+  .solidworks-step-success { display: flex; flex-direction: column; gap: 7px; margin-top: 20px; padding: 13px 15px; border: 1px solid #cce7d8; border-radius: 12px; background: #f1fbf5; color: var(--green-dark); text-align: left; }
+  .solidworks-step-success-title { display: flex; align-items: center; gap: 7px; font-size: 0.67rem; }
+  .solidworks-step-success code { overflow-wrap: anywhere; color: var(--ink-soft); font: 0.58rem/1.5 "SFMono-Regular", Consolas, monospace; }
+  .solidworks-step-success small { color: var(--ink-faint); font-size: 0.58rem; }
+  .solidworks-step-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 9px; margin-top: 14px; }
+  .solidworks-step-actions a { display: inline-flex; align-items: center; gap: 7px; padding: 10px 14px; border-radius: 11px; background: var(--green-dark); color: white; font-size: 0.65rem; font-weight: 750; }
+  .solidworks-step-actions a:hover { background: var(--green); }
+  .solidworks-step-actions .viewer-switch { display: inline-flex; align-items: center; gap: 7px; margin: 0; padding: 9px 13px; }
+  .solidworks-step-note { margin-top: 20px !important; font-size: 0.59rem !important; }
   .office-modes { display: flex; flex: 0 0 auto; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: #f6f8f6; }
   .office-modes button { padding: 7px 13px; border: 1px solid var(--line); border-radius: 999px; background: white; color: var(--ink-soft); font-size: 0.6rem; font-weight: 750; cursor: pointer; transition: color 150ms ease, background 150ms ease, border-color 150ms ease; }
   .office-modes button:hover { border-color: rgba(0, 122, 94, 0.3); color: var(--green); }

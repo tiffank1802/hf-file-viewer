@@ -33,6 +33,11 @@ const MAX_LINK_PREVIEW_BYTES = 128 * 1024;
 const DEFAULT_MODEL3D_CACHE_TTL = 7 * 24 * 60 * 60;
 const DEFAULT_MAX_MODEL3D_BYTES = 25 * 1024 * 1024;
 const DEFAULT_MODEL3D_CONVERT_URL = 'https://ktongue-rupture.hf.space';
+const DEFAULT_MAX_SOLIDWORKS_BYTES = 100 * 1024 * 1024;
+const DEFAULT_MAX_SOLIDWORKS_DEPENDENCY_FILES = 64;
+const DEFAULT_MAX_SOLIDWORKS_BUNDLE_BYTES = 250 * 1024 * 1024;
+const SOLIDWORKS_EXTENSIONS = new Set(['sldprt', 'sldasm']);
+const DEFAULT_SOLIDWORKS_OUTPUT_PREFIX = 'derived/step';
 const MODEL3D_GLB_EXTENSIONS = new Set(['step', 'stp', 'iges', 'igs', 'stl', 'obj']);
 const MODEL3D_QUALITIES = new Set(['draft', 'standard', 'fine']);
 
@@ -56,9 +61,9 @@ export default {
         status: 204,
         headers: {
           ...API_SECURITY_HEADERS,
-          Allow: 'GET, HEAD, OPTIONS',
-          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-          'Access-Control-Allow-Headers': 'Range, Content-Type',
+          Allow: 'GET, HEAD, POST, OPTIONS',
+          'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
           'Access-Control-Max-Age': '86400',
         },
       });
@@ -131,6 +136,16 @@ export default {
       if (url.pathname === '/api/model3d/glb') {
         assertMethod(request, ['GET']);
         return await handleModel3dGlb(request, env, ctx);
+      }
+
+      if (url.pathname === '/api/solidworks/status') {
+        assertMethod(request, ['GET']);
+        return handleSolidworksStatus(env);
+      }
+
+      if (url.pathname === '/api/solidworks/step') {
+        assertMethod(request, ['POST']);
+        return await handleSolidworksStep(request, env);
       }
 
       return jsonResponse(
@@ -1118,6 +1133,94 @@ async function downloadConvertibleSource(env, bucketId, filePath, maxBytes) {
   return bytes;
 }
 
+/**
+ * Récupère les pièces/références SolidWorks voisines d’un assemblage.
+ *
+ * HOOPS résout les références sur disque : le Worker reconstruit donc un
+ * petit workspace relatif à l’assemblage au lieu de transmettre uniquement
+ * le .sldasm. On reste volontairement dans le dossier source (et ses
+ * sous-dossiers) afin de ne jamais deviner des chemins absolus.
+ */
+async function collectSolidworksDependencies(env, bucketId, filePath, maxBytes, initialBytes = 0) {
+  if (getExtension(filePath) !== 'sldasm') return [];
+
+  const segments = filePath.split('/');
+  segments.pop();
+  const prefix = segments.join('/');
+  const maxFiles = positiveInteger(
+    env.MAX_SOLIDWORKS_DEPENDENCY_FILES,
+    DEFAULT_MAX_SOLIDWORKS_DEPENDENCY_FILES,
+  );
+  const maxBundleBytes = positiveInteger(
+    env.MAX_SOLIDWORKS_BUNDLE_BYTES,
+    DEFAULT_MAX_SOLIDWORKS_BUNDLE_BYTES,
+  );
+  if (Number(initialBytes) > maxBundleBytes) {
+    throw new HttpError(
+      413,
+      `Le fichier de l’assemblage dépasse la limite de ${Math.round(maxBundleBytes / 1024 / 1024)} Mo.`,
+    );
+  }
+  const { items, complete } = await fetchBucketTree(env, prefix, true);
+  if (!complete) {
+    throw new HttpError(
+      413,
+      'Le dossier de l’assemblage contient trop de fichiers pour transférer ses dépendances.',
+    );
+  }
+
+  const candidates = items
+    .filter((item) => item && item.type !== 'directory' && item.path)
+    .map((item) => String(item.path).replace(/^\/+/, ''))
+    .filter((candidate) => (
+      candidate !== filePath
+      && (!prefix || candidate.startsWith(`${prefix}/`))
+      && isSolidworksExtension(getExtension(candidate))
+    ))
+    .sort((left, right) => left.localeCompare(right, 'fr'));
+
+  if (candidates.length > maxFiles) {
+    throw new HttpError(
+      413,
+      `L’assemblage référence trop de fichiers SolidWorks (limite ${maxFiles}).`,
+    );
+  }
+
+  const dependencies = [];
+  let totalBytes = Number(initialBytes) || 0;
+  for (const candidate of candidates) {
+    const bytes = await downloadConvertibleSource(env, bucketId, candidate, maxBytes);
+    totalBytes += bytes.byteLength;
+    if (totalBytes > maxBundleBytes) {
+      throw new HttpError(
+        413,
+        `Les dépendances de l’assemblage dépassent la limite de ${Math.round(maxBundleBytes / 1024 / 1024)} Mo.`,
+      );
+    }
+    const relativePath = prefix
+      ? candidate.slice(`${prefix}/`.length)
+      : candidate;
+    dependencies.push({
+      path: relativePath,
+      sourcePath: candidate,
+      bytes,
+      sha256: await sha256Hex(bytes),
+    });
+  }
+  return dependencies;
+}
+
+function solidworksDependencyManifest(dependencies) {
+  return dependencies.map(({ path, sha256 }) => ({ path, sha256 }));
+}
+
+function hasSameSolidworksDependencies(manifest, dependencies) {
+  const recorded = Array.isArray(manifest?.dependencies) ? manifest.dependencies : null;
+  if (!recorded) return false;
+  return JSON.stringify(recorded.map(({ path, sha256 }) => ({ path, sha256 })))
+    === JSON.stringify(solidworksDependencyManifest(dependencies));
+}
+
 async function officeConvertHttpError(response) {
   let detail = 'La conversion en PDF a échoué.';
   try {
@@ -1403,6 +1506,218 @@ async function handleLinkPreview(request, env, ctx) {
     cacheControl: 'public, max-age=3600, stale-while-revalidate=86400',
     headers: { 'X-Cache-Status': 'MISS' },
   });
+}
+
+/** Extensions SolidWorks convertibles côté serveur par HOOPS Converter. */
+export function isSolidworksExtension(extension = '') {
+  return SOLIDWORKS_EXTENSIONS.has(String(extension).toLowerCase());
+}
+
+/** URL publique du service privé SolidWorks → STEP (vide = désactivé). */
+export function getSolidworksConvertUrl(env) {
+  return String(env?.SOLIDWORKS_CONVERT_URL || '').trim().replace(/\/+$/, '');
+}
+
+/**
+ * Chemin stable du STEP dérivé. Le fichier source est conservé et le résultat
+ * est regroupé sous `derived/step/` pour éviter les collisions et faciliter
+ * le nettoyage du bucket.
+ */
+export function buildSolidworksStepPath(filePath) {
+  const normalized = normalizeFilePath(filePath);
+  const parts = normalized.split('/');
+  const filename = parts.pop() || 'model.sldprt';
+  const stem = filename.replace(/\.[^.]+$/u, '') || 'model';
+  const directory = parts.length ? `${parts.join('/')}/` : '';
+  return `${DEFAULT_SOLIDWORKS_OUTPUT_PREFIX}/${directory}${stem}.step`;
+}
+
+export function buildSolidworksManifestPath(filePath) {
+  return `${buildSolidworksStepPath(filePath)}.json`;
+}
+
+/** Clé stable d’un source SolidWorks pour les appels de diagnostic/cache. */
+export function makeSolidworksSourceKey(filePath, size = '', mtime = '') {
+  const source = `${String(filePath || '')}|${String(size || '')}|${String(mtime || '')}`;
+  return `${hashIdentifier(source)}${hashIdentifier(`solidworks-step:${source}`)}`.slice(0, 32);
+}
+
+/** Empreinte SHA-256 hexadécimale utilisable dans le manifest du bucket. */
+export async function sha256Hex(value) {
+  const bytes = value instanceof ArrayBuffer ? new Uint8Array(value) : new Uint8Array(value);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function readSolidworksManifest(env, manifestPath) {
+  let response;
+  try {
+    response = await fetch(buildHfFileUrl(getBucketId(env), manifestPath), buildHfFetchInit(env));
+  } catch {
+    return null;
+  }
+  if (!response.ok) return null;
+  try {
+    const payload = await response.json();
+    return payload && typeof payload === 'object' ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function solidworksDownloadPath(stepPath) {
+  const params = new URLSearchParams({ path: stepPath, download: '1' });
+  return `/api/file?${params}`;
+}
+
+function solidworksAuthHeaders(env) {
+  const token = String(env.SOLIDWORKS_CONVERTER_TOKEN || '').trim();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/** Statut de disponibilité du convertisseur HOOPS sans divulguer ses secrets. */
+function handleSolidworksStatus(env) {
+  if (!getSolidworksConvertUrl(env)) {
+    return jsonResponse(
+      { status: 'not-configured', error: 'La conversion SolidWorks → STEP n’est pas configurée.' },
+      { cacheControl: 'public, max-age=300' },
+    );
+  }
+  return jsonResponse({ status: 'ready' }, { cacheControl: 'public, max-age=300' });
+}
+
+/**
+ * Télécharge un SolidWorks, demande sa conversion au service HOOPS et
+ * retourne le chemin du STEP réellement écrit dans le bucket.
+ *
+ * Le résultat est idempotent grâce au manifest SHA-256. `force=1` permet de
+ * régénérer explicitement un résultat existant après changement d’options.
+ */
+async function handleSolidworksStep(request, env) {
+  const url = new URL(request.url);
+  const filePath = normalizeFilePath(url.searchParams.get('path'));
+  const extension = getExtension(filePath);
+  if (!isSolidworksExtension(extension)) {
+    throw new HttpError(400, 'Seuls les fichiers .sldprt et .sldasm peuvent être exportés en STEP.');
+  }
+
+  const convertBase = getSolidworksConvertUrl(env);
+  if (!convertBase) {
+    return jsonResponse(
+      { status: 'not-configured', error: 'La conversion SolidWorks → STEP n’est pas configurée sur ce site.' },
+      { status: 501, cacheControl: 'no-store' },
+    );
+  }
+
+  const maxBytes = positiveInteger(env.MAX_SOLIDWORKS_BYTES, DEFAULT_MAX_SOLIDWORKS_BYTES);
+  const outputPath = buildSolidworksStepPath(filePath);
+  const manifestPath = buildSolidworksManifestPath(filePath);
+  const force = url.searchParams.get('force') === '1';
+  const bucketId = getBucketId(env);
+  const sourceBytes = await downloadConvertibleSource(env, bucketId, filePath, maxBytes);
+  const sourceSha256 = await sha256Hex(sourceBytes);
+  const dependencies = await collectSolidworksDependencies(
+    env,
+    bucketId,
+    filePath,
+    maxBytes,
+    sourceBytes.byteLength,
+  );
+  const dependencyManifest = solidworksDependencyManifest(dependencies);
+
+  if (!force) {
+    const manifest = await readSolidworksManifest(env, manifestPath);
+    if (
+      manifest?.sourceSha256 === sourceSha256
+      && hasSameSolidworksDependencies(manifest, dependencies)
+    ) {
+      return jsonResponse(
+        {
+          status: 'success',
+          cached: true,
+          sourcePath: filePath,
+          sourceSha256,
+          dependencies: dependencyManifest,
+          stepPath: outputPath,
+          manifestPath,
+          downloadUrl: solidworksDownloadPath(outputPath),
+          size: Number(manifest.size) || null,
+        },
+        { cacheControl: 'no-store' },
+      );
+    }
+  }
+
+  const filename = filePath.split('/').pop() || `model.${extension}`;
+  const form = new FormData();
+  form.append('file', new Blob([sourceBytes], { type: 'application/octet-stream' }), filename);
+  form.append('source_path', filePath);
+  form.append('source_sha256', sourceSha256);
+  form.append('dependency_manifest', JSON.stringify(dependencyManifest));
+  form.append('output_path', outputPath);
+  dependencies.forEach((dependency) => {
+    form.append(
+      'dependencies',
+      new Blob([dependency.bytes], { type: 'application/octet-stream' }),
+      dependency.path,
+    );
+  });
+
+  let converted;
+  try {
+    converted = await fetch(`${convertBase}/api/convert-solidworks-step`, {
+      method: 'POST',
+      headers: { Accept: 'application/json', ...solidworksAuthHeaders(env) },
+      body: form,
+    });
+  } catch {
+    throw new HttpError(502, 'Connexion au service HOOPS SolidWorks impossible.');
+  }
+
+  if (!converted.ok) throw await solidworksConvertHttpError(converted);
+
+  let payload;
+  try {
+    payload = await converted.json();
+  } catch {
+    throw new HttpError(502, 'Réponse du convertisseur HOOPS illisible.');
+  }
+
+  if (payload.status !== 'success' || !payload.stepPath) {
+    throw new HttpError(502, 'Le convertisseur HOOPS n’a pas confirmé l’enregistrement du STEP.');
+  }
+
+  return jsonResponse(
+    {
+      ...payload,
+      sourcePath: filePath,
+      sourceSha256,
+      dependencies: dependencyManifest,
+      stepPath: payload.stepPath,
+      manifestPath: payload.manifestPath || manifestPath,
+      downloadUrl: solidworksDownloadPath(payload.stepPath),
+      cached: false,
+    },
+    { cacheControl: 'no-store' },
+  );
+}
+
+async function solidworksConvertHttpError(response) {
+  let detail = 'La conversion SolidWorks → STEP a échoué.';
+  try {
+    const body = await response.json();
+    detail = body.detail || body.error || body.message || detail;
+  } catch {
+    // Garder le message générique si le service n’a pas répondu en JSON.
+  }
+  const message = String(detail).slice(0, 500);
+  if (response.status === 413) return new HttpError(413, message);
+  if (response.status === 501) return new HttpError(501, message);
+  if (response.status === 400 || response.status === 422) {
+    return new HttpError(422, `Fichier SolidWorks non convertible : ${message}`);
+  }
+  if (response.status === 504) return new HttpError(504, message);
+  return new HttpError(response.status >= 500 ? 502 : response.status, `Conversion SolidWorks : ${message}`);
 }
 
 /** Extensions 3D convertibles en GLB par le Space (FreeCAD + trimesh). */

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import { getExtension, isModelExtension, isShareCadExtension, modelViewerKind } from '../utils/files';
+import { getExtension, isModelExtension, isShareCadExtension, isSolidworksExtension, modelViewerKind } from '../utils/files';
 import AutodeskViewer from './AutodeskViewer';
 import GlbViewer from './GlbViewer';
 import ShareCadViewer from './ShareCadViewer';
+import SolidworksStepViewer from './SolidworksStepViewer';
 import OfficeModeTabs from './office/OfficeModeTabs';
 import { ViewerError, ViewerLoader } from './office/common';
 
@@ -62,6 +63,9 @@ export default function ModelViewer({ file }) {
   if (glbKind === 'glb' && convertStatus === 'ready') {
     modes.push({ id: 'web', label: 'Aperçu Web', hint: 'Modèle converti en GLB (gratuit, fonctionne partout)' });
   }
+  if (isSolidworksExtension(extension)) {
+    modes.push({ id: 'step', label: 'Exporter STEP', hint: 'Convertir avec HOOPS puis enregistrer dans le bucket' });
+  }
   modes.push({ id: 'autodesk', label: 'Autodesk', hint: 'Viewer Autodesk (fidélité maximale, configuration requise)' });
   if (isShareCadExtension(extension)) {
     modes.push({ id: 'sharecad', label: 'ShareCAD', hint: 'Service tiers gratuit, sans conversion (fichier envoyé à sharecad.org)' });
@@ -86,6 +90,8 @@ export default function ModelViewer({ file }) {
       <div className="office-viewer-body">
         {activeMode === 'web' ? (
           <GlbViewer file={file} onSwitchMode={switchActionFor('web')} />
+        ) : activeMode === 'step' ? (
+          <SolidworksStepViewer file={file} />
         ) : activeMode === 'sharecad' ? (
           <ShareCadViewer file={file} />
         ) : (

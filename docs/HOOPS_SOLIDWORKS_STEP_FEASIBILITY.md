@@ -2,7 +2,7 @@
 
 **Date de planification : 9 septembre 2026**
 
-**Statut : étude, aucune conversion ni aucun secret n’est enregistré dans le dépôt**
+**Statut : plan validé, pipeline applicatif implémenté ; activation HOOPS et déploiement restent à configurer**
 
 ## 1. Décision de faisabilité
 
@@ -23,20 +23,41 @@ que STEP fait partie des exports additionnels soumis à la licence HOOPS Web /
 HOOPS Exchange. Le convertisseur est une application autonome située dans le
 package produit : le viewer Web n’est pas, à lui seul, un moteur de conversion.
 
-Le dépôt actuel est compatible avec cette évolution, mais il ne la réalise pas
-encore :
+Le dépôt réalise désormais l’orchestration applicative, sous réserve de
+fournir le package HOOPS licencié au runtime :
 
-- `worker/index.js` lit le bucket et orchestre déjà des services de conversion ;
-- `space-huggingface/app.py` ne traite aujourd’hui que STEP/IGES/STL/OBJ avec
-  FreeCAD et rejette volontairement les formats propriétaires ;
-- `src/components/AutodeskViewer.jsx` constitue le fallback actuel pour
-  `SLDPRT`/`SLDASM` ;
-- aucun chemin d’écriture n’existe actuellement vers le bucket ;
-- la configuration `HF_TOKEN` documentée est prévue pour la lecture, pas pour
-  l’écriture.
+- `worker/index.js` lit le bucket, calcule les SHA-256, récupère les références
+  voisines d’un `.sldasm` et orchestre le service de conversion ;
+- `space-huggingface/app.py` conserve le pipeline FreeCAD pour STEP/IGES/STL/OBJ
+  et ajoute l’endpoint HOOPS isolé pour les formats propriétaires ;
+- `src/components/AutodeskViewer.jsx` reste le fallback pour `SLDPRT`/`SLDASM` ;
+- le service HOOPS écrit le STEP et le manifest dans le bucket via un token
+  Hugging Face write-only côté serveur ;
+- la licence, le binaire et les secrets ne sont pas inclus dans Git.
 
 **Conclusion : faisabilité conditionnelle, avec un risque principal licence /
 package HOOPS et un risque secondaire assemblies / dépendances.**
+
+## 1 bis. Implémentation livrée
+
+Le pipeline applicatif est maintenant présent dans le dépôt :
+
+- le Worker expose `GET /api/solidworks/status` et
+  `POST /api/solidworks/step?path=...` ;
+- le Worker calcule les empreintes SHA-256 du source et des dépendances,
+  réutilise un STEP identique et appelle le service HOOPS avec un secret interne ;
+- le service FastAPI expose `POST /api/convert-solidworks-step`, exécute le
+  binaire configuré, valide la signature `ISO-10303-21;` et publie le STEP +
+  manifest dans le bucket ;
+- l’interface affiche un onglet « Exporter STEP » pour `.sldprt` et `.sldasm`,
+  avec téléchargement du résultat et régénération forcée ;
+- les paramètres et la documentation de déploiement sont présents dans
+  `wrangler.jsonc`, `.dev.vars.example` et `space-huggingface/`.
+
+Le package/binaire HOOPS et les secrets restent volontairement hors Git. Tant
+que `HOOPS_CONVERTER_PATH`, la licence, `HF_TOKEN` write et
+`SOLIDWORKS_CONVERT_URL` ne sont pas renseignés, l’interface retourne un état
+« non configuré » et conserve Autodesk comme fallback.
 
 ## 2. Ce que HOOPS apporte exactement
 
@@ -48,7 +69,7 @@ avec des arguments de type :
 ```text
 converter
   --input <source.sldprt|source.sldasm>
-  --license <clé injectée par secret>
+  --license_file <fichier temporaire injecté par secret>
   --output_step <sortie.step>
   --step_export_format 2
   --read_geometry true
@@ -71,10 +92,13 @@ package HOOPS effectivement fournie avant toute mise en production.
 | Dessins `.slddrw` | Hors périmètre STEP ; à conserver comme fichier original |
 
 Un `.sldasm` n’est pas autonome dans le cas général : il référence des
-`.sldprt`, des sous-assemblages et parfois des références externes. Convertir
-uniquement le fichier `.sldasm` sans ses dépendances produira un échec ou un
-résultat incomplet. Le job devra donc télécharger le paquet de dépendances,
-ou refuser proprement l’assemblage incomplet.
+`.sldprt`, des sous-assemblages et parfois des références externes. Le Worker
+récupère les fichiers `.sldprt`/`.sldasm` du même dossier et de ses
+sous-dossiers, les limite par nombre et taille, puis les transmet au Space en
+conservant leurs chemins relatifs. Les références hors de ce périmètre ou un
+assemblage dépassant ces limites sont refusés proprement ; un fichier
+`.sldasm` autonome reste accepté par le service mais peut être incomplet selon
+le contenu réel.
 
 ## 3. Architecture recommandée
 
@@ -83,10 +107,10 @@ Navigateur
    │  demande d’aperçu / de génération
    ▼
 Cloudflare Worker
-   │  valide le chemin, déduplique, crée ou suit un job
+   │  valide le chemin, déduplique et déclenche la conversion
    ▼
 Service privé de conversion HOOPS
-   │  récupère le source et ses dépendances
+   │  reçoit le source et ses dépendances
    │  HOOPS Converter : SolidWorks → STEP
    │  vérifie la signature et la taille du STEP
    │  écrit le résultat avec un token HF write-only côté serveur
