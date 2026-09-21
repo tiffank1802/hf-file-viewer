@@ -13,13 +13,14 @@
  *   npm run appwrite:status                                # contrôle après run
  *   node scripts/appwrite-setup.mjs --flavor=databases     # force l'API 1.x
  *   node scripts/appwrite-setup.mjs --fix-enums            # réaligne les colonnes enum
+ *   node scripts/appwrite-setup.mjs --inspect              # lignes + email du propriétaire
  *   node scripts/appwrite-setup.mjs --drop                 # retire les tables
  *
  * La clé serveur ne doit JAMAIS être commitée ni porter un préfixe VITE_.
  */
 import { APPWRITE_API_BASE, APPWRITE_PROJECT_ID } from '../src/config.js';
 import { looksLikeAppwriteResponse, normalizeAppwriteEndpoint } from '../src/utils/appwriteEndpoint.js';
-import { SPECS, TABLES, buildPlan, columnDrift, enumColumns, permissionsDrift, withPendingRetry } from './appwrite-spec.js';
+import { SPECS, TABLES, buildPlan, columnDrift, enumColumns, permissionsDrift, summarizeRows, withPendingRetry } from './appwrite-spec.js';
 
 const argv = process.argv.slice(2);
 const flags = new Set(argv.filter((a) => a.startsWith('--') && !a.includes('=')));
@@ -33,6 +34,7 @@ const DROP = flags.has('--drop');
 const PING = flags.has('--ping');
 const STATUS = flags.has('--status');
 const FIX_ENUMS = flags.has('--fix-enums');
+const INSPECT = flags.has('--inspect');
 const DIAGNOSE = flags.has('--diagnose');
 const VERBOSE = flags.has('--verbose');
 const TIMEOUT_MS = Number(process.env.APPWRITE_TIMEOUT_MS || 30_000);
@@ -66,7 +68,7 @@ class ApiError extends Error {
 }
 
 /** --diagnose et --status doivent interroger le réseau réel, même en dry-run. */
-const NETWORK_PROBE = DIAGNOSE || STATUS;
+const NETWORK_PROBE = DIAGNOSE || STATUS || INSPECT;
 
 const retryOptions = { attempts: RETRY_ATTEMPTS, delayMs: RETRY_DELAY_MS };
 
@@ -374,6 +376,56 @@ async function modelDriftReport({ fix = false } = {}) {
   return drifts;
 }
 
+/**
+ * Rapport « qui a écrit quoi » : les tables ne portent pas d'email (l'identité
+ * reste dans Auth), donc la jointure se fait ici par `userId` via
+ * `GET /v1/users/{id}` — scope `users:read` sur la clé. Sans ce scope, le rapport
+ * reste lisible : il affiche l'ID et dit quoi ajouter.
+ */
+async function inspect() {
+  const spec = SPECS[FLAVOR];
+  const limit = option('limit', '25');
+  let usersById = [];
+  let scopeMissing = false;
+
+  for (const table of TABLES) {
+    const listPath = `${spec.tablePath(DATABASE_ID, table)}/rows?limit=${encodeURIComponent(limit)}`;
+    const result = await request('GET', listPath).catch((error) => {
+      console.log(`\n${table.id} : lecture impossible (${explain(error).split('\n')[0]})`);
+      return null;
+    });
+    if (!result) continue;
+    const rowsList = result.rows ?? result.documents ?? [];
+    console.log(`\n${table.id} — ${result.total ?? rowsList.length} ligne(s)`);
+    if (!rowsList.length) {
+      console.log('  (aucune ligne : écritures coupées, ou personne n’a encore épinglé/enregistré)');
+      continue;
+    }
+    const ids = [...new Set(rowsList.map((row) => row.userId).filter(Boolean))];
+    for (const id of ids) {
+      if (usersById.some((user) => user.$id === id)) continue;
+      const user = await request('GET', `/users/${id}`).catch((error) => {
+        if (error.status === 401 || error.status === 403) scopeMissing = true;
+        return null;
+      });
+      if (user) usersById.push(user);
+    }
+    for (const line of summarizeRows(rowsList, usersById, { max: Number(limit) })) {
+      const owner = line.email ?? `compte ${line.userId ?? 'sans userId'}`;
+      const verified = line.verified === null ? '' : line.verified ? ' · vérifié' : ' · NON vérifié';
+      const seen = line.row?.lastSeenAt ? ` · vu ${String(line.row.lastSeenAt).slice(0, 16).replace('T', ' ')}` : '';
+      const detail = table.id === 'profiles'
+        ? `${line.row?.promotion ?? '?'} · ${line.row?.filiere ?? '?'}`
+        : `${line.row?.kind === 'folder' ? 'dossier' : 'fichier'} · ${line.row?.filePath ?? ''}`;
+      console.log(`  ${owner}${verified}${seen} — ${detail}  [row ${line.rowId}]`);
+    }
+  }
+  if (scopeMissing) {
+    console.log('\n  Les emails viennent du service Auth : ajoute le scope `users:read` à la clé');
+    console.log('  d’API (Console → API Keys) pour que ce rapport les affiche.');
+  }
+}
+
 async function drop() {
   const spec = SPECS[FLAVOR];
   for (const table of [...TABLES].reverse()) {
@@ -410,6 +462,7 @@ async function main() {
   console.log(`api      : ${spec.label}${FLAVOR_REQUEST === 'auto' ? ' (auto-détectée)' : ' (imposée par --flavor)'}\n`);
 
   if (STATUS) return status();
+  if (INSPECT) return inspect();
   if (DROP) return drop();
   if (FIX_ENUMS) {
     const drifts = await modelDriftReport({ fix: true });

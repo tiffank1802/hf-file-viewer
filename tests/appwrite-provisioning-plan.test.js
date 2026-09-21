@@ -10,6 +10,7 @@ import {
   columnDrift,
   enumColumns,
   isPendingResourceError,
+  summarizeRows,
   permissionsDrift,
   isValidAppwriteUid,
   validateModel,
@@ -142,6 +143,26 @@ test('routes d’écriture : PUT sur la table (PATCH répond 404), PATCH sur la 
       `${flavor} : les trois paramètres requis de updateEnumColumn`);
     assert.equal(enumFix.body.default, 'GM');
   }
+});
+
+test('summarizeRows joint la ligne à son compte, et dit quand le compte a disparu', () => {
+  const rows = [
+    { $id: 'user-1', userId: 'user-1', promotion: '3A', filiere: 'GM', lastSeenAt: '2026-09-21T18:00:00Z' },
+    { $id: 'row-2', userId: 'ghost', filePath: 'GM/a.pdf', kind: 'file' },
+    { $id: 'row-3', filePath: 'sans-owner.pdf' },
+  ];
+  const users = [{ $id: 'user-1', email: 'camille@enise.fr', name: 'Camille', emailVerification: true }];
+  const lines = summarizeRows(rows, users);
+  assert.equal(lines[0].email, 'camille@enise.fr');
+  assert.equal(lines[0].verified, true);
+  assert.equal(lines[0].orphan, false);
+  assert.equal(lines[0].row.filiere, 'GM', 'la ligne complète reste accessible pour le rapport');
+  assert.equal(lines[1].email, null);
+  assert.equal(lines[1].orphan, true, 'userId sans compte correspondant = ligne orpheline à signaler');
+  assert.equal(lines[2].userId, null);
+  assert.equal(lines[2].orphan, false, 'aucun userId n’est pas une orphelin');
+  assert.equal(summarizeRows(rows, users, { max: 1 }).length, 1, 'le rapport est borné');
+  assert.deepEqual(summarizeRows(), [], 'sans lignes, rapport vide et non explosif');
 });
 
 test('permissionsDrift distingue table muette, modèle non appliqué et lecture seule', () => {

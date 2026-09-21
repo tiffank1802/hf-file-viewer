@@ -210,6 +210,13 @@ export async function verifyEmail({ userId, secret }) {
     throw authError(error, 'Lien de vérification expiré. Relance l’envoi depuis ton profil.');
   }
   cleanUrlParams();
+  // Le drapeau `emailVerified` de la table doit suivre la vérification sur-le-champ :
+  // sinon la colonne reste fausse jusqu'à ce que l'étudiant repense à enregistrer son
+  // profil, et l'administrateur lit « non vérifié » à côté d'un compte vérifié.
+  const fresh = await getCurrentUser().catch(() => null);
+  if (fresh) await upsertOwnProfile(fresh, {}).catch((error) => {
+    console.warn('[appwrite] compte vérifié, drapeau de profil non écrit :', error?.message);
+  });
   return true;
 }
 
@@ -247,6 +254,13 @@ export async function completePasswordRecovery({ userId, secret, password }) {
     throw authError(error, 'Lien de réinitialisation expiré. Relance une demande.');
   }
   cleanUrlParams();
+  // Le drapeau `emailVerified` de la table doit suivre la vérification sur-le-champ :
+  // sinon la colonne reste fausse jusqu'à ce que l'étudiant repense à enregistrer son
+  // profil, et l'administrateur lit « non vérifié » à côté d'un compte vérifié.
+  const fresh = await getCurrentUser().catch(() => null);
+  if (fresh) await upsertOwnProfile(fresh, {}).catch((error) => {
+    console.warn('[appwrite] compte vérifié, drapeau de profil non écrit :', error?.message);
+  });
   return true;
 }
 
@@ -260,7 +274,16 @@ export async function changePassword({ current, next, confirm }) {
   }
 }
 
+/**
+ * Retire les paramètres d'un lien d'email une fois consommés (ils sont à usage
+ * unique, les laisser dans l'URL invite à recharger puis échouer).
+ *
+ * Garde d'environnement : ce module est importé par les tests Node (`node --test`),
+ * où `window` n'existe pas — sans elle, `verifyEmail` échouerait sur le nettoyage
+ * d'URL après avoir réussi la vérification.
+ */
 function cleanUrlParams() {
+  if (typeof window === 'undefined' || !window.history?.replaceState || !window.location?.href) return;
   const url = new URL(window.location.href);
   url.search = '';
   window.history.replaceState({}, '', `${url.toString()}${window.location.hash}`);
@@ -292,13 +315,38 @@ function profilePermissions(userId) {
   ];
 }
 
+/**
+ * Champs saisis par l'étudiant.
+ *
+ * `promotion` et `filiere` ne sont PAS filtrés sur la liste du client : l'`enum`
+ * de la table est l'autorité, et un filtre ici faisait disparaître la valeur en
+ * silence (profil enregistré avec le défaut, sans que l'étudiant le sache). Un
+ * refus du serveur, lui, se traduit en français (`invalid_enum_value`).
+ */
 function cleanProfileInput({ displayName, bio, promotion, filiere } = {}) {
   const data = {};
   if (displayName !== undefined) data.displayName = String(displayName).trim().slice(0, MAX_DISPLAY_NAME);
   if (bio !== undefined) data.bio = String(bio).trim().slice(0, MAX_BIO);
-  if (promotion !== undefined && PROMOTIONS.includes(promotion)) data.promotion = promotion;
-  if (filiere !== undefined && FILIERES.includes(filiere)) data.filiere = filiere;
+  if (promotion !== undefined) data.promotion = promotion;
+  if (filiere !== undefined) data.filiere = filiere;
   return data;
+}
+
+/**
+ * Champs d'état dérivés de la session, jamais de la saisie.
+ *
+ * `emailVerified` était provisionné puis écrit par personne : la colonne restait
+ * à `false` même après un clic sur le lien de vérification. Elle vaut quelque
+ * chose maintenant, et `lastSeenAt` aussi — sinon l'administrateur voyait des
+ * lignes sans savoir si elles étaient vivantes. L'email, lui, reste dans le
+ * service Auth : une copie dans une table que le client peut écrire serait du
+ * PII dupliqué et contresignable.
+ */
+function profileFlags(user) {
+  return {
+    emailVerified: Boolean(user?.emailVerification ?? user?.verification ?? false),
+    lastSeenAt: new Date().toISOString(),
+  };
 }
 
 /**
@@ -324,7 +372,7 @@ export async function upsertOwnProfile(user, input = {}) {
     return await rows.upsert({
       tableId: PROFILE_TABLE_ID,
       rowId: ID.custom(user.$id),
-      data: { userId: user.$id, ...cleanProfileInput(input) },
+      data: { userId: user.$id, ...cleanProfileInput(input), ...profileFlags(user) },
       permissions: profilePermissions(user.$id),
     });
   } catch (error) {

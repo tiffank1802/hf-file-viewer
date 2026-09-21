@@ -398,6 +398,32 @@ export async function withPendingRetry(action, label = 'opération', {
   }
 }
 
+/**
+ * Ligne par ligne, qui est le propriétaire ?
+ *
+ * Une table `profiles`/`favorites` ne contient volontairement **aucun** email :
+ * l'identité vit dans le service Auth, et une colonne email écrite par le client
+ * serait du PII dupliqué et contresignable. Dans la console, le lien se fait par
+ * l'ID : pour `profiles`, `$id` de la ligne = ID de l'utilisateur. `summarizeRows`
+ * fait cette jointure hors ligne pour le rapport `--inspect`.
+ */
+export function summarizeRows(rows = [], users = [], { max = 25 } = {}) {
+  const byId = new Map(users.filter((user) => user?.$id).map((user) => [user.$id, user]));
+  return rows.slice(0, max).map((row) => {
+    const userId = row?.userId ?? null;
+    const user = userId ? byId.get(userId) : null;
+    return {
+      rowId: row?.$id ?? null,
+      userId,
+      email: user?.email ?? null,
+      name: user?.name ?? null,
+      verified: user ? Boolean(user.emailVerification ?? user.verification ?? false) : null,
+      orphan: Boolean(userId) && !user,
+      row,
+    };
+  });
+}
+
 /** UID Appwrite : 36 caractères max, sans underscore initial, [a-zA-Z0-9_.-]. */
 export function isValidAppwriteUid(value) {
   return typeof value === 'string'

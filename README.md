@@ -460,7 +460,32 @@ npm run appwrite:ping     # attendu : 200 + corps exact « Pong! »
 npm run appwrite:status   # contrôler ce qui existe
 node scripts/appwrite-setup.mjs --diagnose   # base utilisée + routes disponibles
 node scripts/appwrite-setup.mjs --fix-enums  # réaligne une colonne enum périmée
+node scripts/appwrite-setup.mjs --inspect    # lignes + email du propriétaire (scope users:read)
 ```
+
+### Où est l’email, alors ?
+
+Nulle part dans les tables, et c'est voulu : `profiles` et `favorites` portent un
+`userId`, jamais l'adresse. Une colonne email que le **client** peut écrire serait
+du PII dupliqué, contresignable (un compte peut déclarer l'adresse d'un autre), et
+désynchronisé dès que l'utilisateur change son email dans Auth — qui reste la seule
+autorité : **Console → Users** (email, vérification, sessions, mot de passe).
+
+Pour lire les tables avec les adresses, la jointure est faite pour toi :
+
+```bash
+node scripts/appwrite-setup.mjs --inspect
+# profiles — 2 ligne(s)
+#   camille@enise.fr · vérifié · vu 2026-09-21 18:04 — 3A · GM  [row 69ce…]
+# favorites — 3 ligne(s)
+#   camille@enise.fr — fichier · GM/3A GM/méca.pdf  [row 01j…]
+```
+
+Dans la console, le lien se fait à l'œil : pour `profiles`, **l'ID de la ligne est
+l'ID du compte** (`ID.custom(user.$id)`), donc `Users → [compte]` et la ligne
+correspondent au caractère près. Les deux colonnes d'état `emailVerified` et
+`lastSeenAt` sont écrites depuis la session (jamais depuis le formulaire) : la
+première bascule au clic sur le lien d'email, la seconde à chaque enregistrement.
 
 ### Un compte créé n’apparaît pas dans la base : où regarder
 

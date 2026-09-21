@@ -107,8 +107,9 @@ permissions via `Role.label('admin')`.
 
 Base **`enise_docs`** (type *TablesDB*, serveurless), deux tables.
 
-**Table `profiles`** — une ligne par compte. Permissions de table : aucune en lecture,
-`create = Role.users('verified')` ; sécurité par ligne activée.
+**Table `profiles`** — une ligne par compte. Permissions de table : `create = Role.users`
+(pas `users/verified` : un compte qui vient de s'inscrire n'a pas encore cliqué son lien),
+`sécurité par ligne activée`, aucune permission de table pour `any`.
 
 | Colonne | Type | Contraintes | Sert à |
 | --- | --- | --- | --- |
@@ -155,19 +156,24 @@ permission `any` posée par le client.
 2. **Create table** → ID `profiles`, **activer la sécurité par ligne**
    (`Row-level permissions`) ; aucune permission de table en lecture.
 3. Ajouter les colonnes du §3.1 (les enums doivent lister exactement les valeurs autorisées).
-4. Permissions de table : `create` → rôle `users` (**pas** `users/verified`) ; `read` → `users`.
+4. **Pas de colonne `email`** dans les tables : l'identité (adresse, mot de passe,
+   vérification, sessions) reste la propriété exclusive du service Auth. Une colonne
+   email écrite depuis le navigateur serait duplicable, contresignable et fausse dès
+   le premier changement d'adresse. `emailVerified` et `lastSeenAt`, elles, sont bien
+   des colonnes de la table — dérivées de la session, jamais du formulaire.
+5. Permissions de table : `create` → rôle `users` (**pas** `users/verified`) ; `read` → `users`.
    Rien en lecture pour `any`. Un compte qui vient de s'inscrire n'est pas encore
    vérifié — avec `users/verified`, sa première écriture (sa propre ligne de profil)
    est refusée et l'inscription laisse un compte dans Auth sans ligne en base. Ce
    n'est pas une ouverture : les permissions de *ligne* limitent lecture et
    écriture au propriétaire, et `userId` vient de la session, jamais de la saisie.
-5. Index : unique `(userId, pathKey)` sur `favorites`, unique `userId` sur `profiles`,
+6. Index : unique `(userId, pathKey)` sur `favorites`, unique `userId` sur `profiles`,
    key `(userId, $createdAt)`.
-6. Répéter pour `favorites`.
-7. **Settings → Domains & Platforms** : ajouter une plateforme *Web* avec le hostname du site
+7. Répéter pour `favorites`.
+8. **Settings → Domains & Platforms** : ajouter une plateforme *Web* avec le hostname du site
    déployé, et `localhost` (+ port) pour le développement. **Sans cette étape, le navigateur
    rejette les appels en CORS.**
-8. **Settings → Auth** : activer *Email/Password*, vérification d'email obligatoire,
+9. **Settings → Auth** : activer *Email/Password*, vérification d'email obligatoire,
    récupération par email, longueur minimale 12 caractères, limite de sessions 5, durée de
    session 30 jours. Activer OAuth GitHub seulement si le flux est voulu (phase 6).
 
@@ -497,6 +503,7 @@ npm run appwrite:ping                            # attendu : 200 + corps exact �
 node scripts/appwrite-setup.mjs --diagnose       # base utilisée + routes tablesdb / databases
 node scripts/appwrite-setup.mjs --dry-run        # les appels qui seraient faits
 node scripts/appwrite-setup.mjs --fix-enums      # réaligne une colonne enum périmée
+node scripts/appwrite-setup.mjs --inspect        # qui a écrit quelle ligne, emails compris
 ```
 
 ⚠️ Le contrat du `ping` est **`HTTP 200` + corps exact `Pong!`** en `text/plain` — pas un
