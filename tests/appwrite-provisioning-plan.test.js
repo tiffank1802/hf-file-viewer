@@ -2,12 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  ROLE_CREATE,
+  ROLE_USERS,
   SPECS,
   TABLES,
   buildPlan,
   columnDrift,
   enumColumns,
   isPendingResourceError,
+  permissionsDrift,
   isValidAppwriteUid,
   validateModel,
   withPendingRetry,
@@ -85,8 +88,9 @@ test('API héritée : collections/attributs/documentSecurity dans le vocabulaire
   assert.equal(table.post, '/databases/enise_docs/collections');
   assert.equal(table.body.collectionId, 'profiles');
   assert.equal(table.body.documentSecurity, true, 'l’équivalent de rowSecurity doit être posé');
-  assert.deepEqual(table.body.permissions, ['create("users/verified")', 'read("users")'],
-    'l’API héritée ne lit pas les permissions par GET : elles sont au création');
+  assert.deepEqual(table.body.permissions, ['create("users")', 'read("users")'],
+    'l’API héritée ne lit pas les permissions par GET : elles sont à la création');
+  assert.equal(ROLE_CREATE, ROLE_USERS, 'create doit rester ouvert aux non-vérifiés : un compte neuf écrit sa propre ligne avant de vérifier son email');
 
   const column = plan.find((op) => op.group === 'column' && op.body.key === 'filePath');
   assert.equal(column.post, '/databases/enise_docs/collections/favorites/attributes/string');
@@ -138,6 +142,18 @@ test('routes d’écriture : PUT sur la table (PATCH répond 404), PATCH sur la 
       `${flavor} : les trois paramètres requis de updateEnumColumn`);
     assert.equal(enumFix.body.default, 'GM');
   }
+});
+
+test('permissionsDrift distingue table muette, modèle non appliqué et lecture seule', () => {
+  const model = ['create("users")', 'read("users")'];
+  assert.deepEqual(permissionsDrift(model, []), { empty: true, noCreate: false, missing: model, aligned: false });
+  assert.equal(permissionsDrift(model, model).aligned, true);
+  // Le PUT n'est jamais passé : la table reste sans create, le profil ne s'écrit pas.
+  assert.equal(permissionsDrift(model, ['read("users")']).noCreate, true);
+  // Le modèle a changé depuis l'application (users/verified → users).
+  const stale = permissionsDrift(model, ['create("users/verified")', 'read("users")']);
+  assert.deepEqual(stale.missing, ['create("users")']);
+  assert.equal(stale.empty, false);
 });
 
 test('une ressource « pas encore disponible » est retentée, un modèle faux ne l’est jamais', async () => {

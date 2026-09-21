@@ -8,7 +8,9 @@ const ROOT = resolve(import.meta.dirname, '..');
 import { account, describeAppwriteError, hasDatabase, isMissingRow, isMissingSession, rows } from '../src/services/appwrite.js';
 import {
   MIN_PASSWORD_LENGTH,
+  describeDataWrites,
   getCurrentUser,
+  signUpWithPassword,
   normalizeEmail,
   upsertOwnProfile,
   readOwnProfile,
@@ -136,5 +138,45 @@ test('une panne réseau remonte un message français, jamais « Fetch failed »'
     // Sans diagnostic, le message doit nommer les deux pistes et où les lire.
     assert.match(message, /Domains & Platforms/);
     assert.match(message, /Refused to connect/);
+  }
+});
+
+test('l’inscription dit séparément si le compte ou la ligne de profil a échoué', async () => {
+  // Un compte créé sans ligne `profiles` est l'état réel d'un build où
+  // VITE_APPWRITE_DATABASE_ID est vide : le service ne doit pas faire semblant.
+  const saved = {
+    create: account.create,
+    session: account.createEmailPasswordSession,
+    verification: account.createVerification,
+  };
+  account.create = async ({ email, name }) => ({ $id: 'user-1', email, name });
+  account.createEmailPasswordSession = async () => ({ $id: 'session-1' });
+  account.createVerification = async () => { throw Object.assign(new Error('smtp_down'), { code: 500 }); };
+  try {
+    const result = await signUpWithPassword({
+      email: 'Etudiante@ENISE.FR',
+      password: 'motdepasse-solide-12',
+      confirm: 'motdepasse-solide-12',
+      name: 'Camille',
+      promotion: '3A',
+      filiere: 'GM',
+    });
+    assert.equal(result.user.$id, 'user-1', 'le compte, lui, est bien créé');
+    assert.equal(result.profile.saved, false);
+    // La cause est nommée, pas noyée dans un catch(() => null).
+    assert.match(result.profile.reason, /VITE_APPWRITE_DATABASE_ID/);
+    assert.match(result.profile.reason, /figée au build/);
+  } finally {
+    Object.assign(account, saved);
+  }
+});
+
+test('les causes d’écriture coupée sont listées, et vides quand tout est prêt', () => {
+  const reasons = describeDataWrites();
+  // Dans ce dépôt, APPWRITE_DATABASE_ID est volontairement vide par défaut.
+  assert.ok(Array.isArray(reasons));
+  if (!hasDatabase()) {
+    assert.equal(reasons.length, 1);
+    assert.match(reasons[0], /base non déclarée dans ce build/);
   }
 });

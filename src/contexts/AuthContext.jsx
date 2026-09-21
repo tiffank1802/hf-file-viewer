@@ -3,6 +3,7 @@ import { AuthContext } from './auth-context.js';
 import { APPWRITE_ENABLED } from '../config.js';
 import {
   completePasswordRecovery,
+  describeDataWrites,
   getCurrentUser,
   readOwnProfile,
   readRecoveryParams,
@@ -94,6 +95,8 @@ export default function AuthProvider({ children }) {
       notice,
       isAuthenticated: Boolean(user),
       isProvisioned: APPWRITE_ENABLED,
+      // Causes lisibles d'un profil qui ne s'écrit pas ; vide = tout est en place.
+      dataWriteReasons: describeDataWrites(),
       recovery,
       clearMessages: () => {
         setError(null);
@@ -107,9 +110,15 @@ export default function AuthProvider({ children }) {
       },
       signUp: async (payload) => {
         setError(null);
-        const nextUser = await signUpWithPassword(payload);
+        const { user: nextUser, profile } = await signUpWithPassword(payload);
         await applyUser(nextUser);
-        return nextUser;
+        // Le compte vit dans Auth (Console → Users) ; la ligne de profil vit dans
+        // TablesDB. Les deux n'échouent pas ensemble : le message doit dire lequel
+        // a manqué, sinon « je ne le vois pas dans la base » devient indéchiffrable.
+        setNotice(profile?.saved
+          ? 'Compte créé, profil enregistré.'
+          : `Compte créé, mais aucune ligne dans la table profils : ${profile?.reason ?? 'cause inconnue.'}`);
+        return { user: nextUser, profile };
       },
       signOut: async () => {
         await signOut();

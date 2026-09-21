@@ -18,13 +18,26 @@ import { PROFILE_FILIERES, PROFILE_PROMOTIONS } from '../src/config.js';
 export const ROLE_USERS = 'users';
 export const ROLE_USERS_VERIFIED = 'users/verified';
 
+/**
+ * `create` est ouvert à `users`, pas à `users/verified`.
+ *
+ * Un compte qui vient de s'inscrire n'est PAS encore vérifié — l'email l'attend.
+ * Avec `users/verified`, sa première écriture (sa propre ligne de profil) reçoit
+ * un refus, et l'inscription laisse donc un compte dans Auth sans ligne en base :
+ * exactement le « je ne vois pas mon compte dans la base de données » rencontré.
+ * Ce n'est pas une ouverture de sécurité : les permissions de LIGNE ne donnent
+ * lecture/écriture qu'au propriétaire (`Role.user(userId)`), et `userId` est pris
+ * sur la session, jamais sur la saisie.
+ */
+export const ROLE_CREATE = ROLE_USERS;
+
 /** Colonnes et index communs aux deux dialectes ; seule la traduction change. */
 export const TABLES = [
   {
     id: 'profiles',
     name: 'Profils étudiants',
     rowSecurity: true,
-    permissions: [`create("${ROLE_USERS_VERIFIED}")`, `read("${ROLE_USERS}")`],
+    permissions: [`create("${ROLE_CREATE}")`, `read("${ROLE_USERS}")`],
     columns: [
       // Seules les colonnes que le code écrit toujours restent obligatoires :
       // `required: true` exclut tout `default` côté Appwrite.
@@ -45,7 +58,7 @@ export const TABLES = [
     id: 'favorites',
     name: 'Favoris synchronisés',
     rowSecurity: true,
-    permissions: [`create("${ROLE_USERS_VERIFIED}")`],
+    permissions: [`create("${ROLE_CREATE}")`],
     columns: [
       // Seules les colonnes que le code écrit toujours restent obligatoires :
       // `required: true` exclut tout `default` côté Appwrite.
@@ -311,6 +324,29 @@ export function validateModel(tables = TABLES) {
   }
   if (problems.length) throw new Error(`Modèle de provisioning invalide :\n  - ${problems.join('\n  - ')}`);
   return true;
+}
+
+/**
+ * Compare les permissions d'une table lues dans la base à celles du modèle.
+ *
+ * Trois états méritent d'être distingués, parce qu'ils n'ont pas le même
+ * symptôme côté application :
+ * - `empty` : aucune permission ⇒ ni lecture ni écriture depuis le navigateur —
+ *   l'inscription réussit, la ligne `profiles` n'arrive jamais ;
+ * - `missing` : le modèle a changé depuis la dernière application ⇒ relancer le
+ *   script (le PUT est idempotent) ;
+ * - `noCreate` : des permissions existent mais aucune `create()` ⇒ lecture seule
+ *   pour tous, donc profil et favoris muets.
+ */
+export function permissionsDrift(expected = [], live) {
+  const current = Array.isArray(live) ? live : [];
+  const missing = expected.filter((entry) => !current.includes(entry));
+  return {
+    empty: current.length === 0,
+    noCreate: current.length > 0 && !current.some((entry) => entry.startsWith('create(')),
+    missing,
+    aligned: current.length > 0 && missing.length === 0 && current.some((entry) => entry.startsWith('create(')),
+  };
 }
 
 /** Écarts entre colonne déclarée et colonne réellement stockée (hors enum). */

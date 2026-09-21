@@ -155,7 +155,12 @@ permission `any` posée par le client.
 2. **Create table** → ID `profiles`, **activer la sécurité par ligne**
    (`Row-level permissions`) ; aucune permission de table en lecture.
 3. Ajouter les colonnes du §3.1 (les enums doivent lister exactement les valeurs autorisées).
-4. Permissions de table : `create` → rôle `users/verified`. Rien en lecture pour `any`.
+4. Permissions de table : `create` → rôle `users` (**pas** `users/verified`) ; `read` → `users`.
+   Rien en lecture pour `any`. Un compte qui vient de s'inscrire n'est pas encore
+   vérifié — avec `users/verified`, sa première écriture (sa propre ligne de profil)
+   est refusée et l'inscription laisse un compte dans Auth sans ligne en base. Ce
+   n'est pas une ouverture : les permissions de *ligne* limitent lecture et
+   écriture au propriétaire, et `userId` vient de la session, jamais de la saisie.
 5. Index : unique `(userId, pathKey)` sur `favorites`, unique `userId` sur `profiles`,
    key `(userId, $createdAt)`.
 6. Répéter pour `favorites`.

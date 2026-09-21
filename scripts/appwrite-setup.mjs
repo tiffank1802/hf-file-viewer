@@ -19,7 +19,7 @@
  */
 import { APPWRITE_API_BASE, APPWRITE_PROJECT_ID } from '../src/config.js';
 import { looksLikeAppwriteResponse, normalizeAppwriteEndpoint } from '../src/utils/appwriteEndpoint.js';
-import { SPECS, TABLES, buildPlan, columnDrift, enumColumns, withPendingRetry } from './appwrite-spec.js';
+import { SPECS, TABLES, buildPlan, columnDrift, enumColumns, permissionsDrift, withPendingRetry } from './appwrite-spec.js';
 
 const argv = process.argv.slice(2);
 const flags = new Set(argv.filter((a) => a.startsWith('--') && !a.includes('=')));
@@ -292,24 +292,43 @@ async function diagnose() {
 
 async function status() {
   const spec = SPECS[FLAVOR];
-  const plan = buildPlan({ spec, databaseId: DATABASE_ID });
   const database = await request('GET', spec.database(DATABASE_ID)).catch((error) => {
     console.log(`base ${DATABASE_ID} : ${error.status ? `absente (${error.status})` : error.cause}`);
     return null;
   });
   if (!database) return;
   console.log(`base ${DATABASE_ID} — ${database.name} (${spec.label})`);
+  let blocked = 0;
   for (const table of TABLES) {
     const row = await request('GET', spec.tablePath(DATABASE_ID, table)).catch(() => null);
-    const columns = row?.columns ?? row?.attributes ?? [];
-    const indexes = row?.indexes ?? [];
-    console.log(`  ${table.id} : ${row ? `${columns.length}/${table.columns.length} colonnes, ${indexes.length}/${table.indexes.length} index, sécurité par ligne=${row.rowSecurity ?? row.documentSecurity}` : 'absente'}`);
-  }
-  for (const op of plan.filter((item) => item.group === 'permissions')) {
-    console.log(`  ${op.parent} : permissions ${JSON.stringify(op.body.permissions)}`);
+    if (!row) {
+      console.log(`  ${table.id} : absente — npm run appwrite:setup`);
+      blocked += 1;
+      continue;
+    }
+    const columns = row.columns ?? row.attributes ?? [];
+    const indexes = row.indexes ?? [];
+    console.log(`  ${table.id} : ${columns.length}/${table.columns.length} colonnes, ${indexes.length}/${table.indexes.length} index, sécurité par ligne=${row.rowSecurity ?? row.documentSecurity}`);
+    // Les permissions LUES sont la seule réponse à « le PUT est-il passé ? » :
+    // afficher celles du modèle, comme le faisait ce rapport, ne prouvait rien.
+    const live = row.$permissions ?? row.permissions ?? [];
+    const drift = permissionsDrift(table.permissions, live);
+    if (drift.empty) {
+      console.log('    ! aucune permission sur la table : le client ne peut ni lire ni écrire — npm run appwrite:setup');
+      blocked += 1;
+    } else if (drift.missing.length) {
+      console.log(`    ! permissions en base [${live.join(', ')}], prévu [${(table.permissions ?? []).join(', ')}] → npm run appwrite:setup`);
+      blocked += 1;
+    } else if (drift.noCreate) {
+      console.log('    ! pas de create() : inscription possible, profil impossible à écrire');
+      blocked += 1;
+    } else {
+      console.log(`    ✓ permissions conformes (${live.join(', ')})`);
+    }
   }
   const drifts = await modelDriftReport();
   if (drifts) console.log(`  ${drifts} colonne(s) en décalage avec le modèle (${FIX_ENUMS ? 'corrigées' : '--fix-enums pour les enums, console pour le reste'}).`);
+  if (blocked) console.log(`\n  ${blocked} table(s) empêchent l’écriture depuis le navigateur : un compte créé côté Auth n’aura aucune ligne en base.`);
 }
 
 /**

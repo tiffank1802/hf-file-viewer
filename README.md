@@ -458,6 +458,32 @@ node scripts/appwrite-setup.mjs --diagnose   # base utilisée + routes disponibl
 node scripts/appwrite-setup.mjs --fix-enums  # réaligne une colonne enum périmée
 ```
 
+### Un compte créé n’apparaît pas dans la base : où regarder
+
+Un `Inscription` écrit **deux** choses séparées, qui n’échouent pas ensemble :
+
+1. l’**utilisateur** — Console → **Users** (service Auth). C’est la seule autorité
+   sur l’email, le mot de passe, la vérification et les sessions ;
+2. la **ligne de profil** — Console → Databases → **Tables** → `enise_docs` →
+   `profiles`, une ligne dont l’ID est celui du compte. Rien dans *Users* ne prouve
+   que cette écriture a réussi, et rien dans *Tables* ne prouve que la connexion marche.
+
+La ligne `profiles` manque si **une seule** de ces conditions est fausse, et le
+panneau de compte affiche désormais la cause au lieu de l’avaler :
+
+| Condition | Contrôle | Symptôme |
+|---|---|---|
+| `VITE_APPWRITE_DATABASE_ID` non vide **dans le build** | `?appwrite` dans l’URL, ou note « Écritures de données désactivées » dans le panneau | rien n’est tenté, par conception (court-circuit) ; redémarrer `npm run dev` après avoir modifié `.env.local` |
+| les deux tables existent | `npm run appwrite:status` | `table_not_found` traduit en « Table absente du projet : relance npm run appwrite:setup » |
+| la table porte un `create()` | `npm run appwrite:status` | `! aucune permission sur la table` ou `! pas de create() : inscription possible, profil impossible à écrire` |
+| l’origine du navigateur est déclarée chez Appwrite | Console → Domains & Platforms | message « Appwrite est injoignable » (ou le verdict `origin` du diagnostic) |
+
+Le `create()` est ouvert au rôle `users` et non `users/verified` : un compte qui
+vient de s’inscrire n’a pas encore cliqué sur le lien d’email, et avec le rôle
+vérifié sa première écriture serait refusée. Les permissions de **ligne** restent
+limitées au propriétaire (`Permission.read/update/delete(Role.user(userId))`), et
+`userId` est lu sur la session, jamais sur la saisie.
+
 Un 404 **JSON** (`type: general_route_not_found`) vient d’Appwrite ; une erreur
 `Invalid \`tableId\` param: UID must contain at most 36 chars` avec `[object Object]` dans
 l’URL signifiait qu’un objet était passé là où l’API attend un identifiant (corrigé, et

@@ -127,7 +127,7 @@ export default function AuthPanel({ open, mode = 'signin', onModeChange, onClose
   const submitSignUp = (event) => {
     event.preventDefault();
     void run(async () => {
-      await auth.signUp({
+      const result = await auth.signUp({
         email: form.email,
         password: form.password,
         confirm: form.confirm,
@@ -135,7 +135,9 @@ export default function AuthPanel({ open, mode = 'signin', onModeChange, onClose
         promotion: form.promotion,
         filiere: form.filiere,
       });
-      onClose?.();
+      // Le panneau ne se ferme que si le profil a bien été écrit : sinon,
+      // fermer voudrait dire jeter la seule explication disponible.
+      if (result?.profile?.saved !== false) onClose?.();
     });
   };
 
@@ -223,6 +225,13 @@ export default function AuthPanel({ open, mode = 'signin', onModeChange, onClose
         {message ? (
           <p className="auth-message auth-message--error" role="alert"><FiAlertCircle aria-hidden="true" />{message}</p>
         ) : null}
+        {!auth.dataWritesEnabled?.length ? null : (
+          <p className="auth-note" role="status">
+            <FiAlertCircle aria-hidden="true" />
+            {'Écritures de données désactivées dans ce build : '}
+            {auth.dataWritesEnabled.join(' ')}
+          </p>
+        )}
         {auth.notice ? (
           <p className="auth-message auth-message--ok"><FiCheck aria-hidden="true" />{auth.notice}</p>
         ) : null}

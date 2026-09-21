@@ -1,5 +1,10 @@
 import { ID, Permission, Role } from 'appwrite';
-import { APPWRITE_OAUTH_PROVIDER, PROFILE_FILIERES, PROFILE_PROMOTIONS } from '../config.js';
+import {
+  APPWRITE_ENABLED,
+  APPWRITE_OAUTH_PROVIDER,
+  PROFILE_FILIERES,
+  PROFILE_PROMOTIONS,
+} from '../config.js';
 import {
   PROFILE_TABLE_ID,
   account,
@@ -115,8 +120,33 @@ export async function signUpWithPassword({ email, password, confirm, name, promo
   }
 
   await requestEmailVerification().catch(() => null);
-  await upsertOwnProfile(user, { promotion, filiere, displayName }).catch(() => null);
-  return user;
+
+  // L'écriture du profil n'est JAMAIS avalée sans trace : un compte créé avec
+  // succès mais sans ligne `profiles` est l'état exact où l'on se retrouve quand
+  // la base n'est pas déclarée dans le build ou que la table n'a pas de
+  // permission d'écriture — et sans ce retour, rien ne le dit à l'utilisateur.
+  const profile = await upsertOwnProfile(user, { promotion, filiere, displayName })
+    .then((row) => ({ saved: Boolean(row), reason: row ? null : describeDataWrites()[0] }))
+    .catch((error) => ({ saved: false, reason: error?.message || 'écriture refusée par Appwrite.' }));
+
+  return { user, profile };
+}
+
+/**
+ * Pourquoi les écritures de données sont coupées, dans l'ordre de probabilité.
+ *
+ * Retourne une liste de causes lisibles : vide quand tout est en place. C'est la
+ * réponse à « mon compte n'apparaît pas dans la base de données ».
+ */
+export function describeDataWrites() {
+  const reasons = [];
+  if (!APPWRITE_ENABLED) reasons.push('endpoint ou ID de projet Appwrite absent de ce build.');
+  else if (!hasDatabase()) {
+    reasons.push('base non déclarée dans ce build : VITE_APPWRITE_DATABASE_ID est vide '
+      + '(redémarre le serveur de dev après l’avoir mis dans .env.local, la valeur est figée au build).');
+  }
+  if (!PROFILE_TABLE_ID) reasons.push('ID de la table des profils non renseigné.');
+  return reasons;
 }
 
 export async function signOut() {
