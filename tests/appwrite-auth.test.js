@@ -103,9 +103,12 @@ test('isMissingRow couvre les deux vocabulaires d’erreur', () => {
 
 test('une panne réseau remonte un message français, jamais « Fetch failed »', async () => {
   await assert.rejects(() => getCurrentUser(), /Appwrite est injoignable/);
-  assert.equal(
-    describeAppwriteError(new Error('fetch failed')),
-    'Appwrite est injoignable : réseau coupé, ou ce domaine n’est pas déclaré dans Settings → Domains & Platforms.',
-  );
-  assert.equal(describeAppwriteError(new TypeError('Failed to fetch')), 'Appwrite est injoignable : réseau coupé, ou ce domaine n’est pas déclaré dans Settings → Domains & Platforms.');
+  for (const error of [new Error('fetch failed'), new TypeError('Failed to fetch'), new Error('Load failed')]) {
+    const message = describeAppwriteError(error);
+    assert.match(message, /^Appwrite est injoignable/, `message attendu en français : ${message}`);
+    assert.doesNotMatch(message, /fetch failed/i, 'le texte brut du moteur ne doit pas fuiter');
+    // Sans diagnostic, le message doit nommer les deux pistes et où les lire.
+    assert.match(message, /Domains & Platforms/);
+    assert.match(message, /Refused to connect/);
+  }
 });

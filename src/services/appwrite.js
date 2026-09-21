@@ -26,6 +26,13 @@ const databases = new Databases(client);
 /** 'tablesdb' (Appwrite 2.x) ou 'databases' (API héritée 1.x). */
 export const FLAVOR = APPWRITE_FLAVOR;
 
+import {
+  describeTransportVerdict,
+  getCachedTransportVerdict,
+  isTransportError,
+  probeAppwriteTransport,
+} from './appwriteTransport.js';
+
 /** Une « table » et une « collection » sont le même objet selon le dialecte. */
 const CONTAINER = FLAVOR === 'databases' ? 'collection' : 'table';
 
@@ -133,12 +140,17 @@ export function ensureAppwritePing() {
       setPingState(next);
       return next;
     })
-    .catch((error) => {
-      const next = {
-        status: 'offline',
-        detail: error?.message || 'Appwrite injoignable (réseau ou origine CORS non autorisée).',
-        checkedAt: Date.now(),
-      };
+    .catch(async (error) => {
+      // Un ping qui échoue sans statut HTTP n'est pas « Appwrite est mort » :
+      // le navigateur a refusé la requête. On identifie laquelle des trois
+      // causes (CSP, origine non déclarée, réseau) avant d'écrire le message.
+      let detail = error?.message || 'Appwrite injoignable.';
+      if (isTransportError(error)) {
+        const verdict = await probeAppwriteTransport({ projectId: APPWRITE_PROJECT_ID }).catch(() => null);
+        detail = describeTransportVerdict(verdict ?? getCachedTransportVerdict()) || detail;
+        if (verdict) console.warn('[appwrite] ping échoué — diagnostic :', verdict.code, '\n' + detail);
+      }
+      const next = { status: 'offline', detail, checkedAt: Date.now() };
       setPingState(next);
       return next;
     });
@@ -200,10 +212,16 @@ export function describeAppwriteError(error, fallback = 'Action impossible pour 
     : (typeof error.message === 'string' ? error.message : '');
   const clean = message.trim();
   if (!clean || clean === 'Unknown Error') return fallback;
-  // Un « Fetch failed » brut ne parle à personne : c'est presque toujours le
-  // réseau, une origine non déclarée en CORS, ou un projet injoignable.
+  // Un « Fetch failed » brut ne parle à personne : le navigateur n'a pas
+  // terminé la requête. Si la sonde du ping a déjà nommé la cause (CSP, origine
+  // non déclarée, réseau), on la rapporte ; sinon on donne les deux pistes et
+  // où les lire, ce qui reste actionnable.
   if (TRANSPORT_ERRORS.test(clean) && error.code === undefined) {
-    return 'Appwrite est injoignable : réseau coupé, ou ce domaine n’est pas déclaré dans Settings → Domains & Platforms.';
+    const diagnosed = describeTransportVerdict(getCachedTransportVerdict());
+    if (diagnosed) return diagnosed;
+    return 'Appwrite est injoignable : réseau coupé, ou ce domaine n’est pas déclaré '
+      + 'dans Settings → Domains & Platforms. Console du navigateur (F12) : « Refused to '
+      + 'connect » = CSP, « No \u2018Access-Control-Allow-Origin\u2019 header » = origine à déclarer.';
   }
   return clean.charAt(0).toUpperCase() + clean.slice(1);
 }
