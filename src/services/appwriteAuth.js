@@ -1,5 +1,5 @@
 import { ID, Permission, Role } from 'appwrite';
-import { APPWRITE_OAUTH_PROVIDER } from '../config.js';
+import { APPWRITE_OAUTH_PROVIDER, PROFILE_FILIERES, PROFILE_PROMOTIONS } from '../config.js';
 import {
   PROFILE_TABLE_ID,
   account,
@@ -27,8 +27,13 @@ import {
 export const MIN_PASSWORD_LENGTH = 12;
 export const MAX_DISPLAY_NAME = 128;
 export const MAX_BIO = 280;
-export const PROMOTIONS = ['3A', '4A', '5A', 'Alumni', 'Staff'];
-export const FILIERES = ['GM', 'TOEIC', 'Autre'];
+/**
+ * Listes exposées au formulaire : dérivées du vocabulaire partagé de
+ * `src/config.js`, dont `scripts/appwrite-spec.js` tire les `enum` de la table
+ * `profiles`. Les deux bords ne peuvent plus diverger (test dédié).
+ */
+export const PROMOTIONS = PROFILE_PROMOTIONS;
+export const FILIERES = PROFILE_FILIERES;
 
 function authError(error, fallback) {
   return new Error(describeAppwriteError(error, fallback));

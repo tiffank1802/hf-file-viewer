@@ -125,6 +125,21 @@ export const FEATURED_SPACES = [
   },
 ];
 
+/**
+ * Vocabulaire du profil étudiant — source unique des listes `enum`.
+ *
+ * `scripts/appwrite-spec.js` en déduit les colonnes `enum` de la table
+ * `profiles`, et `tests/appwrite-profile-vocabulary.test.js` échoue si l'UI
+ * propose une valeur que la table refuserait (ou l'inverse). Une `<select>`
+ * qui diverge d'un `enum` Appwrite se paie en `invalid_enum_value` au premier
+ * enregistrement — un refus du serveur, que rien dans le code client annonçait.
+ *
+ * « TOEIC » est une préparation, pas une filière : c'est un chemin de
+ * navigation (voir SIDE_LINKS), pas une valeur de profil.
+ */
+export const PROFILE_PROMOTIONS = ['3A', '4A', '5A', 'Alumni', 'Staff'];
+export const PROFILE_FILIERES = ['GM', 'GC', 'GP', 'Autre'];
+
 export const SIDE_LINKS = [
   { label: 'Accueil', path: '', icon: 'home' },
   { label: 'Génie mécanique', path: 'GM', icon: 'settings' },

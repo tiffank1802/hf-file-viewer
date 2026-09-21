@@ -12,13 +12,14 @@
  *   APPWRITE_API_KEY="***" npm run appwrite:setup          # provisioning
  *   npm run appwrite:status                                # contrôle après run
  *   node scripts/appwrite-setup.mjs --flavor=databases     # force l'API 1.x
+ *   node scripts/appwrite-setup.mjs --fix-enums            # réaligne les colonnes enum
  *   node scripts/appwrite-setup.mjs --drop                 # retire les tables
  *
  * La clé serveur ne doit JAMAIS être commitée ni porter un préfixe VITE_.
  */
 import { APPWRITE_API_BASE, APPWRITE_PROJECT_ID } from '../src/config.js';
 import { looksLikeAppwriteResponse, normalizeAppwriteEndpoint } from '../src/utils/appwriteEndpoint.js';
-import { SPECS, TABLES, buildPlan } from './appwrite-spec.js';
+import { SPECS, TABLES, buildPlan, enumColumns, enumDrift } from './appwrite-spec.js';
 
 const argv = process.argv.slice(2);
 const flags = new Set(argv.filter((a) => a.startsWith('--') && !a.includes('=')));
@@ -31,6 +32,7 @@ const DRY_RUN = flags.has('--dry-run');
 const DROP = flags.has('--drop');
 const PING = flags.has('--ping');
 const STATUS = flags.has('--status');
+const FIX_ENUMS = flags.has('--fix-enums');
 const DIAGNOSE = flags.has('--diagnose');
 const VERBOSE = flags.has('--verbose');
 const TIMEOUT_MS = Number(process.env.APPWRITE_TIMEOUT_MS || 30_000);
@@ -295,6 +297,32 @@ async function status() {
   for (const op of plan.filter((item) => item.group === 'permissions')) {
     console.log(`  ${op.parent} : permissions ${JSON.stringify(op.body.permissions)}`);
   }
+  const drifts = await enumDriftReport();
+  if (drifts) console.log(`  ${drifts} colonne(s) enum à réaligner avec --fix-enums`);
+}
+
+/** Les colonnes `enum` de la base sont-elles encore alignées sur le modèle ? */
+async function enumDriftReport({ fix = false } = {}) {
+  const spec = SPECS[FLAVOR];
+  let drifts = 0;
+  for (const { table, column } of enumColumns(TABLES)) {
+    const row = await request('GET', spec.tablePath(DATABASE_ID, table)).catch(() => null);
+    if (!row) continue;
+    const live = (row.columns ?? row.attributes ?? []).find((item) => (item.key ?? item.$id) === column.key);
+    const drift = enumDrift(column, live);
+    if (!drift) continue;
+    drifts += 1;
+    console.log(`  ! ${table.id}.${column.key} : en base [${(live.elements ?? live.enum ?? []).join(', ')}], prévu [${column.elements.join(', ')}]`);
+    if (!fix || DRY_RUN) {
+      console.log(`    → node scripts/appwrite-setup.mjs --fix-enums`);
+      continue;
+    }
+    const target = spec.enumElements(DATABASE_ID, table, column);
+    await request('PUT', target.path, target.body)
+      .then(() => console.log(`    ✓ ${table.id}.${column.key} — éléments réalignés`))
+      .catch((error) => console.warn(`    ✗ ${table.id}.${column.key} — ${explain(error).split('\n')[0]}`));
+  }
+  return drifts;
 }
 
 async function drop() {
@@ -330,6 +358,11 @@ async function main() {
 
   if (STATUS) return status();
   if (DROP) return drop();
+  if (FIX_ENUMS) {
+    const drifts = await enumDriftReport({ fix: true });
+    console.log(drifts ? `${drifts} colonne(s) traitée(s).` : 'Aucune dérive : les enums de la base matchent le modèle.');
+    return;
+  }
 
   const plan = buildPlan({ spec, databaseId: DATABASE_ID });
   const databaseOp = plan[0];
@@ -352,6 +385,13 @@ async function main() {
     }
     await ensure(op.get, op.post, op.body, op.label);
   }
+
+  // `ensure()` ne fait que créer ce qui manque : une table déjà présente avec un
+  // enum périmé (filière ajoutée après coup) garderait sa vieille liste, et le
+  // formulaire enverrait une valeur refusée. On la signale ici, au moment où
+  // l'utilisateur vient justement de faire évoluer le modèle.
+  const drifts = await enumDriftReport();
+  if (drifts) console.log(`\n${drifts} colonne(s) enum divergente(s) — relance avec --fix-enums.`);
 
   console.log([
     '',

@@ -7,7 +7,14 @@
  * rejeté par Appwrite comme UID invalide — exactement le plantage rencontré.
  */
 
-/** Rôles Appwrite, au format littéral attendu par l'API. */
+import { PROFILE_FILIERES, PROFILE_PROMOTIONS } from '../src/config.js';
+
+/**
+ * Rôles Appwrite, au format littéral attendu par l'API.
+ *
+ * Les `enum` de `profiles` viennent de `src/config.js` (PROFILE_PROMOTIONS,
+ * PROFILE_FILIERES) : le formulaire et la table partagent une seule liste.
+ */
 export const ROLE_USERS = 'users';
 export const ROLE_USERS_VERIFIED = 'users/verified';
 
@@ -21,8 +28,8 @@ export const TABLES = [
     columns: [
       { type: 'string', key: 'userId', size: 36, required: true },
       { type: 'string', key: 'displayName', size: 128, required: true, default: '' },
-      { type: 'enum', key: 'promotion', elements: ['3A', '4A', '5A', 'Alumni', 'Staff'], required: true, default: '3A' },
-      { type: 'enum', key: 'filiere', elements: ['GM', 'GC', 'GP','Autre'], required: true, default: 'GM' },
+      { type: 'enum', key: 'promotion', elements: [...PROFILE_PROMOTIONS], required: true, default: PROFILE_PROMOTIONS[0] },
+      { type: 'enum', key: 'filiere', elements: [...PROFILE_FILIERES], required: true, default: PROFILE_FILIERES[0] },
       { type: 'string', key: 'bio', size: 280, required: false, default: '' },
       { type: 'boolean', key: 'emailVerified', required: true, default: false },
       { type: 'datetime', key: 'lastSeenAt', required: false },
@@ -55,7 +62,14 @@ export const TABLES = [
   },
 ];
 
-/** Une « table » (2.x) et une « collection » (1.x) sont le même objet. */
+/**
+ * Une « table » (2.x) et une « collection » (1.x) sont le même objet.
+ *
+ * `ensure()` ne fait que créer ce qui manque : une colonne déjà présente avec un
+ * `enum` périmé (filière ajoutée après coup, par exemple) resterait fausse, et
+ * le serveur refuserait la valeur du formulaire. `enumDrift()` compare la
+ * déclaration aux éléments réellement stockés, `--fix-enums` les réaligne.
+ */
 export const SPECS = {
   tablesdb: {
     label: 'TablesDB (API 2.x)',
@@ -76,6 +90,10 @@ export const SPECS = {
       body: { key: column.key, ...omit(column, 'type') },
     }),
     columnPath: (db, table, column) => `/tablesdb/${db}/tables/${table.id}/columns/${column.key}`,
+    enumElements: (db, table, column) => ({
+      path: `/tablesdb/${db}/tables/${table.id}/columns/enum/${column.key}/elements`,
+      body: { elements: [...column.elements] },
+    }),
     index: (db, table, index) => ({
       path: `/tablesdb/${db}/tables/${table.id}/indexes`,
       body: { key: index.key, type: index.type, columns: index.columns },
@@ -110,6 +128,10 @@ export const SPECS = {
       body: { key: column.key, ...omit(column, 'type') },
     }),
     columnPath: (db, table, column) => `/databases/${db}/collections/${table.id}/attributes/${column.key}`,
+    enumElements: (db, table, column) => ({
+      path: `/databases/${db}/collections/${table.id}/attributes/enum/${column.key}/elements`,
+      body: { elements: [...column.elements] },
+    }),
     index: (db, table, index) => ({
       path: `/databases/${db}/collections/${table.id}/indexes/${index.type}`,
       body: { key: index.key, attributes: index.columns },
@@ -179,6 +201,30 @@ export function buildPlan({ spec, databaseId, tables = TABLES }) {
   }
 
   return operations;
+}
+
+/** Toutes les colonnes `enum` du modèle, avec leur table. */
+export function enumColumns(tables = TABLES) {
+  const out = [];
+  for (const table of tables) {
+    for (const column of table.columns.filter((item) => item.type === 'enum')) out.push({ table, column });
+  }
+  return out;
+}
+
+/** Éléments d'enum renvoyés par l'API (formes 2.x `elements`, 1.x `enum`). */
+export function liveEnumElements(column) {
+  const found = column?.elements ?? column?.enum ?? column?.data?.elements;
+  return Array.isArray(found) ? found : null;
+}
+
+/** `{ missing: [...], extra: [...] }` entre la déclaration et la base. */
+export function enumDrift(declared, live) {
+  const actual = liveEnumElements(live);
+  if (!actual) return null;
+  const missing = declared.elements.filter((element) => !actual.includes(element));
+  const extra = actual.filter((element) => !declared.elements.includes(element));
+  return missing.length || extra.length ? { missing, extra } : null;
 }
 
 /** UID Appwrite : 36 caractères max, sans underscore initial, [a-zA-Z0-9_.-]. */

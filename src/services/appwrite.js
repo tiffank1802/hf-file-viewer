@@ -195,6 +195,9 @@ const FRENCH_ERRORS = {
   invalid_origin: 'Origine non autorisée : ajoute ce domaine dans Settings → Domains & Platforms de la console Appwrite.',
   user_unauthorized: 'Permission refusée par Appwrite : ce compte n’a pas accès à cette donnée.',
   table_not_found: 'Table absente du projet : relance npm run appwrite:setup.',
+  // Liste de l'UI et `enum` de la table ne sont plus les mêmes : le serveur seul
+  // le sait. Le provisioning réaligne la colonne (`--fix-enums`).
+  invalid_enum_value: 'Valeur refusée par le projet : la liste des filières ou des promotions a changé. Redéploie le provisioning (node scripts/appwrite-setup.mjs --fix-enums).',
   collection_not_found: 'Collection absente du projet : relance npm run appwrite:setup.',
 };
 
