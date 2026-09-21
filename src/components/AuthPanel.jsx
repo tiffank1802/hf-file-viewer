@@ -47,6 +47,23 @@ function Field({ label, hint, error, children, htmlFor }) {
   );
 }
 
+/**
+ * États de la synchro des favoris. Le compte est la seule source : il n'y a plus
+ * de « local » ni de « hors ligne » — une écriture qui échoue se dit, pas un
+ * favori gardé en secret dans le navigateur.
+ */
+const FAVORITE_STATES = {
+  anonymous: 'hors compte',
+  disabled: 'non configuré',
+  loading: 'lecture…',
+  synced: 'à jour',
+  unprovisioned: 'table absente',
+  forbidden: 'accès refusé',
+  'read-failed': 'illisibles',
+  'write-failed': 'non enregistré',
+  import: 'reprise en cours',
+};
+
 export default function AuthPanel({ open, mode = 'signin', onModeChange, onClose, favorites }) {
   const auth = useAuth();
   const [form, setForm] = useState({
@@ -344,7 +361,7 @@ export default function AuthPanel({ open, mode = 'signin', onModeChange, onClose
               <div className="auth-sync">
                 <span>
                   Favoris&nbsp;: {favorites.items.length} · état&nbsp;
-                  <strong>{{ local: 'local', loading: 'synchronisation…', synced: 'à jour', partial: 'partiel', offline: 'hors ligne', unprovisioned: 'table absente', forbidden: 'permission refusée' }[favorites.sync.state] || favorites.sync.state}</strong>
+                  <strong>{FAVORITE_STATES[favorites.sync.state] || favorites.sync.state}</strong>
                   {favorites.sync.lastSyncAt ? ` · ${new Date(favorites.sync.lastSyncAt).toLocaleTimeString('fr-FR')}` : ''}
                   {favorites.sync.error ? ` · ${favorites.sync.error}` : ''}
                 </span>

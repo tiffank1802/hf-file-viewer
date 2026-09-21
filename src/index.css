@@ -902,6 +902,15 @@
   .auth-sync { display: grid; gap: 8px; padding: 12px 13px; border-radius: var(--radius-md); background: rgba(20, 37, 31, 0.04); color: var(--ink-soft); font-size: 0.7rem; line-height: 1.5; }
   .auth-sync > span { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .auth-sync strong { color: var(--green-dark); }
+
+  /* Bandeau « une écriture de favori a été refusée » — le compte est la seule
+     source des favoris, donc l'échec doit se voir là où l'on a cliqué. */
+  .favorites-alert { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 14px; margin: 0 0 14px; padding: 10px 13px; border: 1px solid rgba(198, 60, 50, 0.35); border-radius: var(--radius-md); background: rgba(198, 60, 50, 0.07); color: var(--ink); font-size: 0.74rem; line-height: 1.5; }
+  .favorites-alert p { margin: 0; }
+  .favorites-alert strong { color: var(--red); }
+  .favorites-alert-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .favorites-alert-actions button { padding: 5px 10px; border: 1px solid rgba(20, 37, 31, 0.18); border-radius: 999px; background: rgba(255, 255, 255, 0.65); color: var(--ink-soft); font: inherit; font-size: 0.7rem; cursor: pointer; }
+  .favorites-alert-actions button:hover { border-color: var(--green-dark); color: var(--green-dark); }
   .auth-advanced { display: grid; gap: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
   .auth-advanced summary { cursor: pointer; color: var(--green-dark); font-size: 0.74rem; font-weight: 800; }
   .auth-actions { display: flex; flex-wrap: wrap; gap: 8px; }

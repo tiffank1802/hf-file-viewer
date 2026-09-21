@@ -275,28 +275,33 @@ rechargement de page → session conservée ; déconnexion → `account.deleteSe
 
 ---
 
-## 5. Phase 3 — Favoris synchronisés (migration du `localStorage`)
+## 5. Phase 3 — Favoris synchronisés (le compte comme source unique)
 
-Le site stocke déjà les favoris sous la clé `enise-docs:favorites`
-(`src/App.jsx`, `useLocalStorage`). On remplace progressivement ce stockage par la table
-`favorites`, sans casser le mode hors connexion.
+Le site stockait les favoris sous la clé `enise-docs:favorites` (`useLocalStorage`).
+**Ce stockage est supprimé en tant que source** : la table `favorites` est la seule
+vérité, et le navigateur ne sert plus qu'à vider une fois ce que la version antérieure y
+avait laissé. Choix arbitré (demande explicite) : la disponibilité hors ligne des favoris
+est sacrifiée plutôt que de maintenir deux copies à réconcilier.
 
-1. `src/services/favorites.js` : `listFavorites()`, `addFavorite(item)`, `removeFavorite(path)`,
-   `setFavoriteNote(path, note)` — tous en **optimiste** (state local d'abord, écriture ensuite,
-   retour arrière en cas d'échec + `toast` discret).
-1bis. **Le cache local est la file d'attente**, pas un niveau de présentation :
-   `planReconcile({ cloudUnavailable })` pousse les entrées locales même quand la lecture
-   du cloud a échoué (403 de permission, réseau), et ne décrète aucune suppression dans ce
-   cas — pas de vue du cloud, pas de droit de détruire. L'index unique rend l'opération
-   rejouable, donc aucun troisième stockage « pending » n'est nécessaire.
+1. `src/services/favorites.js` : `listFavorites()`, `addFavorite(entry)`,
+   `removeFavorite({ rowId, path })`, `setFavoriteNote(userId, rowId, note)`,
+   `pushFavorites()` pour la reprise — tous en **optimiste** : état d'abord, écriture
+   ensuite, retour arrière **avec message** si Appwrite refuse. `rowId` est renvoyé à
+   l'écriture pour que le retrait n'ait pas à relister la table.
 
-2. `src/hooks/useFavorites.js` : fusionne trois sources avec la règle
-   `cloud ⊕ local − supprimés` ; hors ligne ⇒ local seul + badge « non synchronisé ».
-   Abonnement `Realtime` sur `Channel.tablesdb(APPWRITE_DATABASE_ID).table('favorites')`
-   (événements `create`/`update`/`delete`) : les permissions de ligne filtrent déjà ce que
-   l'abonné reçoit — la synchro multi-onglets et multi-appareils est gratuite.
-3. Migration à la première connexion : envoi des favoris locaux absents du cloud (`upsertRow`,
-   idempotent grâce à l'index unique), conservation de la clé locale en miroir hors ligne.
+2. `src/hooks/useFavorites.js` : `items` = lecture du compte, unie. Pas de fusion
+   `cloud ⊕ local − supprimés`, pas de tombstones — dès qu'il n'y a pas de copie locale,
+   il n'y a plus rien à réconcilier et donc plus d'incohérence possible. Rafraîchissement
+   au montage, à la reprise du réseau (`online`) et sur demande explicite ; pas
+   d'abonnement `Realtime` (non implémenté : il aurait ajouté une source de divergence
+   sans rendre le favori plus fiable).
+
+3. Reprise à sens unique : `readLegacyFavorites()` → `planImport({ cloud, legacy })` →
+   `pushFavorites()`. Les entrées déjà présentes dans le compte sont purgées du
+   navigateur, les refusées y restent **une seule** raison : ne pas les jeter avant
+   qu'elles soient en base. `drainLegacyFavorites()` supprime les deux clés dès que la
+   file est vide.
+
 4. Empreinte de chemin : `pathKey = sha256(normalize(path)).slice(0,32)` via `crypto.subtle`
    — évite de poser l'index unique sur une chaîne de 1024 caractères, dont l'encodage peut
    dépasser la taille maximale d'une clé d'index acceptée par le moteur.
@@ -445,7 +450,7 @@ ajoutée plus tard.
 | Contexte de session + restauration au chargement | `src/contexts/AuthContext.jsx`, `src/contexts/auth-context.js`, `src/hooks/useAuth.js` | ✅ |
 | Panneau de compte (connexion / inscription / mot de passe oublié / profil) | `src/components/AuthPanel.jsx` | ✅ |
 | Puce de compte dans l’en-tête + menu | `src/components/UserChip.jsx` | ✅ |
-| Favoris synchronisés + miroir local + tombstones | `src/services/favorites.js`, `src/utils/favoritesMerge.js`, `src/hooks/useFavorites.js` | ✅ code / ⏳ table `favorites` requise |
+| Favoris synchronisés, source = compte (plus de miroir local, plus de tombstones) | `src/services/favorites.js`, `src/utils/favoritesEntry.js`, `src/hooks/useFavorites.js`, `src/services/favoritesLegacy.js` | ✅ code / ⏳ table `favorites` requise |
 | Tests | `tests/appwrite-config.test.js`, `tests/appwrite-auth.test.js`, `tests/favorites-merge.test.js` | ✅ 109 tests |
 | Lint vert (globals ESLint de `client-examples/` et `scripts/*.js` ajoutés) | `eslint.config.js` | ✅ |
 | `!tests/*.test.js` dans le `.gitignore` | `.gitignore` | ✅ |

@@ -1,135 +1,147 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocalStorage } from './useLocalStorage.js';
 import {
-  FAVORITES_STORAGE_KEY,
-  FAVORITES_TOMBSTONES_KEY,
+  MAX_FAVORITE_NOTE,
+  normalizeFavorite,
   normalizeFavoriteList,
   normalizeFavoritePath,
-  planReconcile,
-  pruneTombstones,
-  withoutTombstones,
-} from '../utils/favoritesMerge.js';
+  planImport,
+} from '../utils/favoritesEntry.js';
 import {
   addFavorite,
-  deleteFavoritePaths,
+  favoritesBlockers,
   favoritesEnabled,
   listFavorites,
   pushFavorites,
   removeFavorite,
+  setFavoriteNote,
 } from '../services/favorites.js';
+import { drainLegacyFavorites, readLegacyFavorites } from '../services/favoritesLegacy.js';
 
 /**
- * Favoris du visiteur : miroir `localStorage` en permanence, synchronisation
- * Appwrite (`tables favorites`) dès qu'une session existe.
+ * Favoris du visiteur : lus et écrits **dans le compte** (table `favorites` de
+ * TablesDB), sans copie sur l'appareil. La liste vient de `listFavorites()`,
+ * chaque cœur ajouté ou retiré part tout de suite en base.
  *
- * Trois états à connaître :
- * - `'local'`        : pas de session (ou Appwrite coupé) — comportement historique, tout marche ;
- * - `'synced'`/`'partial'` : le cloud a été lu, les écarts ont été poussés ;
- * - `'offline'`      : écriture locale appliquée, reprise au prochain `retry()`
- *   (ou au retour du réseau) grâce à l'index unique et à la file de tombstones.
+ * Ce que ça change par rapport à l'ancien miroir `localStorage` : une écriture
+ * qui échoue (pas de réseau, permission `create()` refusée) est **annulée à
+ * l'écran** et annoncée, pas gardée en secret. Les états :
  *
- * Les suppressions faites hors ligne sont enregistrées comme `tombstones` pour
- * ne pas ressusciter au sync suivant.
+ * - `'anonymous'`     : pas de session — rien à lire, rien à écrire ;
+ * - `'disabled'`      : Appwrite incomplet dans ce build (database ID manquant) ;
+ * - `'loading'`       : première lecture du compte en cours ;
+ * - `'synced'`        : la liste affichée est celle du compte ;
+ * - `'unprovisioned'` : la table `favorites` n'existe pas (`npm run appwrite:setup`) ;
+ * - `'forbidden'`     : table là, accès refusé — la cause est dans `error` ;
+ * - `'read-failed'`   : lecture impossible (réseau, 500) — la liste en mémoire est
+ *   conservée, mais rien n'est inventé ni rechargé d'un cache ;
+ * - `'write-failed'`  : ajout ou retrait refusé, interface revenue en arrière ;
+ * - `'import'`        : favoris repris de l'ancien miroir pas encore tous envoyés.
  */
 export function useFavorites(user) {
   const userId = user?.$id ?? null;
-  const cloudAvailable = favoritesEnabled() && Boolean(userId);
+  const enabled = favoritesEnabled();
+  const cloudAvailable = enabled && Boolean(userId);
 
-  const [stored, setStored] = useLocalStorage(FAVORITES_STORAGE_KEY, []);
-  const [tombstones, setTombstones] = useLocalStorage(FAVORITES_TOMBSTONES_KEY, []);
-  const [syncState, setSyncState] = useState(cloudAvailable ? 'loading' : 'local');
-  const [lastSyncAt, setLastSyncAt] = useState(null);
+  const [items, setItems] = useState([]);
+  const [syncState, setSyncState] = useState('loading');
   const [syncError, setSyncError] = useState(null);
-
-  const items = useMemo(() => normalizeFavoriteList(stored), [stored]);
-  const paths = useMemo(() => items.map((item) => item.path), [items]);
-  const byPath = useMemo(() => new Map(items.map((item) => [item.path, item])), [items]);
+  // Erreur d'action : « ton geste a été refusé », à la différence de `syncError`
+  // qui décrit l'état de fond. Un visiteur sans session n'a rien à lire : sans
+  // ce canal, son clic sur un cœur ne produirait aucun retour visible.
+  const [actionError, setActionError] = useState(null);
+  const [lastSyncAt, setLastSyncAt] = useState(null);
 
   const itemsRef = useRef(items);
-  const tombstonesRef = useRef(tombstones);
   const busyRef = useRef(false);
 
   useEffect(() => { itemsRef.current = items; }, [items]);
-  useEffect(() => { tombstonesRef.current = pruneTombstones(tombstones); }, [tombstones]);
+
+  // Changer de compte = repartir de la liste du compte : rien n'est conservé ici.
+  useEffect(() => {
+    setItems([]);
+    setSyncError(null);
+    setActionError(null);
+    if (cloudAvailable) {
+      setSyncState('loading');
+      return;
+    }
+    const reasons = favoritesBlockers(userId);
+    setSyncState(enabled ? 'anonymous' : 'disabled');
+    setSyncError(reasons.length ? reasons.join(' · ') : null);
+  }, [cloudAvailable, enabled, userId]);
 
   const sync = useCallback(async () => {
     if (!cloudAvailable || busyRef.current) return;
     busyRef.current = true;
     setSyncState('loading');
     setSyncError(null);
+    // Une relance efface la trace du geste refusé : sinon le bandeau resterait
+    // après que « Réessayer » a fonctionné.
+    setActionError(null);
     try {
-      // Étape 1 : lire le cloud. Un échec ici n'EST PAS un motif d'abandon —
-      // voir `planReconcile` : les favoris locaux doivent quand même partir,
-      // sinon une table un temps sans permission reste vide pour toujours.
-      let cloud = null;
-      let unreadable = false;
-      let detail = null;
+      let listed;
       try {
-        const listed = await listFavorites(userId);
-        if (listed === null) {
-          // Table absente du projet : ni lecture possible, ni écriture utile.
-          setSyncState('unprovisioned');
-          return;
-        }
-        cloud = listed;
+        listed = await listFavorites(userId);
       } catch (error) {
-        unreadable = true;
-        detail = error?.message || 'Favoris illisibles pour le moment.';
+        // Pas de filet local : une lecture qui échoue se voit, et la liste déjà
+        // affichée reste en mémoire telle quelle (aucun cache à ressasser).
+        setSyncState(error?.forbidden ? 'forbidden' : 'read-failed');
+        setSyncError(error?.message || 'Lecture des favoris impossible.');
+        return;
+      }
+      if (listed === null) {
+        setItems([]);
+        setSyncState('unprovisioned');
+        setSyncError('La table `favorites` est absente de ce projet : relance `npm run appwrite:setup`.');
+        return;
       }
 
-      const plan = planReconcile({
-        cloud,
-        local: itemsRef.current,
-        tombstones: tombstonesRef.current,
-        cloudUnavailable: unreadable,
-      });
+      let cloud = normalizeFavoriteList(listed);
 
-      // Étape 2 : écrire les écarts. L'index unique rend l'opération rejouable.
-      const [pushResult, deleteResult] = await Promise.allSettled([
-        pushFavorites(userId, plan.pending),
-        plan.toDelete.length
-          ? deleteFavoritePaths(userId, plan.toDelete)
-          : Promise.resolve({ deleted: 0, failed: [] }),
-      ]);
-      const pushed = pushResult.status === 'fulfilled'
-        ? pushResult.value
-        : { pushed: 0, failed: plan.pending.map((entry) => ({ path: entry.path, reason: 'écriture interrompue.' })), saved: [] };
-      const removed = deleteResult.status === 'fulfilled'
-        ? deleteResult.value
-        : { deleted: 0, failed: plan.toDelete };
+      // Une fois : récupérer ce que l'ancien miroir `localStorage` a laissé de côté.
+      const legacy = readLegacyFavorites();
+      const plan = planImport({ cloud, legacy });
+      let remaining = [];
+      let importBlocked = null;
+      let importReason = null;
+      if (plan.pending.length) {
+        const pushed = await pushFavorites(userId, plan.pending);
+        if (pushed.blockers?.length) {
+          // Rien n'a pu être tenté : on ne vide pas la file d'import pour autant,
+          // ces favoris-là partiraient dans le vide.
+          importBlocked = pushed.blockers.join(' ');
+        } else {
+          cloud = normalizeFavoriteList([...cloud, ...pushed.saved]);
+          const failed = new Set(pushed.failed.map((item) => normalizeFavoritePath(item.path)));
+          remaining = plan.pending.filter((entry) => failed.has(entry.path));
+          importReason = pushed.failed[0]?.reason || 'écriture refusée.';
+        }
+      }
+      if (legacy.length && !importBlocked) drainLegacyFavorites(remaining);
 
-      // Étape 3 : le miroir local récupère les `rowId` renvoyés par Appwrite —
-      // une suppression directe plutôt qu'un relistage à chaque cœur retiré.
-      const enriched = new Map((pushed.saved ?? []).map((entry) => [entry.path, entry]));
-      setStored(plan.items.map((entry) => enriched.get(entry.path) ?? entry));
-      setTombstones((current) =>
-        withoutTombstones(current, plan.toDelete.filter((path) => !removed.failed.includes(path))),
-      );
+      setItems(cloud);
       setLastSyncAt(Date.now());
-
-      const residual = pushed.failed.length + removed.failed.length;
-      if (unreadable) {
-        setSyncState(pushed.pushed ? 'partial' : 'forbidden');
-        setSyncError(`${detail}${pushed.pushed ? ` · ${pushed.pushed} favori(s) tout de même enregistré(s).` : ''}`);
-      } else if (residual) {
-        setSyncState('partial');
-        setSyncError(`${residual} favori(s) non enregistré(s) : ${pushed.failed[0]?.reason || 'écriture refusée par Appwrite.'}`);
+      if (importBlocked) {
+        setSyncState('import');
+        setSyncError(`Reprise de l’ancien cache suspendue : ${importBlocked}`);
+      } else if (remaining.length) {
+        setSyncState('import');
+        setSyncError(
+          `${remaining.length} favori(s) repris de ce navigateur n’ont pas rejoint le compte : ${importReason}`,
+        );
       } else {
         setSyncState('synced');
       }
     } catch (error) {
-      setSyncState('offline');
-      setSyncError(error?.message || 'Favoris non synchronisés pour le moment.');
+      setSyncState('read-failed');
+      setSyncError(error?.message || 'Synchronisation des favoris interrompue.');
     } finally {
       busyRef.current = false;
     }
-  }, [cloudAvailable, setStored, setTombstones, userId]);
+  }, [cloudAvailable, userId]);
 
   useEffect(() => {
-    if (!cloudAvailable) {
-      setSyncState('local');
-      return undefined;
-    }
+    if (!cloudAvailable) return undefined;
     void sync();
     const onOnline = () => void sync();
     window.addEventListener('online', onOnline);
@@ -141,53 +153,90 @@ export function useFavorites(user) {
     if (!path) return;
     const known = itemsRef.current.find((item) => item.path === path);
 
-    setStored((current) => {
-      const list = Array.isArray(current) ? current.filter((item) => item && typeof item === 'object') : [];
-      if (known) return list.filter((item) => normalizeFavoritePath(item.path) !== path);
-      return [...list, { ...entry, path }];
-    });
-
-    if (known) {
-      setTombstones((current) => pruneTombstones([...(Array.isArray(current) ? current : []), path]));
+    if (!cloudAvailable) {
+      setSyncState(enabled ? 'anonymous' : 'disabled');
+      setActionError(
+        known
+          ? 'Connecte-toi pour retirer un favori : la liste vit dans le compte.'
+          : 'Connecte-toi pour épingler : rien n’est gardé sur cet appareil.',
+      );
+      return;
     }
-
-    if (!cloudAvailable) return;
+    setActionError(null);
 
     if (known) {
+      setItems((current) => current.filter((item) => item.path !== path));
       removeFavorite(userId, { rowId: known.rowId, path })
         .then((done) => {
-          if (done) setTombstones((current) => withoutTombstones(current, [path]));
+          if (!done) throw new Error('Ligne introuvable dans le compte : retire le favori puis re-épingle-le.');
+          setLastSyncAt(Date.now());
         })
         .catch((error) => {
-          setSyncState('offline');
-          setSyncError(error?.message || 'Suppression à rejouer au prochain sync.');
+          // Aucun « à rejouer plus tard » : l'anneau revient, et on le dit.
+          setItems((current) => (
+            current.some((item) => item.path === path) ? current : [known, ...current]
+          ));
+          setSyncState('write-failed');
+          setActionError(error?.message || 'Suppression refusée par Appwrite.');
         });
       return;
     }
 
-    addFavorite(userId, { ...entry, path })
+    const draft = normalizeFavorite({ ...entry, path });
+    setItems((current) => (current.some((item) => item.path === path) ? current : [...current, draft]));
+    addFavorite(userId, draft)
       .then((saved) => {
+        setItems((current) => current.map((item) => (item.path === path ? { ...item, ...(saved ?? {}) } : item)));
         setLastSyncAt(Date.now());
-        if (saved?.rowId) {
-          setStored((current) => (Array.isArray(current) ? current : []).map((item) => (
-            item && normalizeFavoritePath(item.path) === path ? { ...item, rowId: saved.rowId } : item
-          )));
-        }
+        setSyncState('synced');
+        setActionError(null);
       })
       .catch((error) => {
-        // Le favori reste visible hors ligne et partira à la prochaine synchro.
-        setSyncState('offline');
-        setSyncError(error?.message || 'Ajout à rejouer au prochain sync.');
+        setItems((current) => current.filter((item) => item.path !== path));
+        setSyncState('write-failed');
+        setActionError(error?.message || 'Enregistrement du favori refusé par Appwrite.');
       });
-  }, [cloudAvailable, setStored, setTombstones, userId]);
+  }, [cloudAvailable, enabled, userId]);
 
-  const isFavorite = useCallback((path) => byPath.has(normalizeFavoritePath(path)), [byPath]);
+  /** Note d'un favori : modifiée en base, annulée à l'écran si le compte refuse. */
+  const setNote = useCallback(async (path, note) => {
+    const target = itemsRef.current.find((item) => item.path === normalizeFavoritePath(path));
+    if (!target) return;
+    if (!target.rowId) {
+      setSyncState('write-failed');
+      setActionError('Ce favori n’a pas de ligne dans le compte : retire-le et re-épingle-le.');
+      return;
+    }
+    const next = String(note ?? '').slice(0, MAX_FAVORITE_NOTE);
+    const previous = target.note ?? '';
+    setItems((current) => current.map((item) => (item.path === target.path ? { ...item, note: next } : item)));
+    try {
+      await setFavoriteNote(userId, target.rowId, next);
+      setLastSyncAt(Date.now());
+    } catch (error) {
+      setItems((current) => current.map((item) => (item.path === target.path ? { ...item, note: previous } : item)));
+      setSyncState('write-failed');
+      setActionError(error?.message || 'Note non enregistrée.');
+    }
+  }, [userId]);
+
+  const isFavorite = useCallback((path) => items.some((item) => item.path === normalizeFavoritePath(path)), [items]);
+  const paths = useMemo(() => items.map((item) => item.path), [items]);
 
   return {
     items,
     paths,
     toggle,
+    setNote,
     isFavorite,
-    sync: { state: syncState, lastSyncAt, error: syncError, retry: sync, enabled: cloudAvailable },
+    sync: {
+      state: syncState,
+      lastSyncAt,
+      error: syncError,
+      actionError,
+      clearActionError: () => setActionError(null),
+      retry: sync,
+      enabled: cloudAvailable,
+    },
   };
 }

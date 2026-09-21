@@ -11,7 +11,7 @@ Bibliothèque étudiante moderne pour les ressources de **Centrale Lyon ENISE**,
 - aperçu PDF, image, audio, vidéo, texte et **visionneuse Office hybride** : rendu local (`.docx`, `.xlsx`/`.xls`, texte `.pptx`), conversion PDF serveur (LibreOffice) et **Viewer Office Web** (`.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`, `.odt`, `.ods`, `.odp`, ≤ 10 Mo) ;
 - raccourcis **Microsoft OneNote** (`.url`) affichés avec leur cible ouvrable, blocs-notes `.one` disponibles au téléchargement ;
 - aperçu 3D hybride : conversion **GLB gratuite** (FreeCAD) pour `.step`, `.iges`, `.stl`, `.obj` avec rotation, zoom et déplacement, **Autodesk APS** (Model Derivative) pour les autres formats (`.dwg`, `.rvt`, `.sldprt`, `.ifc`, `.catpart`, … — FreeCAD ne lit pas les formats propriétaires), et plugin iframe **ShareCAD** en roue de secours gratuite sans conversion ;
-- téléchargement, partage et favoris enregistrés dans le navigateur ;
+- téléchargement et partage enregistrés dans le navigateur, **favoris synchronisés sur le compte** (rien en local) ;
 - recherche globale à partir d’un index Hugging Face mis en cache ;
 - effectifs par dossier calculés **une seule fois à l’indexation** et stockés dans le JSON d’index ;
 - Worker Cloudflare servant à la fois les assets statiques et l’API proxy ;
@@ -445,19 +445,23 @@ Le frontend est branché sur le projet Appwrite **Django objects**
   profil (table `profiles`) ;
 - `src/components/AuthPanel.jsx` (panneau de compte) et `src/components/UserChip.jsx`
   (puce d’en-tête) ;
-- `src/services/favorites.js`, `src/hooks/useFavorites.js`, `src/utils/favoritesMerge.js` :
-  favoris synchronisés dans la table `favorites`. **Le miroir `localStorage` est la file
-  d'attente**, pas un simple cache : une écriture refusée (permission, réseau, 403) est
-  repoussée à la synchro suivante, l'index unique `(userId, pathKey)` rendant chaque
-  réessai inoffensif ; et une lecture impossible n'annule jamais l'envoi (`planReconcile`
-  mode dégradé), sinon un compte resté localement ne rattraperait jamais le cloud. Les
-  suppressions passent par une file de tombstones. L'état de synchro est lisible
-  (Paramètres → Compte → Favoris) : `local`, `à jour`, `partiel`, `hors ligne`,
-  `table absente` ou `permission refusée` — ce dernier nomme la cause, parce qu'une table
+- `src/services/favorites.js`, `src/hooks/useFavorites.js`, `src/utils/favoritesEntry.js`,
+  `src/services/favoritesLegacy.js` : **les favoris vivent dans le compte**, dans la table
+  `favorites`. Rien n'est écrit dans `localStorage` : la liste vient de `listFavorites()`,
+  un cœur ajouté ou retiré part immédiatement en base, et si Appwrite refuse l'écriture
+  (réseau, permission `create()` absente) l'interface **revient en arrière et le dit** —
+  un favori que l'on croit épinglé et qui ne l'est pas est le pire des résultats. Seule
+  entorse, à sens unique et auto-liquidée : `favoritesLegacy.js` draine une fois la clé
+  `enise-docs:favorites` laissée par l'ancien miroir (les entrées déjà dans le compte sont
+  purgées, les refusées repartent à la synchro suivante, puis la clé est supprimée).
+  L'état de synchro est lisible (Paramètres → Compte → Favoris) : `hors compte`,
+  `non configuré`, `à jour`, `table absente`, `accès refusé`, `illisibles`,
+  `non enregistré`, `reprise en cours` — « accès refusé » nomme la cause, parce qu'une table
   sans `create()` laisse l'interface parfaitement crédible pendant que la base reste vide.
   Un favori porte aussi le `kind` du renderer (`pdf`, `office`, `model`…) dérivé du chemin :
   la table, elle, stocke `file`/`folder`, et sans ce champ l'ouverture depuis les favoris
   retombait sur l'écran de téléchargement ;
+
 - `scripts/appwrite-setup.mjs` : provisioning idempotent de la base et des deux tables.
 
 ```bash

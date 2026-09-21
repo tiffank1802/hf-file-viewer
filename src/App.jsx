@@ -36,6 +36,14 @@ export default function App() {
   const closePreview = useCallback(() => setSelectedFile(null), []);
 
   const toggleFavorite = favorites.toggle;
+
+  // Une écriture de favori refusée ne doit pas rester muette : le compte est la
+  // seule source, donc un cœur qui revient en arrière s'explique à l'écran.
+  const favoritesAlert = favorites.sync.actionError
+    || (['write-failed', 'forbidden', 'read-failed', 'unprovisioned', 'import']
+      .includes(favorites.sync.state) ? favorites.sync.error : null);
+  const favoritesAlertKey = favoritesAlert ? `${favorites.sync.state}::${favoritesAlert}` : null;
+  const [dismissedAlertKey, setDismissedAlertKey] = useState(null);
   const openAuth = useCallback((mode = 'signin') => setAuthPanel({ open: true, mode }), []);
   const closeAuth = useCallback(() => setAuthPanel((current) => ({ ...current, open: false })), []);
 
@@ -77,6 +85,18 @@ export default function App() {
       />
 
       <main id="main-content">
+        {favoritesAlertKey && favoritesAlertKey !== dismissedAlertKey && (
+          <div className="favorites-alert" role="alert">
+            <p>
+              <strong>Favoris&nbsp;:</strong> {favoritesAlert}
+            </p>
+            <span className="favorites-alert-actions">
+              <button type="button" onClick={() => void favorites.sync.retry()}>Réessayer</button>
+              <button type="button" onClick={() => openAuth('profile')}>Voir le compte</button>
+              <button type="button" aria-label="Masquer cet avertissement" onClick={() => { favorites.sync.clearActionError(); setDismissedAlertKey(favoritesAlertKey); }}>×&nbsp;<span className="sr-only">fermer</span></button>
+            </span>
+          </div>
+        )}
         {library.path === '' && (
           <>
             <Hero onOpenSearch={() => openSearch('search')} navigate={library.navigate} catalog={catalog} />

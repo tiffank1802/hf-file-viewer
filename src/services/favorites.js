@@ -14,10 +14,15 @@ import {
   normalizeFavorite,
   normalizeFavoriteList,
   normalizeFavoritePath,
-} from '../utils/favoritesMerge.js';
+} from '../utils/favoritesEntry.js';
 
 /**
- * Favoris synchronisés dans la table `favorites` (TablesDB).
+ * Favoris du compte, dans la table `favorites` (TablesDB).
+ *
+ * Source unique : l'appelant (`useFavorites`) ne garde rien d'autre. Une écriture
+ * qui échoue remonte donc en erreur à l'interface — il n'y a plus de miroir local
+ * où se réfugier, et c'est voulu : un favori que l'on croit épinglé et qui ne
+ * l'est pas dans le compte est le pire des résultats.
  *
  * Une ligne = un (utilisateur, chemin). Les permissions sont posées à
  * l'écriture sur le seul propriétaire : un autre compte connecté ne voit ni ne
@@ -47,7 +52,7 @@ export function favoritesBlockers(userId) {
   const reasons = [];
   if (!APPWRITE_ENABLED) reasons.push('endpoint ou ID de projet absent de ce build.');
   if (!hasDatabase()) reasons.push('VITE_APPWRITE_DATABASE_ID vide dans ce build (redémarre le serveur après l’avoir mis dans .env.local).');
-  if (!userId) reasons.push('aucune session : les favoris restent locaux, c’est voulu.');
+  if (!userId) reasons.push('aucune session : les favoris ne sont ni lus ni écrits (ils vivent dans le compte).');
   return reasons;
 }
 
@@ -77,7 +82,8 @@ export async function listFavorites(userId) {
     });
     return (Array.isArray(result.rows) ? result.rows : []).map(favoriteFromRow).filter(Boolean);
   } catch (error) {
-    // Table absente du projet : le site retombe sur le miroir local, sans bruit.
+    // Table absente du projet : rien à lire du tout — l'appelant doit le dire
+    // (`unprovisioned`), un liste vide se lirait comme « aucun favori ».
     if (isMissingRow(error) || error?.type === 'table_not_found' || error?.type === 'collection_not_found') return null;
     // 403, lui, n'est PAS « non provisionné » : la table existe, c'est sa
     // permission d'accès qui manque. Le taire, c'est laisser l'app croire que
@@ -178,19 +184,4 @@ export async function pushFavorites(userId, entries) {
     });
   }
   return { pushed, failed, saved, blockers };
-}
-
-/** Supprime côté cloud les chemins attendus par la file de suppressions locales. */
-export async function deleteFavoritePaths(userId, paths) {
-  if (!favoritesEnabled() || !userId || !paths?.length) return { deleted: 0, failed: [] };
-  const cloud = (await listFavorites(userId)) || [];
-  const wanted = new Set(paths.map(normalizeFavoritePath));
-  const targets = cloud.filter((row) => wanted.has(normalizeFavoritePath(row.path)));
-  const results = await Promise.allSettled(
-    targets.map((row) => rows.remove({ tableId: FAVORITES_TABLE_ID, rowId: row.rowId })),
-  );
-  const deleted = results.filter((r) => r.status === 'fulfilled').length;
-  const failed = targets.filter((row, index) => results[index].status === 'rejected').map((row) => row.path);
-  // Un chemin déjà absent du cloud est considéré comme supprimé.
-  return { deleted: deleted + (paths.length - targets.length), failed };
 }

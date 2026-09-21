@@ -11,13 +11,16 @@ import test from 'node:test';
  *   `unprovisioned` coupait le `push` sans message, et la table restait vide
  *   pendant que l'interface avait l'air synchronisée ;
  * - `pushFavorites` renvoyait des chemins sans la raison du refus.
+ *
+ * Le service est la source unique des favoris (plus de miroir `localStorage`) :
+ * ce qui est testé ici, c'est que chaque refus remonte avec sa raison — une
+ * écriture muette était le défaut d'origine.
  */
 process.env.VITE_APPWRITE_DATABASE_ID = 'enise_docs';
 
 const { rows } = await import('../src/services/appwrite.js');
 const {
   addFavorite,
-  deleteFavoritePaths,
   favoritesBlockers,
   listFavorites,
   pushFavorites,
@@ -83,23 +86,6 @@ test('supprimer sans connaître le rowId passe par la liste puis deleteRow', asy
   assert.equal(calls[1].args.rowId, 'row-7');
 });
 
-test('deleteFavoritePaths supprime réellement les lignes correspondantes', async () => {
-  calls.length = 0;
-  const restore = stubRows({
-    list: () => ({ rows: [cloudRow('GM/a.pdf', 'row-7'), cloudRow('GM/b.pdf', 'row-8')], total: 2 }),
-  });
-  try {
-    const result = await deleteFavoritePaths('user-1', ['GM/a.pdf', 'GM/disparu.pdf']);
-    assert.equal(result.deleted, 2, 'la ligne supprimée + le chemin déjà absent du cloud');
-    assert.deepEqual(result.failed, []);
-  } finally {
-    restore();
-  }
-  const removals = calls.filter((call) => call.name === 'remove');
-  assert.equal(removals.length, 1);
-  assert.equal(removals[0].args.rowId, 'row-7');
-});
-
 test('un 403 sur la table est nommé, pas confondu avec une table absente', async () => {
   const restore = stubRows({
     list: () => { throw Object.assign(new Error('User is not allowed to perform the action'), { code: 403, type: 'user_unauthorized' }); },
@@ -152,6 +138,9 @@ test('pushFavorites rapporte la raison du refus pour chaque favori', async () =>
 });
 
 test('favoritesBlockers nomme la session manquante, pas une panne', () => {
-  assert.deepEqual(favoritesBlockers(null), ['aucune session : les favoris restent locaux, c’est voulu.']);
+  // Le message doit dire la vérité nouvelle : plus de miroir local où se réfugier.
+  assert.match(favoritesBlockers(null)[0], /^aucune session : les favoris ne sont ni lus ni écrits/);
+  assert.doesNotMatch(favoritesBlockers(null).join(' '), /restent locaux/,
+    '« restent locaux » serait un mensonge depuis que le compte est la seule source');
   assert.deepEqual(favoritesBlockers('user-1'), []);
 });
