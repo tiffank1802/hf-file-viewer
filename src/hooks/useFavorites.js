@@ -75,7 +75,7 @@ export function useFavorites(user) {
 
       const pushed = pushResult.status === 'fulfilled'
         ? pushResult.value
-        : { pushed: 0, failed: merged.pending.map((entry) => entry.path) };
+        : { pushed: 0, failed: merged.pending.map((entry) => ({ path: entry.path, reason: 'écriture interrompue.' })) };
       const removed = deleteResult.status === 'fulfilled'
         ? deleteResult.value
         : { deleted: 0, failed: merged.toDelete };
@@ -88,9 +88,17 @@ export function useFavorites(user) {
 
       const residual = pushed.failed.length + removed.failed.length;
       setSyncState(residual ? 'partial' : 'synced');
-      if (residual) setSyncError(`${residual} modification(s) en attente de reconnexion.`);
+      if (residual) {
+        // La première raison remonte telle quelle : « 3 en attente » était vrai
+        // et parfaitement inutile quand la cause était une permission de table.
+        const reason = pushed.failed[0]?.reason || 'écriture refusée par Appwrite.';
+        setSyncError(`${residual} favori(s) non enregistré(s) : ${reason}`);
+      }
     } catch (error) {
-      setSyncState('offline');
+      // Permission refusée ≠ réseau coupé : l'état doit le dire, sinon le
+      // diagnostic part vers Appwrite alors que la table est là et bien remplie
+      // d'un `create()` qui n'a jamais été posé.
+      setSyncState(error?.forbidden ? 'forbidden' : 'offline');
       setSyncError(error?.message || 'Favoris non synchronisés pour le moment.');
     } finally {
       busyRef.current = false;

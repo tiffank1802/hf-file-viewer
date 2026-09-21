@@ -72,7 +72,11 @@ test('sans base provisionnée, aucune requête réseau n’est tentée', async (
   assert.equal(favoritesEnabled(), false);
   assert.deepEqual(await listFavorites('user-1'), []);
   assert.equal(await addFavorite('user-1', { path: 'a.pdf' }), null);
-  assert.deepEqual(await pushFavorites('user-1', [{ path: 'a.pdf' }]), { pushed: 0, failed: [] });
+  const pushed = await pushFavorites('user-1', [{ path: 'a.pdf' }]);
+  assert.deepEqual({ pushed: pushed.pushed, failed: pushed.failed }, { pushed: 0, failed: [] },
+    'fonctionnalité coupée = aucun favori inventé en « attente »');
+  // La cause est nommée, plus masquée par un compteur à zéro.
+  assert.match(pushed.blockers.join(' '), /VITE_APPWRITE_DATABASE_ID/);
   assert.equal(await readOwnProfile({ $id: 'user-1' }), null);
   assert.equal(await upsertOwnProfile({ $id: 'user-1' }, { promotion: '3A' }), null);
 });

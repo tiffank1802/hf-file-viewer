@@ -12,7 +12,16 @@ export const BUCKET_URL = `https://huggingface.co/buckets/${BUCKET_ID}`;
  * Les variables `VITE_APPWRITE_*` permettent de basculer sur un autre projet
  * (préproduction, instance self-hosted) sans toucher au code.
  */
-const appwriteEnv = typeof import.meta.env === 'object' && import.meta.env ? import.meta.env : {};
+/**
+ * `import.meta.env` dans le bundle (Vite l'injecte à la build), `process.env`
+ * sinon : les tests Node et `scripts/appwrite-setup.mjs` partagent ainsi la
+ * même source de vérité que le frontend, sans variable dupliquée.
+ * Seules les clés `VITE_` (publiques) sont lues — la règle du dépôt sur les clés
+ * API reste vérifiée par tests/appwrite-config.test.js.
+ */
+const appwriteEnv = (typeof import.meta.env === 'object' && import.meta.env)
+  || (typeof globalThis === 'object' ? globalThis.process?.env : null)
+  || {};
 
 export const APPWRITE_ENDPOINT = appwriteEnv.VITE_APPWRITE_ENDPOINT || 'https://fra.cloud.appwrite.io/v1';
 export const APPWRITE_PROJECT_ID = appwriteEnv.VITE_APPWRITE_PROJECT_ID || '69cedb12002acdd498e0';

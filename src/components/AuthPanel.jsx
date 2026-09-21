@@ -344,8 +344,9 @@ export default function AuthPanel({ open, mode = 'signin', onModeChange, onClose
               <div className="auth-sync">
                 <span>
                   Favoris&nbsp;: {favorites.items.length} · état&nbsp;
-                  <strong>{{ local: 'local', loading: 'synchronisation…', synced: 'à jour', partial: 'partiel', offline: 'hors ligne', unprovisioned: 'table absente' }[favorites.sync.state] || favorites.sync.state}</strong>
+                  <strong>{{ local: 'local', loading: 'synchronisation…', synced: 'à jour', partial: 'partiel', offline: 'hors ligne', unprovisioned: 'table absente', forbidden: 'permission refusée' }[favorites.sync.state] || favorites.sync.state}</strong>
                   {favorites.sync.lastSyncAt ? ` · ${new Date(favorites.sync.lastSyncAt).toLocaleTimeString('fr-FR')}` : ''}
+                  {favorites.sync.error ? ` · ${favorites.sync.error}` : ''}
                 </span>
                 {favorites.sync.enabled && favorites.sync.state !== 'synced' && (
                   <button type="button" className="auth-ghost" onClick={favorites.sync.retry}><FiRefreshCw aria-hidden="true" />Relancer</button>

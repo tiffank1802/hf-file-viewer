@@ -447,7 +447,11 @@ Le frontend est branché sur le projet Appwrite **Django objects**
   (puce d’en-tête) ;
 - `src/services/favorites.js`, `src/hooks/useFavorites.js`, `src/utils/favoritesMerge.js` :
   favoris synchronisés dans la table `favorites`, avec miroir `localStorage` et file de
-  suppressions (tombstones) pour rester utilisable hors ligne ;
+  suppressions (tombstones) pour rester utilisable hors ligne. L'état de synchro est
+  lisible (Paramètres → Compte → Favoris) : `local` (pas de session), `à jour`, `partiel`,
+  `hors ligne`, `table absente` (projet non provisionné) ou `permission refusée` — ce
+  dernier cas nomme la cause, parce qu'une table `favorites` sans `create()` laisse
+  l'interface parfaitement crédible pendant que la base reste vide ;
 - `scripts/appwrite-setup.mjs` : provisioning idempotent de la base et des deux tables.
 
 ```bash

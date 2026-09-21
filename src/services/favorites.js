@@ -1,4 +1,5 @@
 import { ID, Permission, Query, Role } from 'appwrite';
+import { APPWRITE_ENABLED } from '../config.js';
 import {
   FAVORITES_TABLE_ID,
   describeAppwriteError,
@@ -28,8 +29,25 @@ import {
 export const FAVORITES_PAGE_LIMIT = 200;
 const PUSH_BATCH = 5;
 
+/** Les écritures de favoris sont-elles possibles dans ce build, session comprise ? */
 export function favoritesEnabled() {
   return hasDatabase();
+}
+
+/**
+ * Pourquoi rien n'est envoyé au compte, en clair.
+ *
+ * La table `favorites` ne se remplit que si ces trois conditions sont vraies en
+ * même temps ; la version précédente confondait « table absente » et « permission
+ * refusée » sous un seul état `unprovisioned`, qui coupait le `push` sans
+ * message — d'où un panneau de compte apparemment synchronisé et une table vide.
+ */
+export function favoritesBlockers(userId) {
+  const reasons = [];
+  if (!APPWRITE_ENABLED) reasons.push('endpoint ou ID de projet absent de ce build.');
+  if (!hasDatabase()) reasons.push('VITE_APPWRITE_DATABASE_ID vide dans ce build (redémarre le serveur après l’avoir mis dans .env.local).');
+  if (!userId) reasons.push('aucune session : les favoris restent locaux, c’est voulu.');
+  return reasons;
 }
 
 function rowPermissions(userId) {
@@ -58,8 +76,18 @@ export async function listFavorites(userId) {
     });
     return (Array.isArray(result.rows) ? result.rows : []).map(favoriteFromRow).filter(Boolean);
   } catch (error) {
-    // Table absente (projet non provisionné) : le site retombe sur le miroir local.
-    if (isMissingRow(error) || error?.code === 403) return null;
+    // Table absente du projet : le site retombe sur le miroir local, sans bruit.
+    if (isMissingRow(error) || error?.type === 'table_not_found' || error?.type === 'collection_not_found') return null;
+    // 403, lui, n'est PAS « non provisionné » : la table existe, c'est sa
+    // permission d'accès qui manque. Le taire, c'est laisser l'app croire que
+    // tout est normal pendant que la table reste vide.
+    if (error?.code === 403 || error?.type === 'user_unauthorized' || error?.type === 'missing_scope') {
+      const translated = fail(error, 'Permission refusée sur la table des favoris.');
+      throw Object.assign(
+        new Error(`${translated.message} — npm run appwrite:status indique quelles permissions manquent.`),
+        { forbidden: true },
+      );
+    }
     throw fail(error, 'Lecture des favoris impossibles.');
   }
 }
@@ -87,8 +115,11 @@ export async function removeFavorite(userId, { rowId, path }) {
   try {
     let target = rowId;
     if (!target) {
-      const rows = await listFavorites(userId);
-      target = (rows || []).find((item) => normalizeFavoritePath(item.path) === normalizeFavoritePath(path))?.rowId;
+      // Nom local différent du service importé : `const rows` ici masquait
+      // `rows.remove` plus bas et transformait chaque suppression en
+      // « TypeError: rows.remove is not a function ».
+      const cloud = (await listFavorites(userId)) || [];
+      target = cloud.find((item) => normalizeFavoritePath(item.path) === normalizeFavoritePath(path))?.rowId;
     }
     if (!target) return false;
     await rows.remove({ tableId: FAVORITES_TABLE_ID, rowId: target });
@@ -120,8 +151,9 @@ export async function pushFavorites(userId, entries) {
   const list = normalizeFavoriteList(entries);
   // Fonctionnalité coupée ou rien à envoyer : « aucun échec », sinon la pastille
   // afficherait des favoris en attente qui n'existent pas.
-  if (!favoritesEnabled() || !userId) return { pushed: 0, failed: [] };
-  if (!list.length) return { pushed: 0, failed: [] };
+  const blockers = favoritesBlockers(userId);
+  if (blockers.length) return { pushed: 0, failed: [], blockers };
+  if (!list.length) return { pushed: 0, failed: [], blockers };
 
   const failed = [];
   let pushed = 0;
@@ -130,18 +162,21 @@ export async function pushFavorites(userId, entries) {
     const results = await Promise.allSettled(batch.map((entry) => addFavorite(userId, entry)));
     results.forEach((result, offset) => {
       if (result.status === 'fulfilled') pushed += 1;
-      else failed.push(batch[offset].path);
+      // La raison voyage avec le chemin : « 3 en attente » sans dire pourquoi
+      // est exactement le silence qui a fait chercher du côté d'Appwrite au lieu
+      // des permissions de table.
+      else failed.push({ path: batch[offset].path, reason: result.reason?.message || 'écriture refusée.' });
     });
   }
-  return { pushed, failed };
+  return { pushed, failed, blockers };
 }
 
 /** Supprime côté cloud les chemins attendus par la file de suppressions locales. */
 export async function deleteFavoritePaths(userId, paths) {
   if (!favoritesEnabled() || !userId || !paths?.length) return { deleted: 0, failed: [] };
-  const rows = (await listFavorites(userId)) || [];
+  const cloud = (await listFavorites(userId)) || [];
   const wanted = new Set(paths.map(normalizeFavoritePath));
-  const targets = rows.filter((row) => wanted.has(normalizeFavoritePath(row.path)));
+  const targets = cloud.filter((row) => wanted.has(normalizeFavoritePath(row.path)));
   const results = await Promise.allSettled(
     targets.map((row) => rows.remove({ tableId: FAVORITES_TABLE_ID, rowId: row.rowId })),
   );
