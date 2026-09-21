@@ -43,7 +43,8 @@ export function useFavorites(user) {
   const cloudAvailable = enabled && Boolean(userId);
 
   const [items, setItems] = useState([]);
-  const [syncState, setSyncState] = useState('loading');
+  // Premier rendu déjà honnête : sans session, il n'y a rien en cours de lecture.
+  const [syncState, setSyncState] = useState(cloudAvailable ? 'loading' : (enabled ? 'anonymous' : 'disabled'));
   const [syncError, setSyncError] = useState(null);
   // Erreur d'action : « ton geste a été refusé », à la différence de `syncError`
   // qui décrit l'état de fond. Un visiteur sans session n'a rien à lire : sans
