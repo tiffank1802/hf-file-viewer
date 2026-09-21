@@ -352,6 +352,10 @@ async function drop() {
     });
   }
   console.log(`${spec.noun}s supprimées (la base est conservée)`);
+  // La suppression est asynchrone côté serveur : recréer la même table dans la
+  // seconde qui suit peut retomber sur l'ancienne (409), que ensure() ignore
+  // « déjà en place » — et la vieille liste de colonnes survivrait.
+  await new Promise((done) => setTimeout(done, 1500));
 }
 
 async function main() {

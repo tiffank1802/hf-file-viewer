@@ -455,6 +455,7 @@ APPWRITE_API_KEY="***" npm run appwrite:setup
 npm run appwrite:ping     # attendu : 200 + corps exact « Pong! »
 npm run appwrite:status   # contrôler ce qui existe
 node scripts/appwrite-setup.mjs --diagnose   # base utilisée + routes disponibles
+node scripts/appwrite-setup.mjs --fix-enums  # réaligne une colonne enum périmée
 ```
 
 Un 404 **JSON** (`type: general_route_not_found`) vient d’Appwrite ; une erreur

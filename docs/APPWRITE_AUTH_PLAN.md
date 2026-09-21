@@ -467,8 +467,16 @@ problème de route ou de réseau — et l'en-tête `server` suffit à les sépar
 | `401` | `APPWRITE_API_KEY` absente, expirée ou révoquée | Recréer la clé (Console → API Keys) |
 | `403` | clé sans scope suffisant | Ajouter `databases:write` (et `tablesdb:write` sur les plans récents) |
 | 404 **JSON** `general_route_not_found` | L'instance ne sert pas `/v1/tablesdb` (projet antérieur à l'API 2.x) | `--flavor=databases`, puis `VITE_APPWRITE_FLAVOR="databases"` : la façade `rows` du client s'adapte, aucun autre changement |
+| `400` « Cannot set default value for required column » | Une colonne `required` porte un `default` : TablesDB l'interdit (quatre colonnes de `profiles` étaient dans ce cas) | Corrigé dans `scripts/appwrite-spec.js` ; `validateModel()` le refuse localement avant tout appel réseau |
 | `400` mentionnant `specification` | Le plan Cloud exige une spécification de base | Le script la déduit de `/v1/tablesdb/specifications` ; sinon `--specification=<id>` (ou `--specification=none`) |
 | `429` | limite de débit de la clé | Réessayer dans une minute |
+
+Règles d'API retenues de ces échecs, écrites dans le modèle : une colonne
+`required` n'a **jamais** de `default` (le défaut protège une ligne créée hors du
+chemin normal, donc ces champs sont optionnels avec défaut — `userId`, `filePath`
+et `pathKey` restent obligatoires) ; un index unique ne porte pas une colonne de
+1024 caractères (d'où `pathKey`) ; `$createdAt` est une colonne système
+référençable dans un index sans être déclarée.
 
 Triage, sans clé :
 
@@ -476,6 +484,7 @@ Triage, sans clé :
 npm run appwrite:ping                            # attendu : 200 + corps exact « Pong! »
 node scripts/appwrite-setup.mjs --diagnose       # base utilisée + routes tablesdb / databases
 node scripts/appwrite-setup.mjs --dry-run        # les appels qui seraient faits
+node scripts/appwrite-setup.mjs --fix-enums      # réaligne une colonne enum périmée
 ```
 
 ⚠️ Le contrat du `ping` est **`HTTP 200` + corps exact `Pong!`** en `text/plain` — pas un
