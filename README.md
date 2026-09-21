@@ -136,6 +136,73 @@ Reporter l’identifiant renvoyé dans `wrangler.jsonc` :
 
 Puis redéployer avec `npm run deploy`. Le Worker détecte automatiquement `env.METADATA_KV` et utilise la hiérarchie **Cache API → Workers KV → Hugging Face**. Les entrées KV expirent après 24 h (`KV_CACHE_TTL`) afin de rester cohérentes avec le bucket. Cette option consomme les quotas de lectures/écritures KV ; elle n’est utile que si le trafic provient de nombreuses régions.
 
+### Checklist de déploiement avec Appwrite (comptes + favoris)
+
+Un déploiement « nu » fonctionne pour le visionneur, mais les écrans de compte
+nécessitent trois réglages supplémentaires — les trois sont des pièges classiques,
+et chacun produit un symptôme précis.
+
+1. **Variables de build.** Tout `VITE_*` est figé dans le bundle au moment de
+   `vite build` : le changer impose de redéployer. Comme `.env.*` est ignoré par
+   Git, un build déclenché depuis Cloudflare ne les verra pas — il faut les
+   déclarer dans **Workers & Pages → enise-docs → Settings → Build settings →
+   Environment variables**. En local :
+
+   ```bash
+   VITE_APPWRITE_DATABASE_ID="enise_docs" npm run deploy
+   ```
+
+   `VITE_APPWRITE_ENDPOINT` et `VITE_APPWRITE_PROJECT_ID` sont déjà codés en dur
+   dans `src/config.js` : inutiles sauf pour pointer un autre projet.
+2. **Origine déclarée côté Appwrite.** Console → **Settings → Domains &
+   Platforms → Add Web App**, avec l'origine **exacte** (schéma `https` inclus,
+   aucun chemin) : `https://enise-docs.<compte>.workers.dev` **et** le domaine
+   personnalisé, plus `http://localhost:3000` pour le dev. Sans cette ligne,
+   l'Appwrite rejette les requêtes en CORS et le message du navigateur ressemble
+   à « *No 'Access-Control-Allow-Origin' header* ».
+3. **CSP.** `public/_headers` liste l'hôte Appwrite dans `connect-src`
+   (`https://fra.cloud.appwrite.io` + `wss://` pour Realtime) ; `tests/csp-appwrite.test.js`
+   vérifie que cette liste suit l'endpoint de `src/config.js`. Si tu changes de
+   région ou d'instance, modifie les deux — sinon l'appel est bloqué **en
+   production seulement** (« *Refused to connect … because it violates the
+   Content Security Policy* » dans la console du navigateur).
+
+Le Worker n'a besoin d'aucun secret Appwrite tant que le client parle directement
+à Appwrite. La clé serveur ne revient qu'à la phase 4 du plan (proxy
+`/api/auth/*`) :
+
+```bash
+npx wrangler secret put APPWRITE_API_KEY     # jamais dans "vars", jamais en VITE_
+```
+
+Contrôle après déploiement :
+
+```bash
+curl -sI https://<hôte>/ | grep -i content-security-policy   # doit citer fra.cloud.appwrite.io
+curl -s  https://<hôte>/api/health                            # worker vivant
+npx wrangler tail                                             # journaux temps réel
+```
+
+Puis, dans le navigateur : `https://<hôte>/?appwrite` affiche la pastille d'état
+du `client.ping()` (vert = endpoint et projet joints) et **Paramètres → Compte**
+ouvre le panneau d'inscription.
+
+### Changer de compte Cloudflare
+
+`wrangler.jsonc` porte le nom d'Worker `enise-docs` et l'identifiant d'un
+espace de noms KV `dffc5c6a…` créé dans le compte de `ktongue` ; le bucket par
+défaut est `ktongue/ENISE-SITE`. Pour déployer sur un autre compte :
+
+```bash
+npx wrangler kv namespace create METADATA_KV     # reporter l'id dans wrangler.jsonc
+# ou retirer le bloc kv_namespaces : le cache KV est facultatif
+# renommer "name" si un Worker « enise-docs » existe déjà dans le compte
+```
+
+Le champ `"remote": true` sur le KV ne concerne que `wrangler dev` (il fait
+pointter le serveur local vers le KV distant, en lecture) ; il est ignoré à la
+production.
+
 ## Aperçu des documents Office (visionneuse hybride)
 
 La modale d’aperçu propose jusqu’à **3 modes** (sélecteur en haut, préférence mémorisée dans le navigateur), tous gratuits et open source côté rendu :
