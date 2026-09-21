@@ -136,6 +136,120 @@ dès qu’il y a un assemblage.
 
 ---
 
+---
+
+## 3 bis. Variante « paquet unique » : un envoi, N onglets, un lien par fichier
+
+Idée examinée après coup : **fabriquer un paquet unique par dossier, l’envoyer en une
+seule fois, puis poser à l’emplacement de chaque fichier CAO du site un lien vers la
+pièce correspondante dans ce document.** C’est la bonne direction — c’est le budget
+d’appels qui commande — mais **le zip n’est pas le bon contenant**, et le lien ne peut
+pas viser n’importe quoi. Trois faits le décident.
+
+### a) Un zip de pièces libres n’est pas traduit
+
+Onshape n’accepte un `.zip` que s’il contient **un fichier d’assemblage racine**, et ce
+fichier doit porter **le même nom que le zip** — règle documentée, et confirmée par
+l’équipe Onshape : si plusieurs assemblages existent sans que l’un d’eux porte le nom du
+zip, « *we will still fail the translation* » ; un zip de parties sans assemblage ne
+donne rien d’exploitable ([forum : règle du nom](https://forum.onshape.com/discussion/407/importing-a-sw-assembly),
+[aussi : « le zip n’est importable que s’il contient un assemblage et ses pièces »](https://forum.onshape.com/discussion/25988/step-files-not-translating)).
+Nos dossiers de cours contiennent des `.step`, `.stp`, `.iges`, `.sldprt`, `.stl`
+**indépendants** : les zipper produit un paquet que la traduction refuse ou ignore. Le zip
+reste donc pertinent **uniquement** pour reconstituer un assemblage (forme B).
+
+### b) Le bon contenant est un **STEP multi-racines que nous fabriquons**
+
+`POST /translations/d/{did}/w/{wid}` accepte bien plus que le minimum documenté dans le
+guide. Les champs réellement exposés (relevés sur le client officiel, API v16 :
+[TranslationApi.md](https://github.com/onshape-public/go-client/blob/master/onshape/docs/TranslationApi.md))
+incluent `onePartPerDoc`, `splitAssembliesIntoMultipleDocuments`, `importWithinDocument`,
+`extractAssemblyHierarchy`, `flattenAssemblies`, `createComposite`, `allowFaultyParts`,
+`encodedFilename`, `uploadId`, `ownerId`, `parentId`, `makePublic`, `notifyUser`, `unit`,
+`useIGESImportPostProcessing`. Deux conséquences :
+
+- `GET /translations/d/{did}` permet de consulter l’état de **toutes** les traductions
+  d’un document en **un seul appel** (au lieu d’un poll par fichier) ; `DELETE /translations/{tid}` nettoie.
+- `storeInDocument=true` avec `onePartPerDoc=false` laisse à Onshape le soin de créer
+  **un onglet par partie ou assemblage traduit** : « *Supported CAD files create two or
+  more tabs — one for the original uploaded file, and one for each translated part or
+  assembly* » ([importer des fichiers](https://cad.onshape.com/help/Content/Document/importing_files.htm)),
+  et les onglets sont « *named according to the names in the imported file* ».
+
+D’où la chaîne qui réalise l’idée :
+
+1. dans la Space existante (`space-huggingface/app.py`, qui importe déjà FreeCAD), un
+   endpoint `POST /api/merge-step` : importer les N fichiers traduisibles du dossier dans
+   un document FreeCAD, **nommer chaque racine** d’après le nom de fichier
+   (`piece-step-GM-3A-GM-meca` — voir d), puis `Part.export(racines, « dossier.step »)` :
+   le STEP résultant contient **N racines nommées** ;
+2. **une seule** `createTranslation` de ce STEP vers le document du dossier
+   (`storeInDocument=true`, `onePartPerDoc=false`, `createComposite=false`,
+   `allowFaultyParts=true` pour ne pas perdre une pièce sur un défaut isolé) ;
+3. `GET /translations/d/{did}` jusqu’à `DONE`, puis `GET /documents/{did}/elements` :
+   c’est la **table de correspondance nom d’onglet → élément**, écrite dans le KV ;
+4. le site affiche, sur la ligne de chaque fichier CAO, un lien
+   `https://cad.onshape.com/documents/{did}/w/{wid}/e/{eid}` — granularité **d’onglet**,
+   qui est celle que la documentation garantit : « *our URLs are Document, Workspace or
+   version and element specific, you can send them a link to the exact version/tab you
+   want* ».
+
+**Budget : ~6 appels par dossier** (1 document + 1 envoi + 2 à 3 polls groupés + 1 listing),
+contre ~40 en un-import-par-fichier. À 2 500 appels/an, on passe de ~60 à **~400 dossiers**.
+
+### c) Ce que le lien ne peut pas garantir : la granularité « corps »
+
+Un lien vers **un corps précis** d’une Part Studio n’est pas documenté comme adresse
+publique ; le partage par lien porte sur les onglets (Part Studio, Assembly, dessin,
+images et PDF joints) et ne nécessite pas de compte —
+[Share Documents](https://cad.onshape.com/help/Content/Collaboration/share_documents.htm) —
+tandis que « *Link document* » est la permission à cocher si l’on veut qu’un autre document
+Onshape pointe vers une pièce. Conséquence architecturale, et c’est le point sensible :
+
+- si le STEP multi-racines donne **N onglets** → chaque fichier du site a son lien exact,
+  l’idée est servie intégralement ;
+- si Onshape produit **un seul onglet à N corps** → le lien ne peut viser que l’onglet, et
+  plusieurs fichiers du site pointeraient au même endroit : trompeur.
+
+**La phase 0 doit trancher cette question**, et le plan ne doit donc **pas** parier dessus.
+Le routeur d’import choisit sa forme à partir du résultat réel :
+
+```
+importer(mergedStep) → elements
+   ├─ un onglet par nom deracine attendu  → forme « paquet » (1 appel), liens par fichier
+   ├─ un seul onglet multi-corps         → repli forme A : N imports, 1 onglet par fichier
+   └─ échec partiel                       → retenter en excluant les fichiers fautifs,
+                                            marquer `skipped` + raison (jamais de silence)
+```
+
+Le **manifeste** importé dans le même document (`manifest.json` en blob) garde, par
+fichier : chemin bucket, empreinte SHA-256, nom de racine, `elementId` résolu. Le site
+n’a donc aucune logique de devinette : il lit la table, et s’il n’y a pas d’onglet pour
+un fichier, il affiche le lien du document avec la mention explicite « la pièce est dans
+l’onglet X » plutôt qu’un lien faux.
+
+### d) Noms : l’assainissement casse l’appariement, il faut le prévoir
+
+Les règles Onshape (pas de caractères spéciaux dans un paquet, nom d’onglet issu du nom de
+fichier) entrent en conflit avec nos chemins réels : `GM/3A GM/méca TD 1.sldprt`.
+Ces deux exigences incompatibles — lien exact par nom, nom lisible dans l’onglet — se règlent par un
+**nom de racine déterministe et réversible** :
+
+```
+stem = "GM-3A-GM__meca-TD-1"        // accents, espaces, diacritiques retirés,
+                                     // chemin d'origine replié dans le nom
+```
+
+- la **fonction d’assainissement est testée** (collision détectée → suffixe `~2`, `~3`, et
+  la collision est reportée dans le manifeste : deux fichiers du même dossier qui se
+  resanitisent à l’identique ne peuvent pas être appariés par nom) ;
+- le nom affiché dans l’interface Onshape sera moins joli que le nom réel : c’est le prix
+  d’un lien exact sans passer par l’API de métadonnées (qui exige un `propertyId` opaque
+  et un aller-retour de plus par onglet).
+
+
+---
+
 ## 4. Modèle de données proposé
 
 Aucune nouvelle table Appwrite n’est nécessaire au démarrage : le mapping est un cache de
@@ -181,7 +295,8 @@ Un exemple concret, avec un dossier de **12 fichiers** dont 2 assemblages (forme
 | 2 imports d’assemblages (zip) | 6 |
 | import du manifeste | 1 |
 | listing des éléments (2 ×) | 2 |
-| **total dossier** | **≈ 40** |
+| **total dossier (forme A/B, un envoi par fichier)** | **≈ 40** |
+| **total dossier (variante §3 bis, paquet unique + polls groupés)** | **≈ 6** |
 
 À 2 500 appels/an (compte EDU Student ou Free), le plafond est atteint vers **60 dossiers**.
 À 10 000 (EDU Enterprise / Enterprise), environ **250 dossiers**. D’où les règles de conception,
@@ -229,6 +344,14 @@ faire entrer un STEP du bucket, sans passer par l’interface ?*
    ou non, taille limite en API (la doc mentionne 4 Go pour l’import ; non vérifié côté API),
    en-têtes de quota, comportement d’un `.stl` (mesh view-only), d’un `.glb`
    (la liste documentée dit `.gltf`, **pas** `.glb`), d’un nom accentué.
+
+**Deux questions à trancher ici, pas plus tard** (c’est ce qui décide de la forme) :
+
+- un **STEP multi-racines** fabriqué par la Space donne-t-il **N onglets nommés** ou
+  **un onglet à N corps** ? C’est ce qui rend l’idée « paquet unique + lien par fichier »
+  possible ou non (§3 bis c).
+- un `.glb` est-il accepté (la liste documente `.gltf` et `3MF`), et quelle est la taille
+  maximale réelle d’un envoi en API multipart ?
 
 **Critère** : un lien vers un document Onshape créé à la main, contenant 1 STEP traduit et
 1 STL, avec la transcription des 5 réponses HTTP. Sans ça, toute estimation est de la fiction.
@@ -337,7 +460,14 @@ sinon Onshape reste un lecteur/éditeur et le bucket la source.
    (backfill automatique, à chiffrer en appels avant d’accepter).
 7. **File de conversion** : `.stl`/`.obj` importés en mesh **non éditable** — est-ce utile
    pédagogiquement, ou vaut-il mieux n’importer que les formats B-rep et le STEP réexporté ?
-8. **Réexport** : la Space de conversion produit du `.glb` ; Onshape documente `.gltf` et
+8. **Paquet ou fichier par fichier** : si la phase 0 confirme les N onglets, le paquet
+   unique (≈ 6 appels/dossier) devient la forme par défaut et la forme A le repli — faut-il
+   alors ajouter `POST /api/merge-step` à la Space (`space-huggingface/app.py`), qui est le
+   seul morceau neuf non trivial de la chaîne ?
+9. **Métadonnées d’onglet** : accepte-t-on des noms d’onglets assainis (`GM-3A-GM__meca-TD-1`)
+   pour garder un lien exact, ou veut-on des noms jolis et donc un appel de renommage par
+   onglet (API de métadonnées, `propertyId` opaque) ?
+10. **Réexport** : la Space de conversion produit du `.glb` ; Onshape documente `.gltf` et
    `3MF`. Soit on vérifie que `.glb` passe (phase 0), soit on ajoute un mode **3MF** à la
    Space, qui est le format le plus sûr pour nos maillages.
 
