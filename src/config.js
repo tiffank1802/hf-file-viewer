@@ -2,6 +2,35 @@ export const BUCKET_ID = 'ktongue/ENISE-SITE';
 export const BUCKET_URL = `https://huggingface.co/buckets/${BUCKET_ID}`;
 
 /**
+ * Appwrite — projet « Django objects » (region France, `fra.cloud.appwrite.io`).
+ *
+ * L'URL et l'ID de projet sont des identifiants publics : ils désignent le
+ * backend, ils ne l'autorisent pas. L'accès aux données reste porté par le
+ * cookie de session Appwrite et par les permissions de collection.
+ * Les variables `VITE_APPWRITE_*` permettent de basculer sur un autre projet
+ * (préproduction, instance self-hosted) sans toucher au code.
+ */
+const appwriteEnv = typeof import.meta.env === 'object' && import.meta.env ? import.meta.env : {};
+
+export const APPWRITE_ENDPOINT = appwriteEnv.VITE_APPWRITE_ENDPOINT || 'https://fra.cloud.appwrite.io/v1';
+export const APPWRITE_PROJECT_ID = appwriteEnv.VITE_APPWRITE_PROJECT_ID || '69cedb12002acdd498e0';
+export const APPWRITE_PROJECT_NAME = 'Django objects';
+export const APPWRITE_ENABLED = Boolean(APPWRITE_ENDPOINT && APPWRITE_PROJECT_ID);
+
+/**
+ * Tables créées par l'étape de provisioning (TablesDB — le service
+ * `Databases` historique est déprécié depuis Appwrite 1.8)
+ * (`docs/APPWRITE_AUTH_PLAN.md`, phase 1). Vide tant que la base n'existe pas :
+ * le module Appwrite refuse alors les appels « données » sans lever d'erreur
+ * réseau et affiche l'état « non provisionné ».
+ */
+export const APPWRITE_DATABASE_ID = appwriteEnv.VITE_APPWRITE_DATABASE_ID || '';
+export const APPWRITE_PROFILE_TABLE_ID = appwriteEnv.VITE_APPWRITE_PROFILE_TABLE_ID || 'profiles';
+export const APPWRITE_FAVORITES_TABLE_ID = appwriteEnv.VITE_APPWRITE_FAVORITES_TABLE_ID || 'favorites';
+/** Fournisseur OAuth2 actif dans les settings Appwrite du projet ('' = désactivé). */
+export const APPWRITE_OAUTH_PROVIDER = appwriteEnv.VITE_APPWRITE_OAUTH_PROVIDER || '';
+
+/**
  * Viewer Office embarqué de Microsoft (Office Web Apps Viewer).
  *
  * Il nécessite que le fichier soit accessible publiquement : c’est le cas

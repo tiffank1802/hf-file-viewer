@@ -1,4 +1,5 @@
 import { FiArrowUp, FiExternalLink, FiHeart } from 'react-icons/fi';
+import AppwriteStatus from './AppwriteStatus';
 import { BUCKET_URL } from '../config';
 
 export default function Footer() {
@@ -27,6 +28,7 @@ export default function Footer() {
       </div>
       <div className="footer-bottom">
         <p>Projet étudiant indépendant et non officiel. Les marques et documents appartiennent à leurs ayants droit.</p>
+        <AppwriteStatus />
         <span>Fait avec <FiHeart aria-label="soin" /> entre le Cameroun et la France.</span>
         <button type="button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
           Haut de page <FiArrowUp aria-hidden="true" />

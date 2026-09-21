@@ -360,6 +360,24 @@ Règles importantes :
 
 Pour un déploiement CI GitHub, stocker `CLOUDFLARE_API_TOKEN` et `CLOUDFLARE_ACCOUNT_ID` dans les **GitHub Actions Secrets**, jamais dans le dépôt.
 
+## Appwrite — comptes, connexion et favoris
+
+Le frontend est branché sur le projet Appwrite **Django objects**
+(`https://fra.cloud.appwrite.io/v1`, projet `69cedb12002acdd498e0`) :
+
+- `src/services/appwrite.js` : `Client` partagé (+ instances `Account` et `TablesDB`),
+  et l’état du test de connexion ;
+- `src/main.jsx` appelle `client.ping()` **une seule fois au démarrage** ; le résultat
+  s’affiche dans la pastille du pied de page (visible en `npm run dev`, ou avec
+  `?appwrite` dans l’URL) et dans la console ;
+- `src/config.js` contient l’endpoint et l’ID de projet — ce sont des identifiants
+  **publics** : ils désignent le backend, ils ne l’autorisent pas. Une clé API Appwrite
+  ne doit **jamais** porter le préfixe `VITE_` ni apparaître dans `src/`.
+
+La base de données qui porte les profils et les favoris synchronisés, ainsi que les flux
+d’inscription/connexion, sont planifiés dans
+**[`docs/APPWRITE_AUTH_PLAN.md`](docs/APPWRITE_AUTH_PLAN.md)** (phases 1 à 7).
+
 ## API du Worker
 
 | Route | Rôle |

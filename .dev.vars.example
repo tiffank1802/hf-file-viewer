@@ -34,3 +34,11 @@ APS_CLIENT_SECRET="your_aps_client_secret"
 # MAX_SOLIDWORKS_BYTES="104857600"
 # MAX_SOLIDWORKS_DEPENDENCY_FILES="64"
 # MAX_SOLIDWORKS_BUNDLE_BYTES="262144000"
+
+# Appwrite — clé serveur, utilisée uniquement par le script de provisioning
+# (docs/APPWRITE_AUTH_PLAN.md, phase 1) puis, en phase 4, par le proxy /api/auth/*.
+# Créer la clé dans Console → API Keys avec le scope minimal (databases:write).
+# Ne JAMAIS préfixer par VITE_ : la clé atterrirait dans le bundle du navigateur.
+# APPWRITE_API_KEY=""
+# APPWRITE_ENDPOINT="https://fra.cloud.appwrite.io/v1"
+# APPWRITE_PROJECT_ID="69cedb12002acdd498e0"

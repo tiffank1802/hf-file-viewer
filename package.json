@@ -19,6 +19,7 @@
     "deploy:space": "node scripts/deploy-space.js"
   },
   "dependencies": {
+    "appwrite": "^27.0.0",
     "docx-preview": "^0.4.0",
     "jszip": "^3.10.1",
     "react": "^19.2.8",
