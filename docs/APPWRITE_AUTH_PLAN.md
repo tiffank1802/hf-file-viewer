@@ -455,31 +455,34 @@ transport **client direct d’abord** puis proxy Worker au déploiement, base **
 
 ## 13. Diagnostic d'un provisioning qui échoue
 
-Le script ne peut plus confondre « Appwrite refuse » et « le réseau ne répond pas » :
-une réponse d'Appwrite est **toujours du JSON** avec un `type` d'erreur.
+Première règle : **une vraie erreur Appwrite est toujours du JSON avec un `type`**
+(`general_route_not_found`, `missing_scope`, `user_unauthorized`…). Tout le reste est un
+problème de route ou de réseau — et l'en-tête `server` suffit à les séparer.
 
 | Sortie du script | Ce que ça veut dire | Que faire |
 | --- | --- | --- |
-| --- | --- | --- |
-| `POST /tablesdb → 404 Not Found` (texte, pas de JSON) | **Ce n'est pas Appwrite qui répond** : egress du sandbox ou proxy d'entreprise qui renvoie son propre 404 | Lancer le script depuis une machine qui joint Internet, ou provisionner dans la console (§3.2). `npm run appwrite:diagnose` le confirme |
-| `aucune route réseau vers … (ECONNRESET)` | TLS coupé vers `fra.cloud.appwrite.io` | Idem ; avec un proxy : `HTTPS_PROXY=http://127.0.0.1:port npm run appwrite:setup` |
-| `401` | `APPWRITE_API_KEY` absente, expirée, révoquée | Recréer la clé (Console → API Keys) |
+| 404 **HTML** avec `server = Appwrite` | Appwrite a été joint (le réseau marche) mais ne connaît pas la route : base mal formée. Cas rencontré ici — le script ajoutait `/v1` devant un endpoint qui le contenait déjà (`…/v1/v1/databases`) | Corrigé par `normalizeAppwriteEndpoint` (`src/utils/appwriteEndpoint.js`). Vérifier la ligne `base : …` de `--diagnose` : un seul `/v1`, sinon `APPWRITE_ENDPOINT="https://…/v1"` |
+| 404 **texte** sans `server: Appwrite` | Ce n'est pas Appwrite qui répond : egress filtré ou proxy qui invente un 404 | Lancer le script depuis une machine qui joint Internet (`git pull` de la branche), ou provisionner dans la console (§3.2) |
+| `aucune route réseau vers … (ECONNRESET)` | TLS coupé vers l'hôte. Le shell de l'agent est dans ce cas, le terminal de l'utilisateur non | Avec un proxy : `HTTPS_PROXY="http://127.0.0.1:port" npm run appwrite:setup` |
+| `401` | `APPWRITE_API_KEY` absente, expirée ou révoquée | Recréer la clé (Console → API Keys) |
 | `403` | clé sans scope suffisant | Ajouter `databases:write` (et `tablesdb:write` sur les plans récents) |
-| `404` **en JSON**, `type: general_route_not_found` | L'instance ne sert pas `/v1/tablesdb` (projet antérieur à l'API 2.x) | Relancer en `--flavor=databases` puis fixer `VITE_APPWRITE_FLAVOR="databases"` : la façade `rows` du client bascule sur l'API héritée, aucun autre changement de code |
-| `429` | limite de débit de la clé | Réessayer, ou réduire le nombre de tables recréées d'un coup |
+| 404 **JSON** `general_route_not_found` | L'instance ne sert pas `/v1/tablesdb` (projet antérieur à l'API 2.x) | `--flavor=databases`, puis `VITE_APPWRITE_FLAVOR="databases"` : la façade `rows` du client s'adapte, aucun autre changement |
+| `400` mentionnant `specification` | Le plan Cloud exige une spécification de base | Le script la déduit de `/v1/tablesdb/specifications` ; sinon `--specification=<id>` (ou `--specification=none`) |
+| `429` | limite de débit de la clé | Réessayer dans une minute |
 
-Commandes de triage, sans clé :
+Triage, sans clé :
 
 ```bash
-npm run appwrite:ping       # attend exactement : "Welcome to the Appwrite REST API"
-node scripts/appwrite-setup.mjs --diagnose   # qui répond, sur quelles routes
-node scripts/appwrite-setup.mjs --dry-run    # les appels qui seraient faits
+npm run appwrite:ping                            # attendu : 200 + « Welcome to the Appwrite REST API »
+node scripts/appwrite-setup.mjs --diagnose       # base utilisée + routes tablesdb / databases
+node scripts/appwrite-setup.mjs --dry-run        # les appels qui seraient faits
 ```
 
-**Une clé API collée dans un terminal, un historique shell ou une conversation est à
-considerer comme compromise** : la révoquer/recréer dans Console → API Keys dès qu'elle a
-été visible ailleurs que dans une variable d'environnement, et la transmettre par
-`.env.local` (ignorée par Git) ou `read -s`.
+**Sécurité** : une clé collée dans un terminal, un historique shell ou une conversation est
+à considérer comme compromise — la révoquer et la recréer dans Console → API Keys, puis la
+transmettre par `.env.local` (ignoré par Git) ou `read -s`. Le dépôt ne contient aucune
+clé : `git grep -lE 'standard_[0-9a-f]{20,}'` ne renvoie rien, et le contrôle est répété
+par `tests/appwrite-config.test.js`.
 
 Le client n'a pas besoin d'attendre le provisioning : `APPWRITE_DATABASE_ID` vide
 court‑circuite `rows.*`, donc ni erreur ni requête — seul le `ping` et la connexion

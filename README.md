@@ -365,38 +365,46 @@ Pour un déploiement CI GitHub, stocker `CLOUDFLARE_API_TOKEN` et `CLOUDFLARE_AC
 Le frontend est branché sur le projet Appwrite **Django objects**
 (`https://fra.cloud.appwrite.io/v1`, projet `69cedb12002acdd498e0`) :
 
-- `src/services/appwrite.js` : `Client` partagé (+ instances `Account` et `TablesDB`),
-  et l’état du test de connexion ;
+- `src/config.js` : endpoint et ID de projet (identifiants **publics** : ils désignent le
+  backend, ils ne l’autorisent pas) ; `APPWRITE_API_BASE` normalise la base pour l’outillage
+  REST, `VITE_APPWRITE_FLAVOR` choisit TablesDB ou l’API héritée ;
+- `src/services/appwrite.js` : `Client` partagé, `Account`, façade `rows` (contrat unique
+  TablesDB / `Databases`), état du test de connexion et traduction française des erreurs ;
 - `src/main.jsx` appelle `client.ping()` **une seule fois au démarrage** ; le résultat
   s’affiche dans la pastille du pied de page (visible en `npm run dev`, ou avec
   `?appwrite` dans l’URL) et dans la console ;
-- `src/config.js` contient l’endpoint et l’ID de projet — ce sont des identifiants
-  **publics** : ils désignent le backend, ils ne l’autorisent pas. Une clé API Appwrite
-  ne doit **jamais** porter le préfixe `VITE_` ni apparaître dans `src/`.
-
 - `src/services/appwriteAuth.js`, `src/contexts/AuthContext.jsx`, `src/hooks/useAuth.js` :
   inscription, connexion, vérification d’email, récupération de mot de passe, sessions et
-  profil (`tables profiles`) ;
-- `src/components/AuthPanel.jsx` (panneau de compte) et `src/components/UserChip.jsx` (puce
-  d’en-tête) ;
+  profil (table `profiles`) ;
+- `src/components/AuthPanel.jsx` (panneau de compte) et `src/components/UserChip.jsx`
+  (puce d’en-tête) ;
 - `src/services/favorites.js`, `src/hooks/useFavorites.js`, `src/utils/favoritesMerge.js` :
-  favoris synchronisés dans `tables favorites` avec miroir `localStorage` et file de
-  suppressions (tombstones), pour que le site reste utilisable hors ligne ;
+  favoris synchronisés dans la table `favorites`, avec miroir `localStorage` et file de
+  suppressions (tombstones) pour rester utilisable hors ligne ;
 - `scripts/appwrite-setup.mjs` : provisioning idempotent de la base et des deux tables.
 
-**Le provisioning reste à faire** (aucun accès réseau vers Appwrite depuis l’environnement
-de développement) :
-
 ```bash
-APPWRITE_API_KEY="clé serveur (scopes databases:write)" npm run appwrite:setup
-npm run appwrite:ping     # vérifier endpoint, projet et clé
+APPWRITE_API_KEY="***" npm run appwrite:setup
+npm run appwrite:ping     # attendu : 200 + « Welcome to the Appwrite REST API »
 npm run appwrite:status   # contrôler ce qui existe
+node scripts/appwrite-setup.mjs --diagnose   # base utilisée + routes disponibles
 ```
 
-Tant que `VITE_APPWRITE_DATABASE_ID` est vide, tous les appels « données » sont
-court-circuités : le site se comporte comme avant, seule la connexion de compte reste
-possible. Le plan complet (schéma, permissions, proxy Worker, sécurité, tests) est dans
-**[`docs/APPWRITE_AUTH_PLAN.md`](docs/APPWRITE_AUTH_PLAN.md)**.
+Un 404 **JSON** (`type: general_route_not_found`) vient d’Appwrite ; un 404 **HTML avec
+`server: Appwrite`** signifie qu’Appwrite a bien été joint mais que la route est fausse
+(la base doit finir par un unique `/v1`) ; un 404 HTML sans cet en-tête vient du réseau
+sortant ou d’un proxy. Le tableau complet du diagnostic est dans
+**[`docs/APPWRITE_AUTH_PLAN.md`](docs/APPWRITE_AUTH_PLAN.md) §13**.
+
+Une clé API Appwrite ne doit **jamais** porter le préfixe `VITE_`, apparaître dans `src/`
+ou être collée dans un terminal partagé : toute clé vue ailleurs que dans une variable
+d’environnement est à révoquer.
+
+**Le provisioning reste à faire** : les tables `profiles` et `favorites` n’existent pas
+encore dans le projet. Tant que `VITE_APPWRITE_DATABASE_ID` est vide, tous les appels
+« données » sont court-circuités — le site se comporte comme avant, seule la connexion de
+compte reste possible. Le plan complet (schéma, permissions, proxy Worker, sécurité, tests)
+est dans **[`docs/APPWRITE_AUTH_PLAN.md`](docs/APPWRITE_AUTH_PLAN.md)**.
 
 ## API du Worker
 
