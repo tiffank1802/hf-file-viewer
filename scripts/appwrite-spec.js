@@ -88,15 +88,36 @@ export const SPECS = {
       path: `/tablesdb/${db}/tables`,
       body: { tableId: table.id, name: table.name, rowSecurity: table.rowSecurity, enabled: true },
     }),
-    updatePermissions: (db, table) => ({ path: `/tablesdb/${db}/tables/${table.id}`, body: { permissions: table.permissions } }),
+    // updateTable est un PUT, et `name` y est obligatoire : un PATCH sur ce
+    // chemin répond 404 (page du Console), ce qui avait été lu à tort comme un
+    // problème de route. rowSecurity/enabled sont renvoyés avec les valeurs du
+    // modèle pour que l'appel reste idempotent et n'assouplisse rien.
+    updatePermissions: (db, table) => ({
+      method: 'PUT',
+      path: `/tablesdb/${db}/tables/${table.id}`,
+      body: {
+        name: table.name,
+        permissions: table.permissions,
+        rowSecurity: table.rowSecurity,
+        enabled: true,
+      },
+    }),
     column: (db, table, column) => ({
       path: `/tablesdb/${db}/tables/${table.id}/columns/${column.type}`,
       body: { key: column.key, ...omit(column, 'type') },
     }),
     columnPath: (db, table, column) => `/tablesdb/${db}/tables/${table.id}/columns/${column.key}`,
+    // updateEnumColumn : elements, required et default sont tous trois requis.
+    // La doc rappelle « Cannot be set when column is required » pour default —
+    // la règle qui a fait échouer la création des colonnes.
     enumElements: (db, table, column) => ({
-      path: `/tablesdb/${db}/tables/${table.id}/columns/enum/${column.key}/elements`,
-      body: { elements: [...column.elements] },
+      method: 'PATCH',
+      path: `/tablesdb/${db}/tables/${table.id}/columns/enum/${column.key}`,
+      body: {
+        elements: [...column.elements],
+        required: column.required ?? false,
+        default: column.default ?? '',
+      },
     }),
     index: (db, table, index) => ({
       path: `/tablesdb/${db}/tables/${table.id}/indexes`,
@@ -124,8 +145,14 @@ export const SPECS = {
       },
     }),
     updatePermissions: (db, table) => ({
+      method: 'PUT',
       path: `/databases/${db}/collections/${table.id}`,
-      body: { permissions: table.permissions },
+      body: {
+        name: table.name,
+        permissions: table.permissions,
+        documentSecurity: table.rowSecurity,
+        enabled: true,
+      },
     }),
     column: (db, table, column) => ({
       path: `/databases/${db}/collections/${table.id}/attributes/${column.type}`,
@@ -133,8 +160,13 @@ export const SPECS = {
     }),
     columnPath: (db, table, column) => `/databases/${db}/collections/${table.id}/attributes/${column.key}`,
     enumElements: (db, table, column) => ({
-      path: `/databases/${db}/collections/${table.id}/attributes/enum/${column.key}/elements`,
-      body: { elements: [...column.elements] },
+      method: 'PATCH',
+      path: `/databases/${db}/collections/${table.id}/attributes/enum/${column.key}`,
+      body: {
+        elements: [...column.elements],
+        required: column.required ?? false,
+        default: column.default ?? '',
+      },
     }),
     index: (db, table, index) => ({
       path: `/databases/${db}/collections/${table.id}/indexes/${index.type}`,
@@ -195,13 +227,14 @@ export function buildPlan({ spec, databaseId, tables = TABLES }) {
         body: spec.index(databaseId, table, index).body,
       });
     }
+    const permissions = spec.updatePermissions(databaseId, table);
     operations.push({
       label: 'permissions',
       group: 'permissions',
       parent: table.id,
-      method: 'PATCH',
-      patch: spec.updatePermissions(databaseId, table).path,
-      body: spec.updatePermissions(databaseId, table).body,
+      method: permissions.method ?? 'PATCH',
+      patch: permissions.path,
+      body: permissions.body,
     });
   }
 
@@ -294,6 +327,39 @@ export function columnDrift(declared, live) {
   const enumIssue = enumDrift(declared, live);
   if (enumIssue) drift.elements = { expected: declared.elements, actual: liveEnumElements(live) };
   return Object.keys(drift).length ? drift : null;
+}
+
+/**
+ * Erreurs « pas encore prêt » d'Appwrite : la création d'une colonne ou d'un
+ * index est hors ligne, donc la ressource dépendante est refusée dans la foulée
+ * (« The requested column 'x' is not yet available. Please try again later. »,
+ * rencontré sur `uniq_favorite_user_path`). Ce n'est pas une erreur de modèle :
+ * c'est une attente.
+ */
+export const PENDING_ERRORS = /not yet available|try again later|is being (?:created|modified|updated)|operation in progress/i;
+
+export const isPendingResourceError = (error) => (error?.status === 400 || error?.status === 409)
+  && PENDING_ERRORS.test(`${error?.message ?? ''} ${error?.rawBody ?? ''}`);
+
+/**
+ * Retente une opération refusée parce qu'une ressource vient de naître, et
+ * jamais une erreur de modèle (un 400 « Cannot set default value » répété dix
+ * fois ne devient pas vrai).
+ */
+export async function withPendingRetry(action, label = 'opération', {
+  attempts = 10,
+  delayMs = 1200,
+  log = (line) => console.log(line),
+} = {}) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await action();
+    } catch (error) {
+      if (!isPendingResourceError(error) || attempt >= attempts) throw error;
+      log(`  … ${label} — pas encore disponible (essai ${attempt}/${attempts}), nouvelle tentative dans ${delayMs} ms`);
+      await new Promise((done) => setTimeout(done, delayMs));
+    }
+  }
 }
 
 /** UID Appwrite : 36 caractères max, sans underscore initial, [a-zA-Z0-9_.-]. */

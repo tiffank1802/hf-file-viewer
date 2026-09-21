@@ -468,8 +468,14 @@ problème de route ou de réseau — et l'en-tête `server` suffit à les sépar
 | `403` | clé sans scope suffisant | Ajouter `databases:write` (et `tablesdb:write` sur les plans récents) |
 | 404 **JSON** `general_route_not_found` | L'instance ne sert pas `/v1/tablesdb` (projet antérieur à l'API 2.x) | `--flavor=databases`, puis `VITE_APPWRITE_FLAVOR="databases"` : la façade `rows` du client s'adapte, aucun autre changement |
 | `400` « Cannot set default value for required column » | Une colonne `required` porte un `default` : TablesDB l'interdit (quatre colonnes de `profiles` étaient dans ce cas) | Corrigé dans `scripts/appwrite-spec.js` ; `validateModel()` le refuse localement avant tout appel réseau |
+| `404 HTML` sur `PATCH /tablesdb/{db}/tables/{id}` | `updateTable` n'existe **qu'en PUT**, et `name` y est obligatoire : le verbe faux répond la page du Console, pas une erreur JSON | Le script envoie `PUT` avec `{ name, permissions, rowSecurity, enabled }` (valeurs du modèle, donc idempotent et sans assouplissement) |
+| `400 The requested column 'x' is not yet available` | Colonnes et index sont créés **hors ligne** : poser un index sur une colonne qui vient de naître est refusé dans la seconde | `withPendingRetry` attend et retente (10 × 1,2 s, réglable par `APPWRITE_RETRY_ATTEMPTS`/`APPWRITE_RETRY_DELAY_MS`) ; relancer le script suffit aussi, puisque la colonne est devenue disponible entre-temps |
 | `400` mentionnant `specification` | Le plan Cloud exige une spécification de base | Le script la déduit de `/v1/tablesdb/specifications` ; sinon `--specification=<id>` (ou `--specification=none`) |
 | `429` | limite de débit de la clé | Réessayer dans une minute |
+
+Route de correction des enums : `PATCH /v1/tablesdb/{db}/tables/{t}/columns/enum/{key}`
+avec `elements`, `required` **et** `default` (les trois requis) — TablesDB n'a pas de
+sous-route `/elements`, contrairement à `attributes/enum/{key}/elements` de DocumentsDB.
 
 Règles d'API retenues de ces échecs, écrites dans le modèle : une colonne
 `required` n'a **jamais** de `default` (le défaut protège une ligne créée hors du

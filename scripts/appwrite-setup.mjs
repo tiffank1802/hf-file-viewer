@@ -19,7 +19,7 @@
  */
 import { APPWRITE_API_BASE, APPWRITE_PROJECT_ID } from '../src/config.js';
 import { looksLikeAppwriteResponse, normalizeAppwriteEndpoint } from '../src/utils/appwriteEndpoint.js';
-import { SPECS, TABLES, buildPlan, columnDrift, enumColumns } from './appwrite-spec.js';
+import { SPECS, TABLES, buildPlan, columnDrift, enumColumns, withPendingRetry } from './appwrite-spec.js';
 
 const argv = process.argv.slice(2);
 const flags = new Set(argv.filter((a) => a.startsWith('--') && !a.includes('=')));
@@ -36,6 +36,15 @@ const FIX_ENUMS = flags.has('--fix-enums');
 const DIAGNOSE = flags.has('--diagnose');
 const VERBOSE = flags.has('--verbose');
 const TIMEOUT_MS = Number(process.env.APPWRITE_TIMEOUT_MS || 30_000);
+/**
+ * Appwrite crée les colonnes et les index hors ligne : poser un index sur une
+ * colonne d'instant répond 400 « The requested column 'x' is not yet available.
+ * Please try again later. » — exactement ce qui a arrêté le run sur
+ * `uniq_favorite_user_path`. Ce n'est pas une erreur de modèle, c'est une
+ * attente : on la respecte au lieu d'abandonner la table à moitié indexée.
+ */
+const RETRY_ATTEMPTS = Number(process.env.APPWRITE_RETRY_ATTEMPTS || 10);
+const RETRY_DELAY_MS = Number(process.env.APPWRITE_RETRY_DELAY_MS || 1200);
 
 // L'endpoint public contient déjà /v1 : normaliser évite le /v1/v1 qui valait
 // à ce script un 404 HTML d'Appwrite pris pour un blocage réseau.
@@ -58,6 +67,8 @@ class ApiError extends Error {
 
 /** --diagnose et --status doivent interroger le réseau réel, même en dry-run. */
 const NETWORK_PROBE = DIAGNOSE || STATUS;
+
+const retryOptions = { attempts: RETRY_ATTEMPTS, delayMs: RETRY_DELAY_MS };
 
 async function request(method, path, body) {
   if (DRY_RUN && !NETWORK_PROBE) return { __dryRun: true };
@@ -168,7 +179,7 @@ async function ensure(getPath, postPath, body, label) {
     if (error.status === 403) console.warn(`  ! ${label} — illisible avec cette clé, création tentée`);
   }
   try {
-    await request('POST', postPath, body);
+    await withPendingRetry(() => request('POST', postPath, body), label, retryOptions);
     console.log(`  + ${label} — créée`);
     return 'created';
   } catch (error) {
@@ -336,7 +347,7 @@ async function modelDriftReport({ fix = false } = {}) {
       if (!fix) { console.log('    → node scripts/appwrite-setup.mjs --fix-enums'); continue; }
       if (DRY_RUN) continue;
       const target = spec.enumElements(DATABASE_ID, table, column);
-      await request('PUT', target.path, target.body)
+      await withPendingRetry(() => request(target.method ?? 'PATCH', target.path, target.body), `${table.id}.${column.key} enum`, retryOptions)
         .then(() => console.log('    ✓ éléments d’enum réalignés'))
         .catch((error) => console.warn(`    ✗ ${table.id}.${column.key} — ${explain(error).split('\n')[0]}`));
     }
@@ -396,11 +407,13 @@ async function main() {
 
   for (const op of plan) {
     if (op.group === 'table') console.log(`\n${spec.noun} ${op.label}`);
-    if (op.method === 'PATCH') {
+    if (op.group === 'permissions') {
       if (DRY_RUN) {
-        console.log(`  · ${op.label} → PATCH ${op.patch} ${JSON.stringify(op.body)}`);
+        console.log(`  · ${op.label} → ${op.method} ${op.patch} ${JSON.stringify(op.body)}`);
       } else {
-        await request('PATCH', op.patch, op.body)
+        // Méthode imposée par le dialecte : TablesDB attend un PUT sur la table
+        // (avec `name`), pas un PATCH — le PATCH répond une page 404 du Console.
+        await withPendingRetry(() => request(op.method ?? 'PATCH', op.patch, op.body), `${op.parent} permissions`, retryOptions)
           .then(() => console.log(`  ✓ ${op.parent} — permissions appliquées`))
           .catch((error) => console.warn(`  ! ${op.parent} — permissions : ${explain(error).split('\n')[0]}`));
       }

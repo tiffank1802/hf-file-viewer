@@ -7,8 +7,10 @@ import {
   buildPlan,
   columnDrift,
   enumColumns,
+  isPendingResourceError,
   isValidAppwriteUid,
   validateModel,
+  withPendingRetry,
 } from '../scripts/appwrite-spec.js';
 
 const DB = 'enise_docs';
@@ -110,13 +112,80 @@ test('aucun index unique ne porte une colonne longue', () => {
   assert.ok(TABLES.find((t) => t.id === 'favorites').columns.some((c) => c.key === 'pathKey'));
 });
 
+test('routes d’écriture : PUT sur la table (PATCH répond 404), PATCH sur la colonne enum', () => {
+  // `updateTable` n'existe qu'en PUT et exige `name` ; un PATCH sur ce chemin
+  // renvoie la page 404 du Console, ce qui ressemble à s'y méprendre à un
+  // problème de route ou de réseau. `updateEnumColumn`, lui, est un PATCH sur
+  // `columns/enum/{key}` — il n'y a PAS de sous-route `/elements` en TablesDB.
+  const table = TABLES[0];
+  const column = table.columns.find((c) => c.key === 'filiere');
+  for (const [flavor, root, noun, security] of [
+    ['tablesdb', '/tablesdb', 'tables', 'rowSecurity'],
+    ['databases', '/databases', 'collections', 'documentSecurity'],
+  ]) {
+    const spec = SPECS[flavor];
+    const permissions = spec.updatePermissions('db', table);
+    assert.equal(permissions.method, 'PUT', `${flavor} : updateTable est un PUT`);
+    assert.equal(permissions.path, `${root}/db/${noun}/profiles`);
+    assert.equal(permissions.body.name, table.name, `${flavor} : name est obligatoire`);
+    assert.equal(permissions.body[security], true, `${flavor} : la sécurité par ligne doit être renvoyée, pas effacée`);
+    assert.ok(Array.isArray(permissions.body.permissions) && permissions.body.permissions.length);
+
+    const enumFix = spec.enumElements('db', table, column);
+    assert.equal(enumFix.method, 'PATCH');
+    assert.doesNotMatch(enumFix.path, /\/elements$/, `${flavor} : pas de sous-route /elements`);
+    assert.deepEqual(Object.keys(enumFix.body).sort(), ['default', 'elements', 'required'],
+      `${flavor} : les trois paramètres requis de updateEnumColumn`);
+    assert.equal(enumFix.body.default, 'GM');
+  }
+});
+
+test('une ressource « pas encore disponible » est retentée, un modèle faux ne l’est jamais', async () => {
+  // De vraies `Error` : c'est ce que le script propage (AppwriteException et
+  // ApiError héritent d'Error), et `assert.rejects(fn, /re/)` teste String(erreur).
+  const pending = Object.assign(new Error("The requested column 'pathKey' is not yet available. Please try again later."), { status: 400 });
+  const model = Object.assign(new Error('Cannot set default value for required column'), { status: 400 });
+  assert.equal(isPendingResourceError(pending), true);
+  assert.equal(isPendingResourceError(model), false);
+  assert.equal(isPendingResourceError(Object.assign(new Error('index is being created'), { status: 409 })), true);
+  assert.equal(isPendingResourceError(undefined), false);
+
+  let calls = 0;
+  const log = [];
+  const outcome = await withPendingRetry(async () => {
+    calls += 1;
+    if (calls < 3) throw pending;
+    return 'créé';
+  }, 'index uniq_favorite_user_path', { attempts: 5, delayMs: 1, log: (line) => log.push(line) });
+  assert.equal(outcome, 'créé');
+  assert.equal(calls, 3);
+  assert.equal(log.length, 2, 'une ligne de log par attente');
+
+  let stubborn = 0;
+  await assert.rejects(
+    () => withPendingRetry(async () => {
+      stubborn += 1;
+      throw model;
+    }, 'colonne', { attempts: 4, delayMs: 1, log: () => {} }),
+    /Cannot set default value/,
+  );
+  assert.equal(stubborn, 1, 'une erreur de modèle n’est pas une raison de réessayer');
+
+  let exhausted = 0;
+  await assert.rejects(() => withPendingRetry(async () => {
+    exhausted += 1;
+    throw pending;
+  }, 'index', { attempts: 3, delayMs: 1, log: () => {} }));
+  assert.equal(exhausted, 3, 'on borne le nombre de tentatives');
+});
+
 test('les permissions sont toujours la dernière opération de chaque table', () => {
   for (const flavor of ['tablesdb', 'databases']) {
     const plan = planFor(flavor);
     for (const table of TABLES) {
       const owned = plan.filter((op) => op.parent === table.id || (op.group === 'table' && op.label === table.id));
       assert.equal(owned.at(-1).group, 'permissions', `${flavor}/${table.id} : ordre des opérations`);
-      assert.equal(owned.at(-1).method, 'PATCH');
+      assert.equal(owned.at(-1).method, 'PUT');
     }
   }
 });
