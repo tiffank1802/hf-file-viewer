@@ -5,13 +5,19 @@
 #
 # Viewer Autodesk (APS / Forge) : le domaine developer.api.autodesk.com doit
 # rester autorisé dans les directives utilisées par le player 3D.
+#
+# Appwrite : les appels de l'SDK web (comptes, sessions, favoris, realtime)
+# partent du navigateur vers https://<region>.cloud.appwrite.io. Sans entrée
+# correspondante dans connect-src, CSP bloque chaque requête — et seulement en
+# production, car `vite dev` ne sert pas ce fichier. wss:// couvre
+# Realtime.subscribe (Channels) ; à dupliquer si l'endpoint change de région.
 /*
   X-Content-Type-Options: nosniff
   X-Frame-Options: SAMEORIGIN
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
   Cross-Origin-Opener-Policy: same-origin
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com https://developer.api.autodesk.com; style-src 'self' 'unsafe-inline' https://developer.api.autodesk.com; img-src 'self' data: blob: https:; media-src 'self' blob: https://developer.api.autodesk.com; frame-src 'self' blob: https://view.officeapps.live.com https://developer.api.autodesk.com https://iframe.sharecad.org; connect-src 'self' https://cloudflareinsights.com https://developer.api.autodesk.com; font-src 'self' data: https://developer.api.autodesk.com; worker-src 'self' blob: https://developer.api.autodesk.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com https://developer.api.autodesk.com; style-src 'self' 'unsafe-inline' https://developer.api.autodesk.com; img-src 'self' data: blob: https:; media-src 'self' blob: https://developer.api.autodesk.com; frame-src 'self' blob: https://view.officeapps.live.com https://developer.api.autodesk.com https://iframe.sharecad.org; connect-src 'self' https://cloudflareinsights.com https://developer.api.autodesk.com https://fra.cloud.appwrite.io wss://fra.cloud.appwrite.io; font-src 'self' data: https://developer.api.autodesk.com; worker-src 'self' blob: https://developer.api.autodesk.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
