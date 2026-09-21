@@ -6,9 +6,10 @@ import {
   FiUploadCloud,
   FiX,
 } from 'react-icons/fi';
+import UserChip from './UserChip';
 import { BUCKET_URL } from '../config';
 
-export default function Header({ navigate, onOpenSearch }) {
+export default function Header({ navigate, onOpenSearch, onOpenAuth, onOpenFavorites, favoriteCount = 0 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
@@ -62,6 +63,11 @@ export default function Header({ navigate, onOpenSearch }) {
             <span>Rechercher</span>
             <kbd>⌘ K</kbd>
           </button>
+          <UserChip
+            favoriteCount={favoriteCount}
+            onOpenAuth={onOpenAuth}
+            onOpenFavorites={onOpenFavorites}
+          />
           <a className="contribute-button" href={BUCKET_URL} target="_blank" rel="noreferrer">
             <FiUploadCloud aria-hidden="true" />
             <span>Contribuer</span>

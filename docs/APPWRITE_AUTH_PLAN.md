@@ -4,8 +4,13 @@ Projet Appwrite : **Django objects**
 ID : `69cedb12002acdd498e0` — Endpoint : `https://fra.cloud.appwrite.io/v1`
 Dépôt : `enise-docs` (React 19 + Vite + JS, Worker Cloudflare, npm, `appwrite@27.0.0`)
 
-Statut : **phase 0 terminée** (SDK installé, client créé, `client.ping()` au démarrage).
-Phases 1 → 7 décrites ci-dessous, à valider avant implémentation.
+Statut (revue 2) : **phases 0, 2 et 3 codées** — SDK, client, `client.ping()`, service
+d’authentification, `AuthProvider`, panneau de compte, favoris synchronisés et tests.
+**La phase 1 (provisioning Appwrite) reste à exécuter** : le sandbox n’a aucun accès à
+`fra.cloud.appwrite.io`, donc la base `enise_docs`, les tables et leurs permissions doivent
+être créés depuis ta machine (`npm run appwrite:setup`) ou depuis la console.
+Sans elle, `APPWRITE_DATABASE_ID` reste vide et tout le code « données » est court-circuité :
+le site continue de fonctionner exactement comme avant.
 
 ---
 
@@ -412,11 +417,35 @@ ajoutée plus tard.
 
 ---
 
-## 11. À valider avant d'implémenter
+## 12. État d'avancement (code en l'état du dépôt)
 
-1. Proxy Worker dès la phase 2, ou client direct d'abord (recommandé) ?
-2. Favoris synchronisés dans le périmètre, ou comptes/profils seulement ?
-3. OAuth GitHub (déjà un OAuth *Autodesk* dans le projet) en plus d'email/mot de passe ?
-4. Base **TablesDB** (schéma typé, recommandé) ou **DocumentsDB** (JSON souple, zéro migration) ?
-5. Qui provisionne : toi dans la console (méthode 3.2-a), ou moi via le script si tu me fournis
-   une clé serveur dans une variable d'environnement locale ?
+| Élément | Fichier | Statut |
+| --- | --- | --- |
+| Client, endpoint, projet | `src/config.js`, `src/services/appwrite.js` | ✅ |
+| `client.ping()` au démarrage + pastille | `src/main.jsx`, `src/components/AppwriteStatus.jsx`, `src/hooks/useAppwritePing.js` | ✅ |
+| Provisioning idempotent (base, tables, colonnes, index, permissions) | `scripts/appwrite-setup.mjs` (`npm run appwrite:setup`, `--dry-run`, `--ping`, `--status`, `--drop`) | ✅ code / ⏳ à exécuter avec une clé serveur |
+| Service de compte (inscription, connexion, sessions, vérification, récupération, mot de passe, préférences, export RGPD) | `src/services/appwriteAuth.js` | ✅ |
+| Contexte de session + restauration au chargement | `src/contexts/AuthContext.jsx`, `src/contexts/auth-context.js`, `src/hooks/useAuth.js` | ✅ |
+| Panneau de compte (connexion / inscription / mot de passe oublié / profil) | `src/components/AuthPanel.jsx` | ✅ |
+| Puce de compte dans l’en-tête + menu | `src/components/UserChip.jsx` | ✅ |
+| Favoris synchronisés + miroir local + tombstones | `src/services/favorites.js`, `src/utils/favoritesMerge.js`, `src/hooks/useFavorites.js` | ✅ code / ⏳ table `favorites` requise |
+| Tests | `tests/appwrite-config.test.js`, `tests/appwrite-auth.test.js`, `tests/favorites-merge.test.js` | ✅ 109 tests |
+| Lint vert (globals ESLint de `client-examples/` et `scripts/*.js` ajoutés) | `eslint.config.js` | ✅ |
+| `!tests/*.test.js` dans le `.gitignore` | `.gitignore` | ✅ |
+| Fonction serveur de création du profil, proxy `/api/auth/*`, labels d’admin | phases 4 et 5 | ⏳ planifié |
+| Realtime sur la table `favorites` | — | ⏳ volontairement laissé hors de cette passe (vérification impossible sans réseau) |
+
+Choix appliqués après arbitrage : périmètre **comptes + profils + favoris synchronisés**,
+transport **client direct d’abord** puis proxy Worker au déploiement, base **TablesDB**.
+
+---
+
+## 11. Décisions actées
+
+1. **Périmètre** : comptes + profils + favoris synchronisés.
+2. **Transport** : client direct d'abord, proxy `/api/auth/*` dans le Worker au déploiement.
+3. **Base** : TablesDB (schéma typé).
+4. **Provisioning** : `scripts/appwrite-setup.mjs` lancé depuis la machine de l'utilisateur
+   (le sandbox n'a pas de route vers Appwrite), avec la checklist console en secours.
+5. **Reste ouvert** : activer ou non OAuth GitHub (`VITE_APPWRITE_OAUTH_PROVIDER`) ; le
+   `UserChip` et le panneau sont déjà prêts à afficher le bouton si la variable est renseignée.

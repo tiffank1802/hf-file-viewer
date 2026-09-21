@@ -6,7 +6,7 @@ import {
   APPWRITE_FAVORITES_TABLE_ID,
   APPWRITE_PROFILE_TABLE_ID,
   APPWRITE_PROJECT_ID,
-} from '../config';
+} from '../config.js';
 
 /**
  * Client Appwrite partagé par toute l'app (projet « Django objects »).
@@ -95,29 +95,51 @@ export const FAVORITES_TABLE_ID = APPWRITE_FAVORITES_TABLE_ID;
 
 /**
  * Traduit une erreur Appwrite en message lisible pour l'utilisateur.
- * Les codes `user_*` / `*_already_exists` sont les seuls que les formulaires
- * d'authentification rencontrent en pratique.
+ *
+ * En SDK web 27, `AppwriteException.code` est le **statut HTTP** et `type` porte
+ * le **code métier** (`user_already_exists`, `invalid_credentials`, …) : on
+ * cherche d'abord `type`, avec repli sur `code` pour les SDK plus anciens.
+ * Les codes `user_*` sont les seuls que les formulaires d'authentification
+ * rencontrent en pratique.
  */
 const FRENCH_ERRORS = {
   user_already_exists: 'Un compte existe déjà avec cette adresse email.',
   user_inactive: 'Ce compte n’est pas encore activé : consulte l’email de confirmation.',
   user_blocked: 'Ce compte est bloqué. Contacte un administrateur de la bibliothèque.',
-  invalid_credentials: 'Email ou mot de passe incorrect.',
+  user_missing: 'Aucune session active. Connecte-toi pour continuer.',
   user_password_mismatch: 'Le mot de passe actuel est incorrect.',
+  invalid_credentials: 'Email ou mot de passe incorrect.',
   password_policy: 'Mot de passe trop faible : 8 caractères minimum.',
   rate_limit_exceeded: 'Trop de tentatives. Réessaie dans quelques minutes.',
   general_unknown: 'Appwrite n’a pas répondu. Vérifie ta connexion ou réessaie.',
   invalid_origin: 'Origine non autorisée : ajoute ce domaine dans Settings → Domains & Platforms de la console Appwrite.',
 };
 
+/** Erreurs de transport (pas de réponse HTTP) : le navigateur n’a pas joigné Appwrite. */
+const TRANSPORT_ERRORS = /^(fetch failed|failed to fetch|networkerror|load failed|opener? (blocked|error)|econn|err_)/i;
+
 export function describeAppwriteError(error, fallback = 'Action impossible pour le moment.') {
   if (!error) return fallback;
-  const code = error?.code;
-  const known = FRENCH_ERRORS[code];
+  const type = typeof error.type === 'string' ? error.type : error.code;
+  const known = FRENCH_ERRORS[type];
   if (known) return known;
-  const message = typeof error?.message === 'string' ? error.message.trim() : '';
-  if (!message || message === 'Unknown Error') return fallback;
-  return message.charAt(0).toUpperCase() + message.slice(1);
+  if (error.code === 401) return 'Session expirée ou invalide. Reconnecte-toi.';
+  const message = typeof error.response === 'string' && error.response.trim()
+    ? error.response
+    : (typeof error.message === 'string' ? error.message : '');
+  const clean = message.trim();
+  if (!clean || clean === 'Unknown Error') return fallback;
+  // Un « Fetch failed » brut ne parle à personne : c'est presque toujours le
+  // réseau, une origine non déclarée en CORS, ou un projet injoignable.
+  if (TRANSPORT_ERRORS.test(clean) && error.code === undefined) {
+    return 'Appwrite est injoignable : réseau coupé, ou ce domaine n’est pas déclaré dans Settings → Domains & Platforms.';
+  }
+  return clean.charAt(0).toUpperCase() + clean.slice(1);
+}
+
+/** Vrai quand l'erreur signifie simplement « pas de session » (cas normal). */
+export function isMissingSession(error) {
+  return error?.type === 'user_missing' || error?.code === 401;
 }
 
 export { client, account, tables };

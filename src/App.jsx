@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { FiHeart, FiHome, FiSearch } from 'react-icons/fi';
 import CategoryGrid from './components/CategoryGrid';
 import Explorer from './components/Explorer';
@@ -8,24 +8,24 @@ import Hero from './components/Hero';
 import PreviewModal from './components/PreviewModal';
 import SearchPalette from './components/SearchPalette';
 import SideNav from './components/SideNav';
+import AuthPanel from './components/AuthPanel';
 import CloudflareAnalytics from './components/CloudflareAnalytics';
 import { useLibrary } from './hooks/useLibrary';
 import { useIndexCatalog } from './hooks/useIndexCatalog';
-import { useLocalStorage } from './hooks/useLocalStorage';
+import { useAuth } from './hooks/useAuth';
+import { useFavorites } from './hooks/useFavorites';
 import './index.css';
 
 export default function App() {
   const library = useLibrary();
   const catalog = useIndexCatalog();
+  const auth = useAuth();
   const [selectedFile, setSelectedFile] = useState(null);
   const [searchState, setSearchState] = useState({ open: false, mode: 'search' });
-  const [storedFavorites, setStoredFavorites] = useLocalStorage('enise-docs:favorites', []);
-
-  const favoriteItems = useMemo(
-    () => (Array.isArray(storedFavorites) ? storedFavorites.filter((item) => item && typeof item === 'object' && item.path) : []),
-    [storedFavorites],
-  );
-  const favoritePaths = useMemo(() => favoriteItems.map((item) => item.path), [favoriteItems]);
+  const [authPanel, setAuthPanel] = useState({ open: false, mode: 'signin' });
+  const favorites = useFavorites(auth.user);
+  const favoriteItems = favorites.items;
+  const favoritePaths = favorites.paths;
 
   const openSearch = useCallback((mode = 'search') => {
     setSearchState({ open: true, mode });
@@ -35,15 +35,9 @@ export default function App() {
   }, []);
   const closePreview = useCallback(() => setSelectedFile(null), []);
 
-  const toggleFavorite = useCallback((item) => {
-    setStoredFavorites((current) => {
-      const items = Array.isArray(current) ? current.filter((entry) => entry && typeof entry === 'object') : [];
-      if (items.some((entry) => entry.path === item.path)) {
-        return items.filter((entry) => entry.path !== item.path);
-      }
-      return [...items, item];
-    });
-  }, [setStoredFavorites]);
+  const toggleFavorite = favorites.toggle;
+  const openAuth = useCallback((mode = 'signin') => setAuthPanel({ open: true, mode }), []);
+  const closeAuth = useCallback(() => setAuthPanel((current) => ({ ...current, open: false })), []);
 
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -74,7 +68,13 @@ export default function App() {
         <span className="aurora-red" />
       </div>
 
-      <Header navigate={library.navigate} onOpenSearch={() => openSearch('search')} />
+      <Header
+        navigate={library.navigate}
+        onOpenSearch={() => openSearch('search')}
+        onOpenAuth={openAuth}
+        onOpenFavorites={() => openSearch('favorites')}
+        favoriteCount={favoriteItems.length}
+      />
 
       <main id="main-content">
         {library.path === '' && (
@@ -114,6 +114,14 @@ export default function App() {
       </main>
 
       <Footer />
+
+      <AuthPanel
+        open={authPanel.open}
+        mode={authPanel.mode}
+        onModeChange={(mode) => setAuthPanel({ open: true, mode })}
+        onClose={closeAuth}
+        favorites={favorites}
+      />
 
       <nav className="mobile-bottom-nav" aria-label="Navigation mobile">
         <button type="button" className={!library.path ? 'active' : ''} onClick={() => library.navigate('', { scroll: false })}>

@@ -4,7 +4,7 @@ import {
   getAppwritePingState,
   retryAppwritePing,
   subscribeAppwritePing,
-} from '../services/appwrite';
+} from '../services/appwrite.js';
 
 /**
  * Expose l'état du `client.ping()` à React et relance la mesure si besoin.

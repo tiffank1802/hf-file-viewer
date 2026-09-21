@@ -374,9 +374,29 @@ Le frontend est branché sur le projet Appwrite **Django objects**
   **publics** : ils désignent le backend, ils ne l’autorisent pas. Une clé API Appwrite
   ne doit **jamais** porter le préfixe `VITE_` ni apparaître dans `src/`.
 
-La base de données qui porte les profils et les favoris synchronisés, ainsi que les flux
-d’inscription/connexion, sont planifiés dans
-**[`docs/APPWRITE_AUTH_PLAN.md`](docs/APPWRITE_AUTH_PLAN.md)** (phases 1 à 7).
+- `src/services/appwriteAuth.js`, `src/contexts/AuthContext.jsx`, `src/hooks/useAuth.js` :
+  inscription, connexion, vérification d’email, récupération de mot de passe, sessions et
+  profil (`tables profiles`) ;
+- `src/components/AuthPanel.jsx` (panneau de compte) et `src/components/UserChip.jsx` (puce
+  d’en-tête) ;
+- `src/services/favorites.js`, `src/hooks/useFavorites.js`, `src/utils/favoritesMerge.js` :
+  favoris synchronisés dans `tables favorites` avec miroir `localStorage` et file de
+  suppressions (tombstones), pour que le site reste utilisable hors ligne ;
+- `scripts/appwrite-setup.mjs` : provisioning idempotent de la base et des deux tables.
+
+**Le provisioning reste à faire** (aucun accès réseau vers Appwrite depuis l’environnement
+de développement) :
+
+```bash
+APPWRITE_API_KEY="clé serveur (scopes databases:write)" npm run appwrite:setup
+npm run appwrite:ping     # vérifier endpoint, projet et clé
+npm run appwrite:status   # contrôler ce qui existe
+```
+
+Tant que `VITE_APPWRITE_DATABASE_ID` est vide, tous les appels « données » sont
+court-circuités : le site se comporte comme avant, seule la connexion de compte reste
+possible. Le plan complet (schéma, permissions, proxy Worker, sécurité, tests) est dans
+**[`docs/APPWRITE_AUTH_PLAN.md`](docs/APPWRITE_AUTH_PLAN.md)**.
 
 ## API du Worker
 

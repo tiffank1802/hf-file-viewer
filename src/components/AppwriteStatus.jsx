@@ -1,6 +1,6 @@
 import { FiActivity, FiRefreshCw } from 'react-icons/fi';
-import { APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID, APPWRITE_PROJECT_NAME } from '../config';
-import { useAppwritePing } from '../hooks/useAppwritePing';
+import { APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID, APPWRITE_PROJECT_NAME } from '../config.js';
+import { useAppwritePing } from '../hooks/useAppwritePing.js';
 
 const LABELS = {
   idle: 'Appwrite · test en attente',

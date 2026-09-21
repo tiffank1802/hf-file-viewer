@@ -1,7 +1,8 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
-import { ensureAppwritePing } from './services/appwrite';
+import AuthProvider from './contexts/AuthContext';
+import { ensureAppwritePing } from './services/appwrite.js';
 import './index.css';
 
 /**
@@ -20,6 +21,8 @@ ensureAppwritePing().then((state) => {
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <App />
+    <AuthProvider>
+      <App />
+    </AuthProvider>
   </StrictMode>,
 );

@@ -29,6 +29,16 @@ export default [
     },
   },
   {
+    // Exemples client et script de déploiement : exécutés hors du bundle Vite,
+    // donc privés des globals navigateur. Sans ce bloc, `npm run lint` échoue
+    // pour des raisons sans rapport avec le code vérifié.
+    files: ['client-examples/**/*.js', 'scripts/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2024,
+      globals: { ...globals.node, ...globals.browser },
+    },
+  },
+  {
     files: ['worker/**/*.js', 'tests/**/*.js'],
     languageOptions: {
       ecmaVersion: 2024,
@@ -37,7 +47,7 @@ export default [
     },
   },
   {
-    files: ['scripts/**/*.mjs'],
+    files: ['scripts/**/*.{mjs,js}'],
     languageOptions: {
       ecmaVersion: 2024,
       sourceType: 'module',
