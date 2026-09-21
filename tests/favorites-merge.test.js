@@ -10,6 +10,7 @@ import {
   normalizeFavorite,
   normalizeFavoriteList,
   normalizeFavoritePath,
+  planReconcile,
   pruneTombstones,
   withoutTombstones,
   MAX_TOMBSTONES,
@@ -111,4 +112,70 @@ test('favoritePathHash utilise WebCrypto quand il est disponible', async () => {
   const async2 = await favoritePathHash('/GM/3A GM//td1.pdf');
   assert.equal(async1, async2);
   assert.match(async1, /^[0-9a-f]{32}$/);
+});
+
+/* ------------------------------------------------------ le renderer d'un favori */
+
+test('une entrée locale porte le `kind` que PreviewModal sait rendre', () => {
+  // Sans ce champ, ouvrir un favori retombait sur l’écran de téléchargement :
+  // PreviewModal branche le rendu sur `file.kind`, et les favoris n’en portaient
+  // aucun (la table, elle, stocke file/folder — un autre vocabulaire).
+  const kinds = {
+    'GM/3A GM/cours.pdf': 'pdf',
+    'GM/a.docx': 'office',
+    'GM/piece.step': 'model',
+    'TOEIC/track.mp3': 'audio',
+    'GM/photo.png': 'image',
+    'GM/notes.md': 'text',
+  };
+  for (const [path, expected] of Object.entries(kinds)) {
+    assert.equal(normalizeFavorite({ path }).kind, expected, path);
+  }
+  assert.equal(normalizeFavorite({ path: 'GM/4A GM', type: 'directory' }).kind, 'folder');
+  // Une valeur stockée périmée ne doit pas empêcher l'aperçu : le chemin fait foi.
+  assert.equal(normalizeFavorite({ path: 'GM/a.pdf', kind: 'file' }).kind, 'pdf');
+});
+
+test('favoriteFromRow rend une entrée ouvrable, pas seulement listable', () => {
+  const entry = favoriteFromRow({ $id: 'row-1', filePath: 'GM/a.xlsx', kind: 'file', title: 'a.xlsx' });
+  assert.equal(entry.kind, 'office');
+  assert.equal(entry.type, 'file');
+  assert.equal(entry.rowId, 'row-1', 'le rowId évite de relister la table pour supprimer');
+  const folder = favoriteFromRow({ $id: 'row-2', filePath: 'GM/3A GM', kind: 'folder', title: '3A GM' });
+  assert.equal(folder.type, 'directory');
+  assert.equal(folder.kind, 'folder');
+});
+
+/* -------------------------------------------- le miroir local comme file d'attente */
+
+test('cloud illisible : les favoris locaux partent quand même, rien n’est supprimé', () => {
+  // C'est le cœur du correctif : un 403 (ou une panne) sur le LIST ne doit pas
+  // court-circuiter l'écriture, sinon le cache reste la seule copie pour toujours.
+  const plan = planReconcile({
+    cloud: null,
+    cloudUnavailable: true,
+    local: [{ path: 'GM/a.pdf' }, { path: 'GM/b.pdf' }],
+    tombstones: ['GM/b.pdf'],
+  });
+  assert.equal(plan.degraded, true);
+  assert.deepEqual(plan.pending.map((entry) => entry.path), ['GM/a.pdf']);
+  assert.deepEqual(plan.toDelete, [], 'aucune vue du cloud = aucune suppression décrétée');
+  assert.deepEqual(plan.items.map((entry) => entry.path), ['GM/a.pdf']);
+});
+
+test('cloud lisible : le plan reste celui de mergeFavorites', () => {
+  const plan = planReconcile({
+    cloud: [{ path: 'GM/deja-la.pdf', name: 'deja-la.pdf' }],
+    local: [{ path: 'GM/nouveau.pdf' }, { path: 'GM/deja-la.pdf' }],
+    tombstones: [],
+  });
+  assert.equal(plan.degraded, false);
+  assert.deepEqual(plan.pending.map((entry) => entry.path), ['GM/nouveau.pdf']);
+  assert.equal(plan.items.length, 2);
+});
+
+test('cloud absent (table non provisionnée) : plan dégradé aussi, pas d’exception', () => {
+  const plan = planReconcile({ cloud: null, local: [{ path: 'GM/a.pdf' }], tombstones: [] });
+  assert.equal(plan.degraded, true);
+  assert.equal(plan.pending.length, 1);
 });

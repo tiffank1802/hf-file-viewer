@@ -11,6 +11,7 @@ import {
   favoriteFromRow,
   favoritePathHash,
   favoriteToRow,
+  normalizeFavorite,
   normalizeFavoriteList,
   normalizeFavoritePath,
 } from '../utils/favoritesMerge.js';
@@ -102,7 +103,9 @@ export async function addFavorite(userId, entry) {
       data: { userId, pathKey: await favoritePathHash(row.filePath), ...row },
       permissions: rowPermissions(userId),
     });
-    return favoriteFromRow(created);
+    // Repli sur l'entrée envoyée : une réponse Appwrite sans `filePath` ne doit
+    // pas faire perdre le `rowId` (sans lui, la suppression devrait relister).
+    return favoriteFromRow(created) || { ...normalizeFavorite(entry), rowId: created?.$id ?? null };
   } catch (error) {
     // Index unique (userId, pathKey) : le favori existait déjà, tant mieux.
     if (error?.type === 'duplicate_unique') return favoriteFromRow({ ...entry, path: row.filePath });
@@ -152,23 +155,29 @@ export async function pushFavorites(userId, entries) {
   // Fonctionnalité coupée ou rien à envoyer : « aucun échec », sinon la pastille
   // afficherait des favoris en attente qui n'existent pas.
   const blockers = favoritesBlockers(userId);
-  if (blockers.length) return { pushed: 0, failed: [], blockers };
-  if (!list.length) return { pushed: 0, failed: [], blockers };
+  if (blockers.length) return { pushed: 0, failed: [], saved: [], blockers };
+  if (!list.length) return { pushed: 0, failed: [], saved: [], blockers };
 
   const failed = [];
+  const saved = [];
   let pushed = 0;
   for (let index = 0; index < list.length; index += PUSH_BATCH) {
     const batch = list.slice(index, index + PUSH_BATCH);
     const results = await Promise.allSettled(batch.map((entry) => addFavorite(userId, entry)));
     results.forEach((result, offset) => {
-      if (result.status === 'fulfilled') pushed += 1;
+      if (result.status === 'fulfilled') {
+        pushed += 1;
+        // Le `rowId` revient avec l'entrée : sans lui, chaque suppression devrait
+        // relister la table pour retrouver la ligne à supprimer.
+        if (result.value) saved.push(result.value);
+      }
       // La raison voyage avec le chemin : « 3 en attente » sans dire pourquoi
       // est exactement le silence qui a fait chercher du côté d'Appwrite au lieu
       // des permissions de table.
       else failed.push({ path: batch[offset].path, reason: result.reason?.message || 'écriture refusée.' });
     });
   }
-  return { pushed, failed, blockers };
+  return { pushed, failed, saved, blockers };
 }
 
 /** Supprime côté cloud les chemins attendus par la file de suppressions locales. */

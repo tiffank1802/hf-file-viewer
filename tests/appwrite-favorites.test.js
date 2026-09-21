@@ -130,7 +130,7 @@ test('pushFavorites rapporte la raison du refus pour chaque favori', async () =>
   let first = true;
   const restore = stubRows({
     create: () => {
-      if (first) { first = false; return { $id: 'row-1' }; }
+      if (first) { first = false; return { $id: 'row-1', filePath: 'GM/a.pdf', kind: 'file', title: 'a.pdf' }; }
       throw Object.assign(new Error('Invalid document structure: Unknown column'), { code: 400, type: 'invalid_request' });
     },
   });
@@ -141,6 +141,11 @@ test('pushFavorites rapporte la raison du refus pour chaque favori', async () =>
     assert.equal(result.failed[0].path, 'GM/b.pdf');
     assert.match(result.failed[0].reason, /Invalid document structure|Unknown column/, 'la raison brute doit remonter');
     assert.deepEqual(result.blockers, [], 'tout est configuré : aucune cause de coupure');
+    // Le rowId revient : sans lui, retirer le favori exige de relister la table.
+    assert.equal(result.saved.length, 1);
+    assert.equal(result.saved[0].rowId, 'row-1');
+    assert.match(result.saved[0].kind, /pdf|office|text|image|model|audio|video|folder/,
+      'une entrée poussée doit rester ouvrable depuis les favoris');
   } finally {
     restore();
   }

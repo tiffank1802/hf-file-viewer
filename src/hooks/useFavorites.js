@@ -3,9 +3,9 @@ import { useLocalStorage } from './useLocalStorage.js';
 import {
   FAVORITES_STORAGE_KEY,
   FAVORITES_TOMBSTONES_KEY,
-  mergeFavorites,
   normalizeFavoriteList,
   normalizeFavoritePath,
+  planReconcile,
   pruneTombstones,
   withoutTombstones,
 } from '../utils/favoritesMerge.js';
@@ -58,47 +58,67 @@ export function useFavorites(user) {
     setSyncState('loading');
     setSyncError(null);
     try {
-      const cloud = await listFavorites(userId);
-      if (cloud === null) {
-        // Table absente du projet : le miroir local reste la référence.
-        setSyncState('unprovisioned');
-        return;
+      // Étape 1 : lire le cloud. Un échec ici n'EST PAS un motif d'abandon —
+      // voir `planReconcile` : les favoris locaux doivent quand même partir,
+      // sinon une table un temps sans permission reste vide pour toujours.
+      let cloud = null;
+      let unreadable = false;
+      let detail = null;
+      try {
+        const listed = await listFavorites(userId);
+        if (listed === null) {
+          // Table absente du projet : ni lecture possible, ni écriture utile.
+          setSyncState('unprovisioned');
+          return;
+        }
+        cloud = listed;
+      } catch (error) {
+        unreadable = true;
+        detail = error?.message || 'Favoris illisibles pour le moment.';
       }
 
-      const merged = mergeFavorites({ cloud, local: itemsRef.current, tombstones: tombstonesRef.current });
+      const plan = planReconcile({
+        cloud,
+        local: itemsRef.current,
+        tombstones: tombstonesRef.current,
+        cloudUnavailable: unreadable,
+      });
+
+      // Étape 2 : écrire les écarts. L'index unique rend l'opération rejouable.
       const [pushResult, deleteResult] = await Promise.allSettled([
-        pushFavorites(userId, merged.pending),
-        merged.toDelete.length
-          ? deleteFavoritePaths(userId, merged.toDelete)
+        pushFavorites(userId, plan.pending),
+        plan.toDelete.length
+          ? deleteFavoritePaths(userId, plan.toDelete)
           : Promise.resolve({ deleted: 0, failed: [] }),
       ]);
-
       const pushed = pushResult.status === 'fulfilled'
         ? pushResult.value
-        : { pushed: 0, failed: merged.pending.map((entry) => ({ path: entry.path, reason: 'écriture interrompue.' })) };
+        : { pushed: 0, failed: plan.pending.map((entry) => ({ path: entry.path, reason: 'écriture interrompue.' })), saved: [] };
       const removed = deleteResult.status === 'fulfilled'
         ? deleteResult.value
-        : { deleted: 0, failed: merged.toDelete };
+        : { deleted: 0, failed: plan.toDelete };
 
-      setStored(merged.items);
+      // Étape 3 : le miroir local récupère les `rowId` renvoyés par Appwrite —
+      // une suppression directe plutôt qu'un relistage à chaque cœur retiré.
+      const enriched = new Map((pushed.saved ?? []).map((entry) => [entry.path, entry]));
+      setStored(plan.items.map((entry) => enriched.get(entry.path) ?? entry));
       setTombstones((current) =>
-        withoutTombstones(current, merged.toDelete.filter((path) => !removed.failed.includes(path))),
+        withoutTombstones(current, plan.toDelete.filter((path) => !removed.failed.includes(path))),
       );
       setLastSyncAt(Date.now());
 
       const residual = pushed.failed.length + removed.failed.length;
-      setSyncState(residual ? 'partial' : 'synced');
-      if (residual) {
-        // La première raison remonte telle quelle : « 3 en attente » était vrai
-        // et parfaitement inutile quand la cause était une permission de table.
-        const reason = pushed.failed[0]?.reason || 'écriture refusée par Appwrite.';
-        setSyncError(`${residual} favori(s) non enregistré(s) : ${reason}`);
+      if (unreadable) {
+        setSyncState(pushed.pushed ? 'partial' : 'forbidden');
+        setSyncError(`${detail}${pushed.pushed ? ` · ${pushed.pushed} favori(s) tout de même enregistré(s).` : ''}`);
+      } else if (residual) {
+        setSyncState('partial');
+        setSyncError(`${residual} favori(s) non enregistré(s) : ${pushed.failed[0]?.reason || 'écriture refusée par Appwrite.'}`);
+      } else {
+        setSyncState('synced');
       }
     } catch (error) {
-      // Permission refusée ≠ réseau coupé : l'état doit le dire, sinon le
-      // diagnostic part vers Appwrite alors que la table est là et bien remplie
-      // d'un `create()` qui n'a jamais été posé.
-      setSyncState(error?.forbidden ? 'forbidden' : 'offline');
+      setSyncState('offline');
       setSyncError(error?.message || 'Favoris non synchronisés pour le moment.');
     } finally {
       busyRef.current = false;
@@ -146,7 +166,14 @@ export function useFavorites(user) {
     }
 
     addFavorite(userId, { ...entry, path })
-      .then(() => setLastSyncAt(Date.now()))
+      .then((saved) => {
+        setLastSyncAt(Date.now());
+        if (saved?.rowId) {
+          setStored((current) => (Array.isArray(current) ? current : []).map((item) => (
+            item && normalizeFavoritePath(item.path) === path ? { ...item, rowId: saved.rowId } : item
+          )));
+        }
+      })
       .catch((error) => {
         // Le favori reste visible hors ligne et partira à la prochaine synchro.
         setSyncState('offline');

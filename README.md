@@ -446,12 +446,18 @@ Le frontend est branché sur le projet Appwrite **Django objects**
 - `src/components/AuthPanel.jsx` (panneau de compte) et `src/components/UserChip.jsx`
   (puce d’en-tête) ;
 - `src/services/favorites.js`, `src/hooks/useFavorites.js`, `src/utils/favoritesMerge.js` :
-  favoris synchronisés dans la table `favorites`, avec miroir `localStorage` et file de
-  suppressions (tombstones) pour rester utilisable hors ligne. L'état de synchro est
-  lisible (Paramètres → Compte → Favoris) : `local` (pas de session), `à jour`, `partiel`,
-  `hors ligne`, `table absente` (projet non provisionné) ou `permission refusée` — ce
-  dernier cas nomme la cause, parce qu'une table `favorites` sans `create()` laisse
-  l'interface parfaitement crédible pendant que la base reste vide ;
+  favoris synchronisés dans la table `favorites`. **Le miroir `localStorage` est la file
+  d'attente**, pas un simple cache : une écriture refusée (permission, réseau, 403) est
+  repoussée à la synchro suivante, l'index unique `(userId, pathKey)` rendant chaque
+  réessai inoffensif ; et une lecture impossible n'annule jamais l'envoi (`planReconcile`
+  mode dégradé), sinon un compte resté localement ne rattraperait jamais le cloud. Les
+  suppressions passent par une file de tombstones. L'état de synchro est lisible
+  (Paramètres → Compte → Favoris) : `local`, `à jour`, `partiel`, `hors ligne`,
+  `table absente` ou `permission refusée` — ce dernier nomme la cause, parce qu'une table
+  sans `create()` laisse l'interface parfaitement crédible pendant que la base reste vide.
+  Un favori porte aussi le `kind` du renderer (`pdf`, `office`, `model`…) dérivé du chemin :
+  la table, elle, stocke `file`/`folder`, et sans ce champ l'ouverture depuis les favoris
+  retombait sur l'écran de téléchargement ;
 - `scripts/appwrite-setup.mjs` : provisioning idempotent de la base et des deux tables.
 
 ```bash

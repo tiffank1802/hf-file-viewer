@@ -284,6 +284,12 @@ Le site stocke déjà les favoris sous la clé `enise-docs:favorites`
 1. `src/services/favorites.js` : `listFavorites()`, `addFavorite(item)`, `removeFavorite(path)`,
    `setFavoriteNote(path, note)` — tous en **optimiste** (state local d'abord, écriture ensuite,
    retour arrière en cas d'échec + `toast` discret).
+1bis. **Le cache local est la file d'attente**, pas un niveau de présentation :
+   `planReconcile({ cloudUnavailable })` pousse les entrées locales même quand la lecture
+   du cloud a échoué (403 de permission, réseau), et ne décrète aucune suppression dans ce
+   cas — pas de vue du cloud, pas de droit de détruire. L'index unique rend l'opération
+   rejouable, donc aucun troisième stockage « pending » n'est nécessaire.
+
 2. `src/hooks/useFavorites.js` : fusionne trois sources avec la règle
    `cloud ⊕ local − supprimés` ; hors ligne ⇒ local seul + badge « non synchronisé ».
    Abonnement `Realtime` sur `Channel.tablesdb(APPWRITE_DATABASE_ID).table('favorites')`
