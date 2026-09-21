@@ -1,13 +1,13 @@
 import { ID, Permission, Role } from 'appwrite';
 import { APPWRITE_OAUTH_PROVIDER } from '../config.js';
 import {
-  DATABASE_ID,
   PROFILE_TABLE_ID,
   account,
   describeAppwriteError,
   hasDatabase,
+  isMissingRow,
   isMissingSession,
-  tables,
+  rows,
 } from './appwrite.js';
 
 /**
@@ -275,13 +275,9 @@ function cleanProfileInput({ displayName, bio, promotion, filiere } = {}) {
 export async function readOwnProfile(user) {
   if (!hasDatabase() || !user?.$id) return null;
   try {
-    return await tables.getRow({
-      databaseId: DATABASE_ID,
-      tableId: PROFILE_TABLE_ID,
-      rowId: ID.custom(user.$id),
-    });
+    return await rows.get({ tableId: PROFILE_TABLE_ID, rowId: ID.custom(user.$id) });
   } catch (error) {
-    if (error?.type === 'row_missing' || error?.code === 404) return upsertOwnProfile(user);
+    if (isMissingRow(error)) return upsertOwnProfile(user);
     throw authError(error, 'Profil illisible.');
   }
 }
@@ -290,8 +286,7 @@ export async function readOwnProfile(user) {
 export async function upsertOwnProfile(user, input = {}) {
   if (!hasDatabase() || !user?.$id) return null;
   try {
-    return await tables.upsertRow({
-      databaseId: DATABASE_ID,
+    return await rows.upsert({
       tableId: PROFILE_TABLE_ID,
       rowId: ID.custom(user.$id),
       data: { userId: user.$id, ...cleanProfileInput(input) },

@@ -423,7 +423,7 @@ ajoutée plus tard.
 | --- | --- | --- |
 | Client, endpoint, projet | `src/config.js`, `src/services/appwrite.js` | ✅ |
 | `client.ping()` au démarrage + pastille | `src/main.jsx`, `src/components/AppwriteStatus.jsx`, `src/hooks/useAppwritePing.js` | ✅ |
-| Provisioning idempotent (base, tables, colonnes, index, permissions) | `scripts/appwrite-setup.mjs` (`npm run appwrite:setup`, `--dry-run`, `--ping`, `--status`, `--drop`) | ✅ code / ⏳ à exécuter avec une clé serveur |
+| Provisioning idempotent (base, tables, colonnes, index, permissions) + auto‑détection du dialecte d’API | `scripts/appwrite-setup.mjs` (`npm run appwrite:setup`, `--diagnose`, `--dry-run`, `--ping`, `--status`, `--drop`, `--flavor=`) | ✅ code / ⏳ à exécuter avec une clé serveur |
 | Service de compte (inscription, connexion, sessions, vérification, récupération, mot de passe, préférences, export RGPD) | `src/services/appwriteAuth.js` | ✅ |
 | Contexte de session + restauration au chargement | `src/contexts/AuthContext.jsx`, `src/contexts/auth-context.js`, `src/hooks/useAuth.js` | ✅ |
 | Panneau de compte (connexion / inscription / mot de passe oublié / profil) | `src/components/AuthPanel.jsx` | ✅ |
@@ -432,6 +432,7 @@ ajoutée plus tard.
 | Tests | `tests/appwrite-config.test.js`, `tests/appwrite-auth.test.js`, `tests/favorites-merge.test.js` | ✅ 109 tests |
 | Lint vert (globals ESLint de `client-examples/` et `scripts/*.js` ajoutés) | `eslint.config.js` | ✅ |
 | `!tests/*.test.js` dans le `.gitignore` | `.gitignore` | ✅ |
+| Façade `rows` (contrat unique TablesDB / API héritée `Databases`) | `src/services/appwrite.js`, `src/config.js` (`VITE_APPWRITE_FLAVOR`) | ✅ |
 | Fonction serveur de création du profil, proxy `/api/auth/*`, labels d’admin | phases 4 et 5 | ⏳ planifié |
 | Realtime sur la table `favorites` | — | ⏳ volontairement laissé hors de cette passe (vérification impossible sans réseau) |
 
@@ -449,3 +450,31 @@ transport **client direct d’abord** puis proxy Worker au déploiement, base **
    (le sandbox n'a pas de route vers Appwrite), avec la checklist console en secours.
 5. **Reste ouvert** : activer ou non OAuth GitHub (`VITE_APPWRITE_OAUTH_PROVIDER`) ; le
    `UserChip` et le panneau sont déjà prêts à afficher le bouton si la variable est renseignée.
+
+---
+
+## 13. Diagnostic d'un provisioning qui échoue
+
+Le script ne peut plus confondre « Appwrite refuse » et « le réseau ne répond pas » :
+une réponse d'Appwrite est **toujours du JSON** avec un `type` d'erreur.
+
+| Sortie du script | Ce que ça veut dire | Que faire |
+| --- | --- | --- |
+| `POST /tablesdb → 404 Not Found` (texte, pas de JSON) | **Ce n'est pas Appwrite qui répond** : egress du sandbox ou proxy d'entreprise qui renvoie son propre 404 | Lancer le script depuis une machine qui joint Internet, ou provisionner dans la console (§3.2). `npm run appwrite:diagnose` le confirme |
+| `aucune route réseau vers … (ECONNRESET)` | TLS coupé vers `fra.cloud.appwrite.io` | Idem ; avec un proxy : `HTTPS_PROXY=http://127.0.0.1:port npm run appwrite:setup` |
+| `401` | `APPWRITE_API_KEY` absente, expirée, révoquée | Recréer la clé (Console → API Keys) |
+| `403` | clé sans scope suffisant | Ajouter `databases:write` (et `tablesdb:write` sur les plans récents) |
+| `404` **en JSON**, `type: general_route_not_found` | L'instance ne sert pas `/v1/tablesdb` (projet antérieur à l'API 2.x) | Relancer en `--flavor=databases` puis fixer `VITE_APPWRITE_FLAVOR="databases"` : la façade `rows` du client bascule sur l'API héritée, aucun autre changement de code |
+| `429` | limite de débit de la clé | Réessayer, ou réduire le nombre de tables recréées d'un coup |
+
+Commandes de triage, sans clé :
+
+```bash
+npm run appwrite:ping       # attend exactement : "Welcome to the Appwrite REST API"
+node scripts/appwrite-setup.mjs --diagnose   # qui répond, sur quelles routes
+node scripts/appwrite-setup.mjs --dry-run    # les appels qui seraient faits
+```
+
+Le client n'a pas besoin d'attendre le provisioning : `APPWRITE_DATABASE_ID` vide
+court‑circuite `rows.*`, donc ni erreur ni requête — seul le `ping` et la connexion
+de compte restent actifs.

@@ -1,6 +1,7 @@
-import { Account, Client, TablesDB } from 'appwrite';
+import { Account, Client, Databases, TablesDB } from 'appwrite';
 import {
   APPWRITE_DATABASE_ID,
+  APPWRITE_FLAVOR,
   APPWRITE_ENABLED,
   APPWRITE_ENDPOINT,
   APPWRITE_FAVORITES_TABLE_ID,
@@ -20,6 +21,73 @@ const client = new Client()
 
 const account = new Account(client);
 const tables = new TablesDB(client);
+const databases = new Databases(client);
+
+/** 'tablesdb' (Appwrite 2.x) ou 'databases' (API héritée 1.x). */
+export const FLAVOR = APPWRITE_FLAVOR;
+
+/** Une « table » et une « collection » sont le même objet selon le dialecte. */
+const CONTAINER = FLAVOR === 'databases' ? 'collection' : 'table';
+
+/** Vrai quand la ligne visée n'existe pas encore (les deux dialectes ne disent pas la même chose). */
+export function isMissingRow(error) {
+  return error?.type === 'row_missing' || error?.type === 'document_missing' || error?.code === 404;
+}
+
+/**
+ * Façade de lignes : le reste de l'app ignore le dialecte.
+ *
+ * `list` normalise la réponse (`rows` pour TablesDB, `documents` pour
+ * l'API héritée) pour que `useFavorites` n'ait pas de branche de compat.
+ */
+export const rows = {
+  get({ tableId, rowId }) {
+    return FLAVOR === 'databases'
+      ? databases.getDocument(DATABASE_ID, tableId, rowId)
+      : tables.getRow({ databaseId: DATABASE_ID, tableId, rowId });
+  },
+
+  async list({ tableId, queries = [] }) {
+    const result = FLAVOR === 'databases'
+      ? await databases.listDocuments(DATABASE_ID, tableId, queries)
+      : await tables.listRows({ databaseId: DATABASE_ID, tableId, queries });
+    return {
+      rows: result?.documents ?? result?.rows ?? [],
+      total: result?.total ?? 0,
+    };
+  },
+
+  create({ tableId, rowId, data, permissions }) {
+    return FLAVOR === 'databases'
+      ? databases.createDocument(DATABASE_ID, tableId, rowId, data, permissions)
+      : tables.createRow({ databaseId: DATABASE_ID, tableId, rowId, data, permissions });
+  },
+
+  update({ tableId, rowId, data, permissions }) {
+    return FLAVOR === 'databases'
+      ? databases.updateDocument(DATABASE_ID, tableId, rowId, data, permissions)
+      : tables.updateRow({ databaseId: DATABASE_ID, tableId, rowId, data, permissions });
+  },
+
+  remove({ tableId, rowId }) {
+    return FLAVOR === 'databases'
+      ? databases.deleteDocument(DATABASE_ID, tableId, rowId)
+      : tables.deleteRow({ databaseId: DATABASE_ID, tableId, rowId });
+  },
+
+  /** L'API héritée n'a pas d'upsert : on le simule, sans écraser les permissions. */
+  async upsert({ tableId, rowId, data, permissions }) {
+    if (FLAVOR !== 'databases') {
+      return tables.upsertRow({ databaseId: DATABASE_ID, tableId, rowId, data, permissions });
+    }
+    try {
+      return await databases.updateDocument(DATABASE_ID, tableId, rowId, data);
+    } catch (error) {
+      if (!isMissingRow(error)) throw error;
+      return databases.createDocument(DATABASE_ID, tableId, rowId, data, permissions);
+    }
+  },
+};
 
 /**
  * État du test de connexion (`client.ping()`), exposé à l'interface.
@@ -113,6 +181,9 @@ const FRENCH_ERRORS = {
   rate_limit_exceeded: 'Trop de tentatives. Réessaie dans quelques minutes.',
   general_unknown: 'Appwrite n’a pas répondu. Vérifie ta connexion ou réessaie.',
   invalid_origin: 'Origine non autorisée : ajoute ce domaine dans Settings → Domains & Platforms de la console Appwrite.',
+  user_unauthorized: 'Permission refusée par Appwrite : ce compte n’a pas accès à cette donnée.',
+  table_not_found: 'Table absente du projet : relance npm run appwrite:setup.',
+  collection_not_found: 'Collection absente du projet : relance npm run appwrite:setup.',
 };
 
 /** Erreurs de transport (pas de réponse HTTP) : le navigateur n’a pas joigné Appwrite. */
@@ -142,4 +213,4 @@ export function isMissingSession(error) {
   return error?.type === 'user_missing' || error?.code === 401;
 }
 
-export { client, account, tables };
+export { client, account, tables, databases, CONTAINER };

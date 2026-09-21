@@ -5,6 +5,7 @@ import test from 'node:test';
 
 import {
   APPWRITE_DATABASE_ID,
+  APPWRITE_FLAVOR,
   APPWRITE_ENDPOINT,
   APPWRITE_FAVORITES_TABLE_ID,
   APPWRITE_PROFILE_TABLE_ID,
@@ -51,6 +52,13 @@ test('aucune clé API Appwrite ne transite par le frontend', () => {
   }
   // La clé serveur n'existe qu'en commentaire, côté .dev.vars.
   assert.match(read('.dev.vars.example'), /# APPWRITE_API_KEY=""/);
+});
+
+test('le dialecte des données est choisi par une variable publique, pas par du code', () => {
+  // TablesDB est la norme sur Appwrite 2.x ; 'databases' sert de repli sur les
+  // instances qui ne servent pas encore /v1/tablesdb.
+  assert.equal(APPWRITE_FLAVOR, 'tablesdb');
+  assert.match(read('src/config.js'), /VITE_APPWRITE_FLAVOR === 'databases' \? 'databases' : 'tablesdb'/);
 });
 
 test('le ping de configuration est appelé une seule fois au démarrage', () => {

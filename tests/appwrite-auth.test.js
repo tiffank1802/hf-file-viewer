@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import test from 'node:test';
 
-import { describeAppwriteError, hasDatabase, isMissingSession } from '../src/services/appwrite.js';
+const ROOT = resolve(import.meta.dirname, '..');
+
+import { describeAppwriteError, hasDatabase, isMissingRow, isMissingSession, rows } from '../src/services/appwrite.js';
 import {
   MIN_PASSWORD_LENGTH,
   getCurrentUser,
@@ -69,6 +73,32 @@ test('sans base provisionnée, aucune requête réseau n’est tentée', async (
   assert.deepEqual(await pushFavorites('user-1', [{ path: 'a.pdf' }]), { pushed: 0, failed: [] });
   assert.equal(await readOwnProfile({ $id: 'user-1' }), null);
   assert.equal(await upsertOwnProfile({ $id: 'user-1' }, { promotion: '3A' }), null);
+});
+
+test('la façade de lignes expose un contrat unique aux deux dialectes', () => {
+  for (const method of ['get', 'list', 'create', 'update', 'remove', 'upsert']) {
+    assert.equal(typeof rows[method], 'function', `rows.${method} doit exister`);
+  }
+  // Les deux API ne parlent pas le même vocabulaire : le reste de l'app ne doit
+  // jamais le connaître (sinon la bascule --flavor=databases casserait).
+  for (const file of ['src/services/favorites.js', 'src/services/appwriteAuth.js']) {
+    const source = readFileSync(resolve(ROOT, file), 'utf8');
+    assert.doesNotMatch(source, /tables\.\w+Row\(/, `${file} doit passer par rows.*, pas tables.*Row`);
+    assert.doesNotMatch(source, /databases\.\w+Document\(/, `${file} doit passer par rows.*, pas databases.*Document`);
+  }
+});
+
+test('isMissingRow couvre les deux vocabulaires d’erreur', () => {
+  assert.equal(isMissingRow({ type: 'row_missing' }), true);
+  assert.equal(isMissingRow({ type: 'document_missing' }), true);
+  assert.equal(isMissingRow({ code: 404 }), true);
+  assert.equal(isMissingRow({ code: 403, type: 'user_unauthorized' }), false);
+  // Et le message reste français pour un utilisateur non autorisé.
+  assert.equal(
+    describeAppwriteError({ type: 'user_unauthorized', code: 403 }),
+    'Permission refusée par Appwrite : ce compte n’a pas accès à cette donnée.',
+  );
+  assert.equal(describeAppwriteError({ type: 'table_not_found', code: 404 }), 'Table absente du projet : relance npm run appwrite:setup.');
 });
 
 test('une panne réseau remonte un message français, jamais « Fetch failed »', async () => {

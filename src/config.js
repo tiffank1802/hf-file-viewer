@@ -27,6 +27,14 @@ export const APPWRITE_ENABLED = Boolean(APPWRITE_ENDPOINT && APPWRITE_PROJECT_ID
 export const APPWRITE_DATABASE_ID = appwriteEnv.VITE_APPWRITE_DATABASE_ID || '';
 export const APPWRITE_PROFILE_TABLE_ID = appwriteEnv.VITE_APPWRITE_PROFILE_TABLE_ID || 'profiles';
 export const APPWRITE_FAVORITES_TABLE_ID = appwriteEnv.VITE_APPWRITE_FAVORITES_TABLE_ID || 'favorites';
+/**
+ * Dialecte d'API des données. Appwrite 2.x sert TablesDB (`tables`/`rows`) ;
+ * les instances plus anciennes ou les projets sans TablesDB n'exposent que
+ * l'API héritée `Databases` (`collections`/`documents`). `scripts/appwrite-setup.mjs`
+ * imprime la valeur détectée à la fin du provisioning.
+ */
+export const APPWRITE_FLAVOR = appwriteEnv.VITE_APPWRITE_FLAVOR === 'databases' ? 'databases' : 'tablesdb';
+
 /** Fournisseur OAuth2 actif dans les settings Appwrite du projet ('' = désactivé). */
 export const APPWRITE_OAUTH_PROVIDER = appwriteEnv.VITE_APPWRITE_OAUTH_PROVIDER || '';
 

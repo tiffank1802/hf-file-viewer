@@ -1,38 +1,53 @@
 #!/usr/bin/env node
 /**
- * Provisioning Appwrite pour ENISE Docs : base TablesDB `enise_docs`, tables
+ * Provisioning Appwrite pour ENISE Docs : base `enise_docs`, tables
  * `profiles` et `favorites`, colonnes, index et permissions.
  *
  * Idempotent : chaque création est précédée d'une lecture, un conflit (409) est
  * ignoré. Relançable après une interruption.
  *
- *   APPWRITE_API_KEY="clé serveur" node scripts/appwrite-setup.mjs
- *   APPWRITE_API_KEY="…" node scripts/appwrite-setup.mjs --dry-run   # affiche les appels
- *   node scripts/appwrite-setup.mjs --ping                            # réseau + projet
- *   node scripts/appwrite-setup.mjs --status                          # ce qui existe
- *   node scripts/appwrite-setup.mjs --drop                            # supprime les tables
+ *   APPWRITE_API_KEY="***" node scripts/appwrite-setup.mjs
+ *   node scripts/appwrite-setup.mjs --diagnose        # qui répond, et sur quelles routes
+ *   node scripts/appwrite-setup.mjs --ping
+ *   node scripts/appwrite-setup.mjs --status
+ *   node scripts/appwrite-setup.mjs --dry-run
+ *   node scripts/appwrite-setup.mjs --drop
+ *   node scripts/appwrite-setup.mjs --flavor=databases   # force l'API héritée
  *
- * Scopes minimaux de la clé : databases:write (et users:read si tu ajoutes des
- * rôles plus tard). La clé ne doit JAMAIS être commitée ni porter un préfixe
- * VITE_ : elle atterrirait dans le bundle du navigateur.
+ * Scopes minimaux de la clé : databases:write. Elle ne doit JAMAIS être commitée
+ * ni porter un préfixe VITE_ : elle atterrirait dans le bundle du navigateur.
  */
 import { APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID } from '../src/config.js';
 
-const args = new Set(process.argv.slice(2));
-const DRY_RUN = args.has('--dry-run');
-const DROP = args.has('--drop');
-const PING = args.has('--ping');
-const STATUS = args.has('--status');
+const argv = process.argv.slice(2);
+const flags = new Set(argv.filter((a) => a.startsWith('--') && !a.includes('=')));
+const option = (name, fallback) => {
+  const hit = argv.find((a) => a.startsWith(`--${name}=`));
+  return hit ? hit.slice(name.length + 3) : fallback;
+};
+
+const DRY_RUN = flags.has('--dry-run');
+const DROP = flags.has('--drop');
+const PING = flags.has('--ping');
+const STATUS = flags.has('--status');
+const DIAGNOSE = flags.has('--diagnose');
+const VERBOSE = flags.has('--verbose');
+const TIMEOUT_MS = Number(process.env.APPWRITE_TIMEOUT_MS || 30_000);
 
 const ENDPOINT = (process.env.APPWRITE_ENDPOINT || APPWRITE_ENDPOINT).replace(/\/$/, '');
 const PROJECT = process.env.APPWRITE_PROJECT_ID || APPWRITE_PROJECT_ID;
 const API_KEY = process.env.APPWRITE_API_KEY || '';
 const DATABASE_ID = process.env.APPWRITE_DATABASE_ID || 'enise_docs';
+const FLAVOR_REQUEST = option('flavor', process.env.APPWRITE_FLAVOR || 'auto').toLowerCase();
 
 /** Rôles Appwrite, au format littéral attendu par l'API. */
 const ROLE_USERS = 'users';
 const ROLE_USERS_VERIFIED = 'users/verified';
 
+/**
+ * Modèle de données commun aux deux API. Seule la traduction change (spec plus
+ * bas) : `columns`/`attributes`, `rowSecurity`/`documentSecurity`, etc.
+ */
 const TABLES = [
   {
     id: 'profiles',
@@ -40,13 +55,13 @@ const TABLES = [
     rowSecurity: true,
     permissions: [`create("${ROLE_USERS_VERIFIED}")`, `read("${ROLE_USERS}")`],
     columns: [
-      { path: 'string', key: 'userId', size: 36, required: true },
-      { path: 'string', key: 'displayName', size: 128, required: true, default: '' },
-      { path: 'enum', key: 'promotion', elements: ['3A', '4A', '5A', 'Alumni', 'Staff'], required: true, default: '3A' },
-      { path: 'enum', key: 'filiere', elements: ['GM', 'TOEIC', 'Autre'], required: true, default: 'GM' },
-      { path: 'string', key: 'bio', size: 280, required: false, default: '' },
-      { path: 'boolean', key: 'emailVerified', required: true, default: false },
-      { path: 'datetime', key: 'lastSeenAt', required: false },
+      { type: 'string', key: 'userId', size: 36, required: true },
+      { type: 'string', key: 'displayName', size: 128, required: true, default: '' },
+      { type: 'enum', key: 'promotion', elements: ['3A', '4A', '5A', 'Alumni', 'Staff'], required: true, default: '3A' },
+      { type: 'enum', key: 'filiere', elements: ['GM', 'TOEIC', 'Autre'], required: true, default: 'GM' },
+      { type: 'string', key: 'bio', size: 280, required: false, default: '' },
+      { type: 'boolean', key: 'emailVerified', required: true, default: false },
+      { type: 'datetime', key: 'lastSeenAt', required: false },
     ],
     indexes: [
       { key: 'uniq_profile_user', type: 'unique', columns: ['userId'] },
@@ -59,12 +74,12 @@ const TABLES = [
     rowSecurity: true,
     permissions: [`create("${ROLE_USERS_VERIFIED}")`],
     columns: [
-      { path: 'string', key: 'userId', size: 36, required: true },
-      { path: 'string', key: 'filePath', size: 1024, required: true },
-      { path: 'string', key: 'pathKey', size: 64, required: true },
-      { path: 'enum', key: 'kind', elements: ['file', 'folder'], required: true, default: 'file' },
-      { path: 'string', key: 'title', size: 240, required: false, default: '' },
-      { path: 'string', key: 'note', size: 280, required: false, default: '' },
+      { type: 'string', key: 'userId', size: 36, required: true },
+      { type: 'string', key: 'filePath', size: 1024, required: true },
+      { type: 'string', key: 'pathKey', size: 64, required: true },
+      { type: 'enum', key: 'kind', elements: ['file', 'folder'], required: true, default: 'file' },
+      { type: 'string', key: 'title', size: 240, required: false, default: '' },
+      { type: 'string', key: 'note', size: 280, required: false, default: '' },
     ],
     indexes: [
       // L'index unique porte sur la clé courte : une colonne de 1024 caractères
@@ -76,29 +91,154 @@ const TABLES = [
   },
 ];
 
-async function call(method, path, body) {
+/** Deux dialectes REST pour la même intention. */
+const SPECS = {
+  tablesdb: {
+    label: 'TablesDB (API 2.x)',
+    listDatabases: '/tablesdb?limit=1',
+    database: (db) => `/tablesdb/${db}`,
+    createDatabase: () => ({ path: '/tablesdb', body: { databaseId: DATABASE_ID, name: 'ENISE Docs' } }),
+    table: (db, table) => `/tablesdb/${db}/tables/${table}`,
+    createTable: (db, table) => ({
+      path: `/tablesdb/${db}/tables`,
+      body: { tableId: table.id, name: table.name, rowSecurity: table.rowSecurity, enabled: true },
+    }),
+    updatePermissions: (db, table) => ({ path: `/tablesdb/${db}/tables/${table.id}`, body: { permissions: table.permissions } }),
+    column: (db, table, column) => ({
+      path: `/tablesdb/${db}/tables/${table.id}/columns/${column.type}`,
+      body: { key: column.key, ...strip(column, 'type') },
+    }),
+    columnPath: (db, table, column) => `/tablesdb/${db}/tables/${table.id}/columns/${column.key}`,
+    index: (db, table, index) => ({
+      path: `/tablesdb/${db}/tables/${table.id}/indexes`,
+      body: { key: index.key, type: index.type, columns: index.columns },
+    }),
+    indexPath: (db, table, index) => `/tablesdb/${db}/tables/${table.id}/indexes/${index.key}`,
+    flavor: 'tablesdb',
+  },
+  databases: {
+    label: 'Databases (API héritée 1.x)',
+    listDatabases: '/databases?limit=1',
+    database: (db) => `/databases/${db}`,
+    createDatabase: () => ({ path: '/databases', body: { databaseId: DATABASE_ID, name: 'ENISE Docs' } }),
+    table: (db, table) => `/databases/${db}/collections/${table.id}`,
+    createTable: (db, table) => ({
+      path: `/databases/${db}/collections`,
+      body: {
+        collectionId: table.id,
+        name: table.name,
+        permissions: table.permissions,
+        documentSecurity: table.rowSecurity,
+        enabled: true,
+      },
+    }),
+    updatePermissions: (db, table) => ({
+      path: `/databases/${db}/collections/${table.id}`,
+      body: { permissions: table.permissions },
+    }),
+    column: (db, table, column) => ({
+      path: `/databases/${db}/collections/${table.id}/attributes/${column.type}`,
+      body: { key: column.key, ...strip(column, 'type') },
+    }),
+    columnPath: (db, table, column) => `/databases/${db}/collections/${table.id}/attributes/${column.key}`,
+    index: (db, table, index) => ({
+      path: `/databases/${db}/collections/${table.id}/indexes/${index.type}`,
+      body: { key: index.key, attributes: index.columns },
+    }),
+    indexPath: (db, table, index) => `/databases/${db}/collections/${table.id}/indexes/${index.key}`,
+    flavor: 'databases',
+  },
+};
+
+function strip(object, ...keys) {
+  const copy = { ...object };
+  for (const key of keys) delete copy[key];
+  return copy;
+}
+
+class ApiError extends Error {
+  constructor(message, details) {
+    super(message);
+    Object.assign(this, details);
+  }
+}
+
+async function request(method, path, body) {
   const url = `${ENDPOINT}/v1${path}`;
-  if (DRY_RUN) return { __dryRun: true };
-  const response = await fetch(url, {
-    method,
-    headers: {
-      'content-type': 'application/json',
-      accept: 'application/json',
-      'x-appwrite-project': PROJECT,
-      ...(API_KEY ? { 'x-appwrite-key': API_KEY } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  if (VERBOSE) console.log(`  → ${method} ${path}`);
+  let response;
+  try {
+    response = await fetch(url, {
+      method,
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+        'x-appwrite-project': PROJECT,
+        ...(API_KEY ? { 'x-appwrite-key': API_KEY } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch (error) {
+    const cause = error?.cause?.code || error?.name || 'ERROR';
+    throw new ApiError(`${cause}`, { transport: true, method, path, url, cause });
+  }
+
   const text = await response.text();
-  let payload = {};
-  try { payload = text ? JSON.parse(text) : {}; } catch { /* réponse non JSON (proxy, 502…) */ }
+  let payload = null;
+  try { payload = text ? JSON.parse(text) : null; } catch { payload = null; }
   if (!response.ok) {
-    throw Object.assign(new Error(payload?.message || `${response.status} ${response.statusText}`), {
-      status: response.status, type: payload?.type, method, path,
+    throw new ApiError(payload?.message || `${response.status} ${response.statusText}`, {
+      status: response.status,
+      type: payload?.type,
+      method,
+      path,
+      url,
+      isJson: payload !== null,
+      contentType: response.headers.get('content-type'),
+      server: response.headers.get('server'),
+      rawBody: text.slice(0, 300).replace(/\s+/g, ' ').trim(),
     });
   }
-  return payload;
+  return payload ?? {};
 }
+
+/** Message actionnable : ce qui a échoué n'est presque jamais Appwrite. */
+function explain(error) {
+  if (error.transport) {
+    return [
+      `aucune route réseau vers ${ENDPOINT} (${error.cause}).`,
+      '  L’API Appwrite n’est pas joignable depuis ce poste : egress filtré (TLS coupé) ou proxy',
+      '  d’entreprise. Vérifie avec :  curl -i ' + `${ENDPOINT}/v1/ping`,
+      '  Si un proxy est requis :  HTTPS_PROXY="http://127.0.0.1:port" npm run appwrite:setup',
+      '  Sinon, provisionne depuis la console (checklist docs/APPWRITE_AUTH_PLAN.md §3.2) ou',
+      '  depuis une machine qui joint Internet, puis relance ce script avec --status.',
+    ].join('\n');
+  }
+  if (error.status === 404 && !error.isJson) {
+    return [
+      `${error.method} ${error.url} → 404 texte, pas du JSON : ce n’est pas l’API Appwrite qui répond.`,
+      `  serveur = ${error.server || 'inconnu'}, content-type = ${error.contentType || 'aucun'}`,
+      '  corps   = ' + (error.rawBody || '(vide)'),
+      '  Causes classiques : egress du sandbox qui renvoie son propre 404, proxy, ou',
+      '  endpoint erroné. Un 404 Appwrite légitime est TOUJOURS en JSON avec',
+      '  "type":"general_route_not_found". Utilise --diagnose pour trancher.',
+    ].join('\n');
+  }
+  if (error.status === 404) {
+    return `${error.method} ${error.path} → 404 (${error.type || 'general_route_not_found'}) : cette route n’existe pas sur cette instance. Bascule avec --flavor=${otherFlavor(FLAVOR) || 'databases'}.`;
+  }
+  if (error.status === 401) return `401 : APPWRITE_API_KEY absente, expirée ou révoquée (${error.method} ${error.path}).`;
+  if (error.status === 403) return `403 : la clé n’a pas le scope nécessaire (databases:write) pour ${error.method} ${error.path}.`;
+  if (error.status === 429) return '429 : limite de débit atteinte, réessaie dans une minute.';
+  return `${error.method ?? ''} ${error.path ?? ''} → ${error.message}`.trim();
+}
+
+function otherFlavor(flavor) {
+  return flavor === 'tablesdb' ? 'databases' : flavor === 'databases' ? 'tablesdb' : null;
+}
+
+let FLAVOR = null;
 
 /** GET puis POST : renvoie 'created' | 'exists' | 'skipped' | 'planned'. */
 async function ensure(getPath, postPath, body, label) {
@@ -107,17 +247,16 @@ async function ensure(getPath, postPath, body, label) {
     return 'planned';
   }
   try {
-    await call('GET', getPath);
+    await request('GET', getPath);
     console.log(`  ✓ ${label} — déjà en place`);
     return 'exists';
   } catch (error) {
+    if (error.transport) throw error;
     if (error.status !== 404 && error.status !== 403) throw error;
-    if (error.status === 403 && !DRY_RUN) {
-      console.warn(`  ! ${label} — illisible avec cette clé, création tentée`);
-    }
+    if (error.status === 403) console.warn(`  ! ${label} — illisible avec cette clé, création tentée`);
   }
   try {
-    await call('POST', postPath, body);
+    await request('POST', postPath, body);
     console.log(`  + ${label} — créée`);
     return 'created';
   } catch (error) {
@@ -126,7 +265,7 @@ async function ensure(getPath, postPath, body, label) {
       return 'exists';
     }
     // Un type d'index non supporté par le moteur ne doit pas bloquer le reste.
-    if (/index/i.test(error.message) && /not support|invalid|unsupported/i.test(error.message)) {
+    if (/index/i.test(`${error.message} ${error.path}`) && /not support|invalid|unsupported/i.test(error.message)) {
       console.warn(`  ! ${label} — ignoré : ${error.message}`);
       return 'skipped';
     }
@@ -134,28 +273,76 @@ async function ensure(getPath, postPath, body, label) {
   }
 }
 
-async function ping() {
-  const response = await fetch(`${ENDPOINT}/v1/ping`, { headers: { 'x-appwrite-project': PROJECT } });
-  console.log(`ping ${ENDPOINT} → ${response.status} ${await response.text()}`);
-  if (!response.ok) process.exitCode = 1;
+/** Sonde les deux dialectes et choisit celui que l'instance sert réellement. */
+async function resolveFlavor() {
+  if (FLAVOR_REQUEST !== 'auto') return FLAVOR_REQUEST;
+  const report = [];
+  for (const name of ['tablesdb', 'databases']) {
+    const spec = SPECS[name];
+    try {
+      await request('GET', spec.listDatabases);
+      report.push([name, 'ok']);
+      FLAVOR = name;
+      return name;
+    } catch (error) {
+      if (error.transport) { report.push([name, error.cause]); throw error; }
+      // 401/403 prouve que la route existe (sinon Appwrite répond 404 JSON).
+      report.push([name, error.status === 404 ? `404 ${error.isJson ? 'json' : 'non-json'}` : `${error.status} (route existante)`]);
+      if (error.status && error.status !== 404) { FLAVOR = name; return name; }
+    }
+  }
+  console.warn('  ! ni /v1/tablesdb ni /v1/databases ne répondent : tablesDB indisponible,',
+    'j’essaie quand même l’API héritée.');
+  FLAVOR = 'databases';
+  return 'databases';
+}
+
+async function diagnose() {
+  console.log(`endpoint : ${ENDPOINT}`);
+  console.log(`projet   : ${PROJECT}`);
+  console.log(`clé      : ${API_KEY ? 'présente' : 'absente'} (len ${API_KEY.length})`);
+  let ping;
+  try {
+    const response = await fetch(`${ENDPOINT}/v1/ping`, { headers: { 'x-appwrite-project': PROJECT }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    const body = (await response.text()).slice(0, 120).replace(/\s+/g, ' ');
+    ping = { status: response.status, contentType: response.headers.get('content-type'), server: response.headers.get('server'), body };
+    console.log(`ping     : HTTP ${response.status} · content-type=${ping.contentType} · server=${ping.server} · corps="${body}"`);
+    if (response.status !== 200 || !/appwrite/i.test(ping.server || '')) {
+      console.log('           ↑ le 200 d’Appwrite a un corps exactement "Welcome to the Appwrite REST API".');
+      console.log('             Un 404 HTML ou un server != Appwrite = proxy/egress, pas ton projet.');
+    }
+  } catch (error) {
+    console.log(`ping     : ${error?.cause?.code || error?.name} — réseau sortant coupé vers cet hôte`);
+  }
+  for (const name of ['tablesdb', 'databases']) {
+    try {
+      await request('GET', SPECS[name].listDatabases);
+      console.log(`route    : /v1${SPECS[name].listDatabases} → 200 (API ${name} disponible)`);
+    } catch (error) {
+      console.log(`route    : /v1${SPECS[name].listDatabases} → ${error.transport ? error.cause : `${error.status} ${error.isJson ? 'json' : 'non-json'}`}`);
+    }
+  }
 }
 
 async function status() {
-  const database = await call('GET', `/tablesdb/${DATABASE_ID}`).catch((error) => {
-    console.log(`base ${DATABASE_ID} : absente (${error.status ?? error.message})`);
+  const spec = SPECS[FLAVOR];
+  const database = await request('GET', spec.database(DATABASE_ID)).catch((error) => {
+    console.log(`base ${DATABASE_ID} : ${error.status ? `absente (${error.status})` : error.cause}`);
     return null;
   });
   if (!database) return;
-  console.log(`base ${DATABASE_ID} : ${database.name}`);
+  console.log(`base ${DATABASE_ID} — ${database.name} (${FLAVOR})`);
   for (const table of TABLES) {
-    const row = await call('GET', `/tablesdb/${DATABASE_ID}/tables/${table.id}`).catch(() => null);
-    console.log(`  table ${table.id} : ${row ? `${row.columns?.length ?? '?'} colonnes, rowSecurity=${row.rowSecurity}` : 'absente'}`);
+    const row = await request('GET', spec.table(DATABASE_ID, table)).catch(() => null);
+    const columns = row?.columns ?? row?.attributes ?? [];
+    console.log(`  ${table.id} : ${row ? `${columns.length} colonnes, sécurité par ligne=${row.rowSecurity ?? row.documentSecurity}` : 'absente'}`);
   }
 }
 
 async function drop() {
+  const spec = SPECS[FLAVOR];
   for (const table of [...TABLES].reverse()) {
-    await call('DELETE', `/tablesdb/${DATABASE_ID}/tables/${table.id}`).catch((error) => {
+    await request('DELETE', spec.table(DATABASE_ID, table)).catch((error) => {
       console.warn(`  − table ${table.id} : ${error.status === 404 ? 'absente' : error.message}`);
     });
   }
@@ -163,67 +350,79 @@ async function drop() {
 }
 
 async function main() {
-  if (PING) return ping();
+  if (PING || DIAGNOSE) {
+    if (DIAGNOSE) return diagnose();
+    try {
+      const response = await fetch(`${ENDPOINT}/v1/ping`, { headers: { 'x-appwrite-project': PROJECT }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+      console.log(`ping ${ENDPOINT} → ${response.status} ${(await response.text()).slice(0, 120)}`);
+      if (!response.ok) process.exitCode = 1;
+    } catch (error) {
+      console.log(explain(new ApiError(String(error?.cause?.code || error?.name), { transport: true, cause: error?.cause?.code || error?.name })));
+      process.exitCode = 1;
+    }
+    return;
+  }
 
-  if (!API_KEY && !DRY_RUN) {
+  if (!API_KEY && !DRY_RUN && !STATUS && !PING && !DIAGNOSE) {
     console.error(
       'APPWRITE_API_KEY manquante. Crée une clé serveur dans Console → API Keys\n'
-      + '(scopes databases:write) puis relance :\n'
-      + '  APPWRITE_API_KEY="…" node scripts/appwrite-setup.mjs\n'
-      + 'Utilise --dry-run pour voir les appels sans clé, --ping pour tester le réseau.',
+      + '(scope databases:write) puis relance :\n'
+      + '  APPWRITE_API_KEY="***" npm run appwrite:setup\n'
+      + '--diagnose, --ping et --dry-run fonctionnent sans clé.',
     );
     process.exitCode = 1;
     return;
   }
 
+  console.log(`\nAppwrite ${ENDPOINT} · projet ${PROJECT}`);
+  const flavor = await resolveFlavor();
+  const spec = SPECS[flavor];
+  console.log(`api      : ${spec.label}${FLAVOR_REQUEST === 'auto' ? ' (auto-détectée)' : ' (imposée par --flavor)'}\n`);
+
   if (STATUS) return status();
   if (DROP) return drop();
 
-  console.log(`\nAppwrite ${ENDPOINT} · projet ${PROJECT}\n`);
-  await ensure(`/tablesdb/${DATABASE_ID}`, '/tablesdb', { databaseId: DATABASE_ID, name: 'ENISE Docs' }, `base ${DATABASE_ID}`);
+  await ensure(spec.database(DATABASE_ID), spec.createDatabase().path, spec.createDatabase().body, `base ${DATABASE_ID}`);
 
   for (const table of TABLES) {
-    console.log(`\ntable ${table.id}`);
-    await ensure(
-      `/tablesdb/${DATABASE_ID}/tables/${table.id}`,
-      `/tablesdb/${DATABASE_ID}/tables`,
-      { tableId: table.id, name: table.name, rowSecurity: table.rowSecurity, enabled: true },
-      table.id,
-    );
+    console.log(`\n${spec.flavor === 'tablesdb' ? 'table' : 'collection'} ${table.id}`);
+    await ensure(spec.table(DATABASE_ID, table), spec.createTable(DATABASE_ID, table).path, spec.createTable(DATABASE_ID, table).body, table.id);
     for (const column of table.columns) {
-      const { path, ...body } = column;
       await ensure(
-        `/tablesdb/${DATABASE_ID}/tables/${table.id}/columns/${body.key}`,
-        `/tablesdb/${DATABASE_ID}/tables/${table.id}/columns/${path}`,
-        { key: body.key, ...body },
-        `colonne ${body.key}`,
+        spec.columnPath(DATABASE_ID, table, column),
+        spec.column(DATABASE_ID, table, column).path,
+        spec.column(DATABASE_ID, table, column).body,
+        `${spec.flavor === 'tablesdb' ? 'colonne' : 'attribut'} ${column.key}`,
       );
     }
     for (const index of table.indexes) {
       await ensure(
-        `/tablesdb/${DATABASE_ID}/tables/${table.id}/indexes/${index.key}`,
-        `/tablesdb/${DATABASE_ID}/tables/${table.id}/indexes`,
-        { key: index.key, type: index.type, columns: index.columns },
+        spec.indexPath(DATABASE_ID, table, index),
+        spec.index(DATABASE_ID, table, index).path,
+        spec.index(DATABASE_ID, table, index).body,
         `index ${index.key}`,
       );
     }
-    // Les permissions ne peuvent pas être lues par un GET simple : on les pose à chaque run.
-    await call('PATCH', `/tablesdb/${DATABASE_ID}/tables/${table.id}`, { permissions: table.permissions })
-      .then(() => {
-        if (DRY_RUN) console.log(`  · permissions → PATCH /tablesdb/${DATABASE_ID}/tables/${table.id} ${JSON.stringify({ permissions: table.permissions })}`);
-        else console.log('  ✓ permissions de table appliquées');
-      })
-      .catch((error) => console.warn(`  ! permissions : ${error.message}`));
+    // Les permissions ne sont pas lisibles par un GET simple : on les pose à chaque run.
+    const permissions = spec.updatePermissions(DATABASE_ID, table);
+    if (DRY_RUN) {
+      console.log(`  · permissions → PATCH ${permissions.path} ${JSON.stringify(permissions.body)}`);
+    } else {
+      await request('PATCH', permissions.path, permissions.body)
+        .then(() => console.log('  ✓ permissions appliquées'))
+        .catch((error) => console.warn(`  ! permissions : ${explain(error).split('\n')[0]}`));
+    }
   }
 
   console.log([
     '',
     'À faire ensuite',
     '---------------',
-    `1. Variables publiques du build (déjà codées en dur dans src/config.js) :`,
+    '1. Variables publiques du build :',
     `   VITE_APPWRITE_DATABASE_ID="${DATABASE_ID}"`,
     '   VITE_APPWRITE_PROFILE_TABLE_ID="profiles"',
     '   VITE_APPWRITE_FAVORITES_TABLE_ID="favorites"',
+    `   VITE_APPWRITE_FLAVOR="${flavor}"`,
     '2. Console → Settings → Domains & Platforms : ajouter le hostname du site et',
     '   localhost, sinon le navigateur bloque les appels en CORS.',
     '3. Console → Settings → Auth : mot de passe minimum 12 caractères, vérification',
@@ -235,7 +434,7 @@ async function main() {
 }
 
 await main().catch((error) => {
-  console.error(`\n✗ ${error.method ? `${error.method} ${error.path} → ` : ''}${error.message}`);
-  if (error.status === 401) console.error('  La clé serveur est manquante, expirée ou sans scope suffisant.');
+  console.error(`\n✗ ${explain(error)}`);
+  if (VERBOSE && error?.stack) console.error(error.stack);
   process.exitCode = 1;
 });

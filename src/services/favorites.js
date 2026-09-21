@@ -1,10 +1,10 @@
 import { ID, Permission, Query, Role } from 'appwrite';
 import {
-  DATABASE_ID,
   FAVORITES_TABLE_ID,
   describeAppwriteError,
   hasDatabase,
-  tables,
+  isMissingRow,
+  rows,
 } from './appwrite.js';
 import {
   favoriteFromRow,
@@ -48,8 +48,7 @@ function fail(error, fallback) {
 export async function listFavorites(userId) {
   if (!favoritesEnabled() || !userId) return [];
   try {
-    const result = await tables.listRows({
-      databaseId: DATABASE_ID,
+    const result = await rows.list({
       tableId: FAVORITES_TABLE_ID,
       queries: [
         Query.equal('userId', userId),
@@ -57,11 +56,10 @@ export async function listFavorites(userId) {
         Query.limit(FAVORITES_PAGE_LIMIT),
       ],
     });
-    const rows = Array.isArray(result?.rows) ? result.rows : [];
-    return rows.map(favoriteFromRow).filter(Boolean);
+    return (Array.isArray(result.rows) ? result.rows : []).map(favoriteFromRow).filter(Boolean);
   } catch (error) {
     // Table absente (projet non provisionné) : le site retombe sur le miroir local.
-    if (error?.type === 'row_missing' || error?.code === 404 || error?.code === 403) return null;
+    if (isMissingRow(error) || error?.code === 403) return null;
     throw fail(error, 'Lecture des favoris impossibles.');
   }
 }
@@ -70,8 +68,7 @@ export async function addFavorite(userId, entry) {
   if (!favoritesEnabled() || !userId) return null;
   const row = favoriteToRow(entry);
   try {
-    const created = await tables.createRow({
-      databaseId: DATABASE_ID,
+    const created = await rows.create({
       tableId: FAVORITES_TABLE_ID,
       rowId: ID.unique(),
       data: { userId, pathKey: await favoritePathHash(row.filePath), ...row },
@@ -94,10 +91,10 @@ export async function removeFavorite(userId, { rowId, path }) {
       target = (rows || []).find((item) => normalizeFavoritePath(item.path) === normalizeFavoritePath(path))?.rowId;
     }
     if (!target) return false;
-    await tables.deleteRow({ databaseId: DATABASE_ID, tableId: FAVORITES_TABLE_ID, rowId: target });
+    await rows.remove({ tableId: FAVORITES_TABLE_ID, rowId: target });
     return true;
   } catch (error) {
-    if (error?.type === 'row_missing' || error?.code === 404) return true;
+    if (isMissingRow(error)) return true;
     throw fail(error, 'Suppression du favori impossible.');
   }
 }
@@ -105,8 +102,7 @@ export async function removeFavorite(userId, { rowId, path }) {
 export async function setFavoriteNote(userId, rowId, note) {
   if (!favoritesEnabled() || !userId || !rowId) return null;
   try {
-    return await tables.updateRow({
-      databaseId: DATABASE_ID,
+    return await rows.update({
       tableId: FAVORITES_TABLE_ID,
       rowId,
       data: { note: String(note ?? '').slice(0, 280) },
@@ -147,7 +143,7 @@ export async function deleteFavoritePaths(userId, paths) {
   const wanted = new Set(paths.map(normalizeFavoritePath));
   const targets = rows.filter((row) => wanted.has(normalizeFavoritePath(row.path)));
   const results = await Promise.allSettled(
-    targets.map((row) => tables.deleteRow({ databaseId: DATABASE_ID, tableId: FAVORITES_TABLE_ID, rowId: row.rowId })),
+    targets.map((row) => rows.remove({ tableId: FAVORITES_TABLE_ID, rowId: row.rowId })),
   );
   const deleted = results.filter((r) => r.status === 'fulfilled').length;
   const failed = targets.filter((row, index) => results[index].status === 'rejected').map((row) => row.path);
