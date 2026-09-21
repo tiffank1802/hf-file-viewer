@@ -1,24 +1,24 @@
 #!/usr/bin/env node
 /**
- * Provisioning Appwrite pour ENISE Docs : base `enise_docs`, tables
- * `profiles` et `favorites`, colonnes, index et permissions.
+ * Provisioning Appwrite pour ENISE Docs : base `enise_docs`, tables `profiles`
+ * et `favorites`, colonnes, index et permissions.
  *
- * Idempotent : chaque création est précédée d'une lecture, un conflit (409) est
- * ignoré. Relançable après une interruption.
+ * Le modèle et les chemins vivent dans `scripts/appwrite-spec.js` (testé dans
+ * `tests/appwrite-provisioning-plan.test.js`) : --dry-run, --status, --drop et
+ * le run réel consomment le même plan, donc ils ne peuvent plus diverger.
  *
- *   APPWRITE_API_KEY="***" node scripts/appwrite-setup.mjs
- *   node scripts/appwrite-setup.mjs --diagnose        # qui répond, et sur quelles routes
- *   node scripts/appwrite-setup.mjs --ping
- *   node scripts/appwrite-setup.mjs --status
- *   node scripts/appwrite-setup.mjs --dry-run
- *   node scripts/appwrite-setup.mjs --drop
- *   node scripts/appwrite-setup.mjs --flavor=databases   # force l'API héritée
+ *   npm run appwrite:ping                                  # réseau + endpoint
+ *   node scripts/appwrite-setup.mjs --diagnose             # qui répond, où
+ *   APPWRITE_API_KEY="***" npm run appwrite:setup          # provisioning
+ *   npm run appwrite:status                                # contrôle après run
+ *   node scripts/appwrite-setup.mjs --flavor=databases     # force l'API 1.x
+ *   node scripts/appwrite-setup.mjs --drop                 # retire les tables
  *
- * Scopes minimaux de la clé : databases:write. Elle ne doit JAMAIS être commitée
- * ni porter un préfixe VITE_ : elle atterrirait dans le bundle du navigateur.
+ * La clé serveur ne doit JAMAIS être commitée ni porter un préfixe VITE_.
  */
 import { APPWRITE_API_BASE, APPWRITE_PROJECT_ID } from '../src/config.js';
 import { looksLikeAppwriteResponse, normalizeAppwriteEndpoint } from '../src/utils/appwriteEndpoint.js';
+import { SPECS, TABLES, buildPlan } from './appwrite-spec.js';
 
 const argv = process.argv.slice(2);
 const flags = new Set(argv.filter((a) => a.startsWith('--') && !a.includes('=')));
@@ -35,8 +35,8 @@ const DIAGNOSE = flags.has('--diagnose');
 const VERBOSE = flags.has('--verbose');
 const TIMEOUT_MS = Number(process.env.APPWRITE_TIMEOUT_MS || 30_000);
 
-// Base normalisée : l'endpoint public contient déjà /v1, coller nos chemins
-// derrière sans normaliser produisait /v1/v1/… (404 HTML d'Appwrite).
+// L'endpoint public contient déjà /v1 : normaliser évite le /v1/v1 qui valait
+// à ce script un 404 HTML d'Appwrite pris pour un blocage réseau.
 const API_BASE = normalizeAppwriteEndpoint(process.env.APPWRITE_ENDPOINT || APPWRITE_API_BASE);
 const PROJECT = process.env.APPWRITE_PROJECT_ID || APPWRITE_PROJECT_ID;
 const API_KEY = process.env.APPWRITE_API_KEY || '';
@@ -44,125 +44,8 @@ const DATABASE_ID = process.env.APPWRITE_DATABASE_ID || 'enise_docs';
 const FLAVOR_REQUEST = option('flavor', process.env.APPWRITE_FLAVOR || 'auto').toLowerCase();
 const SPECIFICATION = option('specification', process.env.APPWRITE_SPECIFICATION || 'auto');
 
-/** Rôles Appwrite, au format littéral attendu par l'API. */
-const ROLE_USERS = 'users';
-const ROLE_USERS_VERIFIED = 'users/verified';
-
-/**
- * Modèle de données commun aux deux API. Seule la traduction change (spec plus
- * bas) : `columns`/`attributes`, `rowSecurity`/`documentSecurity`, etc.
- */
-const TABLES = [
-  {
-    id: 'profiles',
-    name: 'Profils étudiants',
-    rowSecurity: true,
-    permissions: [`create("${ROLE_USERS_VERIFIED}")`, `read("${ROLE_USERS}")`],
-    columns: [
-      { type: 'string', key: 'userId', size: 36, required: true },
-      { type: 'string', key: 'displayName', size: 128, required: true, default: '' },
-      { type: 'enum', key: 'promotion', elements: ['3A', '4A', '5A', 'Alumni', 'Staff'], required: true, default: '3A' },
-      { type: 'enum', key: 'filiere', elements: ['GM', 'TOEIC', 'Autre'], required: true, default: 'GM' },
-      { type: 'string', key: 'bio', size: 280, required: false, default: '' },
-      { type: 'boolean', key: 'emailVerified', required: true, default: false },
-      { type: 'datetime', key: 'lastSeenAt', required: false },
-    ],
-    indexes: [
-      { key: 'uniq_profile_user', type: 'unique', columns: ['userId'] },
-      { key: 'idx_profile_promotion', type: 'key', columns: ['promotion'] },
-    ],
-  },
-  {
-    id: 'favorites',
-    name: 'Favoris synchronisés',
-    rowSecurity: true,
-    permissions: [`create("${ROLE_USERS_VERIFIED}")`],
-    columns: [
-      { type: 'string', key: 'userId', size: 36, required: true },
-      { type: 'string', key: 'filePath', size: 1024, required: true },
-      { type: 'string', key: 'pathKey', size: 64, required: true },
-      { type: 'enum', key: 'kind', elements: ['file', 'folder'], required: true, default: 'file' },
-      { type: 'string', key: 'title', size: 240, required: false, default: '' },
-      { type: 'string', key: 'note', size: 280, required: false, default: '' },
-    ],
-    indexes: [
-      // L'index unique porte sur la clé courte : une colonne de 1024 caractères
-      // dépasse la taille maximale acceptée pour une clé d'index par le moteur.
-      { key: 'uniq_favorite_user_path', type: 'unique', columns: ['userId', 'pathKey'] },
-      { key: 'idx_favorite_user_created', type: 'key', columns: ['userId', '$createdAt'] },
-      { key: 'fulltext_favorite', type: 'fulltext', columns: ['title', 'note'] },
-    ],
-  },
-];
-
-/** Deux dialectes REST pour la même intention. */
-const SPECS = {
-  tablesdb: {
-    label: 'TablesDB (API 2.x)',
-    listDatabases: '/tablesdb?limit=1',
-    database: (db) => `/tablesdb/${db}`,
-    createDatabase: (extra) => ({ path: '/tablesdb', body: { databaseId: DATABASE_ID, name: 'ENISE Docs', ...extra } }),
-    table: (db, table) => `/tablesdb/${db}/tables/${table}`,
-    createTable: (db, table) => ({
-      path: `/tablesdb/${db}/tables`,
-      body: { tableId: table.id, name: table.name, rowSecurity: table.rowSecurity, enabled: true },
-    }),
-    updatePermissions: (db, table) => ({ path: `/tablesdb/${db}/tables/${table.id}`, body: { permissions: table.permissions } }),
-    column: (db, table, column) => ({
-      path: `/tablesdb/${db}/tables/${table.id}/columns/${column.type}`,
-      body: { key: column.key, ...strip(column, 'type') },
-    }),
-    columnPath: (db, table, column) => `/tablesdb/${db}/tables/${table.id}/columns/${column.key}`,
-    index: (db, table, index) => ({
-      path: `/tablesdb/${db}/tables/${table.id}/indexes`,
-      body: { key: index.key, type: index.type, columns: index.columns },
-    }),
-    indexPath: (db, table, index) => `/tablesdb/${db}/tables/${table.id}/indexes/${index.key}`,
-    flavor: 'tablesdb',
-    // Les plans Cloud récents demandent une spécification (serveurless ou
-    // dédiée). Sur une instance qui n'expose pas cette route, on omet le champ.
-    specifications: '/tablesdb/specifications',
-  },
-  databases: {
-    label: 'Databases (API héritée 1.x)',
-    listDatabases: '/databases?limit=1',
-    database: (db) => `/databases/${db}`,
-    createDatabase: () => ({ path: '/databases', body: { databaseId: DATABASE_ID, name: 'ENISE Docs' } }),
-    specifications: null,
-    table: (db, table) => `/databases/${db}/collections/${table.id}`,
-    createTable: (db, table) => ({
-      path: `/databases/${db}/collections`,
-      body: {
-        collectionId: table.id,
-        name: table.name,
-        permissions: table.permissions,
-        documentSecurity: table.rowSecurity,
-        enabled: true,
-      },
-    }),
-    updatePermissions: (db, table) => ({
-      path: `/databases/${db}/collections/${table.id}`,
-      body: { permissions: table.permissions },
-    }),
-    column: (db, table, column) => ({
-      path: `/databases/${db}/collections/${table.id}/attributes/${column.type}`,
-      body: { key: column.key, ...strip(column, 'type') },
-    }),
-    columnPath: (db, table, column) => `/databases/${db}/collections/${table.id}/attributes/${column.key}`,
-    index: (db, table, index) => ({
-      path: `/databases/${db}/collections/${table.id}/indexes/${index.type}`,
-      body: { key: index.key, attributes: index.columns },
-    }),
-    indexPath: (db, table, index) => `/databases/${db}/collections/${table.id}/indexes/${index.key}`,
-    flavor: 'databases',
-  },
-};
-
-function strip(object, ...keys) {
-  const copy = { ...object };
-  for (const key of keys) delete copy[key];
-  return copy;
-}
+/** `/v1/ping` répond exactement « Pong! » en text/plain — pas un JSON. */
+const PING_BODY = /^Pong!$/;
 
 class ApiError extends Error {
   constructor(message, details) {
@@ -193,7 +76,7 @@ async function request(method, path, body) {
     });
   } catch (error) {
     const cause = error?.cause?.code || error?.name || 'ERROR';
-    throw new ApiError(`${cause}`, { transport: true, method, path, url, cause });
+    throw new ApiError(String(cause), { transport: true, method, path, url, cause });
   }
 
   const text = await response.text();
@@ -215,71 +98,57 @@ async function request(method, path, body) {
   return payload ?? {};
 }
 
-/** Message actionnable : distinguer le réseau, le proxy, la route et l'autorisation. */
+function otherFlavor(flavor) {
+  return flavor === 'tablesdb' ? 'databases' : flavor === 'databases' ? 'tablesdb' : null;
+}
+
+/** Message actionnable : distinguer le réseau, la route, le proxy et l'autorisation. */
 function explain(error) {
   if (error.transport) {
     return [
       `aucune route réseau vers ${API_BASE} (${error.cause}).`,
-      `  L’API Appwrite n’est pas joignable depuis ce poste : egress filtré (TLS coupé) ou proxy d’entreprise.`,
-      `  Vérifie avec :  curl -i ${API_BASE}/ping`,
-      '  Si un proxy est requis :  HTTPS_PROXY="http://127.0.0.1:port" npm run appwrite:setup',
-      '  Sinon, provisionne depuis la console (checklist docs/APPWRITE_AUTH_PLAN.md §3.2) ou',
-      '  depuis une machine qui joint Internet, puis relance ce script avec --status.',
+      '  L’API Appwrite n’est pas joignable depuis ce poste : egress filtré (TLS coupé) ou proxy.',
+      '  Avec un proxy :  HTTPS_PROXY="http://127.0.0.1:port" npm run appwrite:setup',
+      '  Sinon : provisionne depuis la console (docs/APPWRITE_AUTH_PLAN.md §3.2) ou depuis',
+      '  une machine qui joint Internet, puis relance ce script avec --status.',
     ].join('\n');
   }
   if (error.status === 404 && !error.isJson) {
     const { fromAppwrite } = looksLikeAppwriteResponse({ server: error.server, contentType: error.contentType });
     if (fromAppwrite) {
       return [
-        `${error.method} ${error.url} → Appwrite a répondu (en-tête server = ${error.server}) mais ne connaît pas cette route.`,
-        `  content-type = ${error.contentType} (page HTML du Console, pas l’API).`,
-        '  L’accès sortant fonctionne donc : c’est la ROUTE qui est fausse.',
-        `  Base utilisée = ${API_BASE} ; elle doit finir par un unique /v1`,
-        '  (ex. https://fra.cloud.appwrite.io/v1). Un …/v1/v1 est le cas classique.',
+        `${error.method} ${error.url} → Appwrite a répondu (server = ${error.server}) mais ne connaît pas cette route.`,
+        `  content-type = ${error.contentType} : page du Console, pas l’API. Le réseau est donc bon.`,
+        `  Base utilisée = ${API_BASE} ; elle doit finir par un unique /v1.`,
       ].join('\n');
     }
     return [
       `${error.method} ${error.url} → 404 texte, pas du JSON : ce n’est pas l’API Appwrite qui répond.`,
       `  serveur = ${error.server || 'inconnu'}, content-type = ${error.contentType || 'aucun'}`,
       '  corps   = ' + (error.rawBody || '(vide)'),
-      '  Causes classiques : egress du sandbox qui renvoie son propre 404, ou proxy.',
-      '  Un 404 Appwrite légitime est TOUJOURS en JSON avec',
-      '  "type":"general_route_not_found". Utilise --diagnose pour trancher.',
+      '  Egress filtré ou proxy. Un 404 Appwrite légitime est TOUJOURS en JSON avec',
+      '  "type":"general_route_not_found" — vois --diagnose.',
     ].join('\n');
   }
   if (error.status === 404) {
-    return `${error.method} ${error.path} → 404 (${error.type || 'general_route_not_found'}) : cette route n’existe pas sur cette instance. Bascule avec --flavor=${otherFlavor(FLAVOR) || 'databases'}.`;
+    const hint = otherFlavor(FLAVOR) ? ` Si la route est absente de cette instance : --flavor=${otherFlavor(FLAVOR)}.` : '';
+    return `${error.method} ${error.path} → 404 (${error.type || 'general_route_not_found'}) : route inconnue de cette instance.${hint}`;
   }
   if (error.status === 401) return `401 : APPWRITE_API_KEY absente, expirée ou révoquée (${error.method} ${error.path}).`;
   if (error.status === 403) return `403 : la clé n’a pas le scope nécessaire (databases:write) pour ${error.method} ${error.path}.`;
+  if (error.status === 400) {
+    return [
+      `400 sur ${error.method} ${error.path} : ${error.message}`,
+      '  Appwrite valide les UID (36 caractères, [a-zA-Z0-9_.-], pas de _ initial) et les',
+      '  types d’index : si le message cite « specification », relance avec',
+      '  --specification=<id> (liste : GET /v1/tablesdb/specifications).',
+    ].join('\n');
+  }
   if (error.status === 429) return '429 : limite de débit atteinte, réessaie dans une minute.';
   return `${error.method ?? ''} ${error.path ?? ''} → ${error.message}`.trim();
 }
 
-function otherFlavor(flavor) {
-  return flavor === 'tablesdb' ? 'databases' : flavor === 'databases' ? 'tablesdb' : null;
-}
-
 let FLAVOR = null;
-
-/**
- * Spécification à demander pour créer une base TablesDB.
- *
- * 'auto' lit /v1/tablesdb/specifications et retient la première offre serveurless
- * ; une instance qui ne sert pas cette route (ou une liste vide) donne `undefined`,
- * donc le champ est omis et le serveur applique son défaut.
- */
-async function pickSpecification(listPath) {
-  if (SPECIFICATION === 'none') return undefined;
-  if (SPECIFICATION !== 'auto') return SPECIFICATION;
-  const list = await request('GET', listPath)
-    .then((payload) => (Array.isArray(payload?.specifications) ? payload.specifications : []))
-    .catch(() => []);
-  const serverless = list.find((item) => item?.serverless === true) ?? list.find((item) => /serverless/i.test(String(item?.slug ?? item?.id ?? '')));
-  const chosen = serverless?.slug ?? serverless?.id;
-  if (chosen) console.log(`  · spécification retenue : ${chosen}`);
-  return chosen || undefined;
-}
 
 /** GET puis POST : renvoie 'created' | 'exists' | 'skipped' | 'planned'. */
 async function ensure(getPath, postPath, body, label) {
@@ -305,7 +174,6 @@ async function ensure(getPath, postPath, body, label) {
       console.log(`  ✓ ${label} — déjà en place (conflit ignoré)`);
       return 'exists';
     }
-    // Un type d'index non supporté par le moteur ne doit pas bloquer le reste.
     if (/index/i.test(`${error.message} ${error.path}`) && /not support|invalid|unsupported/i.test(error.message)) {
       console.warn(`  ! ${label} — ignoré : ${error.message}`);
       return 'skipped';
@@ -314,47 +182,81 @@ async function ensure(getPath, postPath, body, label) {
   }
 }
 
+/**
+ * Spécification TablesDB : 'auto' lit /tablesdb/specifications et retient la
+ * première offre serveurless. Une instance qui ne sert pas cette route, ou une
+ * liste vide, omet le champ et laisse le serveur appliquer son défaut.
+ */
+async function pickSpecification(listPath) {
+  if (!listPath || SPECIFICATION === 'none') return undefined;
+  if (SPECIFICATION !== 'auto') return SPECIFICATION;
+  const list = await request('GET', listPath)
+    .then((payload) => (Array.isArray(payload?.specifications) ? payload.specifications : []))
+    .catch(() => []);
+  const serverless = list.find((item) => item?.serverless === true)
+    ?? list.find((item) => /serverless/i.test(String(item?.slug ?? item?.id ?? '')));
+  const chosen = serverless?.slug ?? serverless?.id;
+  if (chosen) console.log(`  · spécification retenue : ${chosen}`);
+  return chosen || undefined;
+}
+
 /** Sonde les deux dialectes et choisit celui que l'instance sert réellement. */
 async function resolveFlavor() {
-  if (FLAVOR_REQUEST !== 'auto') return FLAVOR_REQUEST;
-  const report = [];
+  if (FLAVOR_REQUEST !== 'auto') {
+    if (!SPECS[FLAVOR_REQUEST]) throw new ApiError(`--flavor inconnu : ${FLAVOR_REQUEST} (attendu tablesdb ou databases)`);
+    FLAVOR = FLAVOR_REQUEST;
+    return FLAVOR_REQUEST;
+  }
   for (const name of ['tablesdb', 'databases']) {
-    const spec = SPECS[name];
     try {
-      await request('GET', spec.listDatabases);
-      report.push([name, 'ok']);
+      await request('GET', SPECS[name].listDatabases);
       FLAVOR = name;
       return name;
     } catch (error) {
-      if (error.transport) { report.push([name, error.cause]); throw error; }
-      // 401/403 prouve que la route existe (sinon Appwrite répond 404 JSON).
-      report.push([name, error.status === 404 ? `404 ${error.isJson ? 'json' : 'non-json'}` : `${error.status} (route existante)`]);
+      if (error.transport) throw error;
+      // 401/403 : la route existe, c'est l'authentification qui manque.
       if (error.status && error.status !== 404) { FLAVOR = name; return name; }
     }
   }
-  console.warn('  ! ni /v1/tablesdb ni /v1/databases ne répondent : tablesDB indisponible,',
-    'j’essaie quand même l’API héritée.');
+  console.warn('  ! ni /tablesdb ni /databases ne répondent en 401/200 : repli sur l’API héritée.');
   FLAVOR = 'databases';
   return 'databases';
+}
+
+async function pingOnly() {
+  const url = `${API_BASE}/ping`;
+  try {
+    const response = await fetch(url, { headers: { 'x-appwrite-project': PROJECT }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    const body = (await response.text()).trim();
+    const ok = response.status === 200 && PING_BODY.test(body);
+    console.log(`ping ${url} → ${response.status} ${body.slice(0, 120)}${ok ? '  ✓ endpoint et réseau valides' : ''}`);
+    if (!ok) {
+      console.log(`  attendu : HTTP 200 et le corps exact « Pong! ». Toute autre réponse = route ou proxy.`);
+      process.exitCode = 1;
+    }
+  } catch (error) {
+    console.log(explain(new ApiError(String(error?.cause?.code || error?.name), { transport: true, cause: error?.cause?.code || error?.name, method: 'GET', path: '/ping', url })));
+    process.exitCode = 1;
+  }
 }
 
 async function diagnose() {
   console.log(`base     : ${API_BASE}`);
   console.log(`projet   : ${PROJECT}`);
   console.log(`clé      : ${API_KEY ? 'présente' : 'absente'} (len ${API_KEY.length})`);
-  let ping;
+  console.log(`attendu  : HTTP 200 + corps exact « Pong! » sur ${API_BASE}/ping`);
   try {
     const response = await fetch(`${API_BASE}/ping`, { headers: { 'x-appwrite-project': PROJECT }, signal: AbortSignal.timeout(TIMEOUT_MS) });
     const body = (await response.text()).slice(0, 120).replace(/\s+/g, ' ');
-    ping = { status: response.status, contentType: response.headers.get('content-type'), server: response.headers.get('server'), body };
-    console.log(`ping     : HTTP ${response.status} · content-type=${ping.contentType} · server=${ping.server} · corps="${body}"`);
-    const { fromAppwrite } = looksLikeAppwriteResponse(ping);
-    if (response.status === 200 && /^Welcome to the Appwrite REST API/.test(ping.body)) {
-      console.log('           ✓ réseau et endpoint corrects (corps attendu de /ping).');
+    const headers = { server: response.headers.get('server'), contentType: response.headers.get('content-type') };
+    const { fromAppwrite, json } = looksLikeAppwriteResponse({ ...headers, contentType: headers.contentType });
+    console.log(`ping     : HTTP ${response.status} · content-type=${headers.contentType} · server=${headers.server} · corps="${body}"`);
+    if (response.status === 200 && PING_BODY.test(body.trim())) {
+      console.log('           ✓ réseau, endpoint et route /ping corrects — le script peut travailler.');
     } else if (fromAppwrite) {
-      console.log('           ↑ Appwrite a répondu mais ne connaît pas cette route : la base est');
-      console.log(`             suspecte (attendu ${'`'}…/v1${'`'} simple, obtenu ${'`'}${API_BASE}${'`'}).`);
-    } else {
+      console.log('           ↑ Appwrite a répondu (server = ' + headers.server + ') mais pas sur cette route.');
+      console.log(`             Vérifie la base : un seul /v1, obtenu « ${API_BASE} ».`);
+    } else if (!json) {
       console.log('           ↑ ni le statut ni l’en-tête server d’Appwrite : proxy ou egress filtré.');
     }
   } catch (error) {
@@ -368,57 +270,53 @@ async function diagnose() {
     } catch (error) {
       const verdict = error.transport
         ? error.cause
-        : `${error.status}${error.isJson ? ' json' : ' html'}${error.status !== 404 ? ' → route existante' : ''}`;
+        : `${error.status}${error.isJson ? ' json' : ' html'}${error.status && error.status !== 404 ? ' → route existante' : ''}`;
       console.log(`route    : ${API_BASE}${path} → ${verdict}`);
     }
   }
+  console.log(`flavor   : ${await resolveFlavor().catch(() => 'indéterminé')} (à reporter dans VITE_APPWRITE_FLAVOR)`);
 }
 
 async function status() {
   const spec = SPECS[FLAVOR];
+  const plan = buildPlan({ spec, databaseId: DATABASE_ID });
   const database = await request('GET', spec.database(DATABASE_ID)).catch((error) => {
     console.log(`base ${DATABASE_ID} : ${error.status ? `absente (${error.status})` : error.cause}`);
     return null;
   });
   if (!database) return;
-  console.log(`base ${DATABASE_ID} — ${database.name} (${FLAVOR})`);
+  console.log(`base ${DATABASE_ID} — ${database.name} (${spec.label})`);
   for (const table of TABLES) {
-    const row = await request('GET', spec.table(DATABASE_ID, table)).catch(() => null);
+    const row = await request('GET', spec.tablePath(DATABASE_ID, table)).catch(() => null);
     const columns = row?.columns ?? row?.attributes ?? [];
-    console.log(`  ${table.id} : ${row ? `${columns.length} colonnes, sécurité par ligne=${row.rowSecurity ?? row.documentSecurity}` : 'absente'}`);
+    const indexes = row?.indexes ?? [];
+    console.log(`  ${table.id} : ${row ? `${columns.length}/${table.columns.length} colonnes, ${indexes.length}/${table.indexes.length} index, sécurité par ligne=${row.rowSecurity ?? row.documentSecurity}` : 'absente'}`);
+  }
+  for (const op of plan.filter((item) => item.group === 'permissions')) {
+    console.log(`  ${op.parent} : permissions ${JSON.stringify(op.body.permissions)}`);
   }
 }
 
 async function drop() {
   const spec = SPECS[FLAVOR];
   for (const table of [...TABLES].reverse()) {
-    await request('DELETE', spec.table(DATABASE_ID, table)).catch((error) => {
-      console.warn(`  − table ${table.id} : ${error.status === 404 ? 'absente' : error.message}`);
+    await request('DELETE', spec.tablePath(DATABASE_ID, table)).catch((error) => {
+      console.warn(`  − ${table.id} : ${error.status === 404 ? 'absente' : error.message}`);
     });
   }
-  console.log('tables supprimées (la base est conservée)');
+  console.log(`${spec.noun}s supprimées (la base est conservée)`);
 }
 
 async function main() {
-  if (PING || DIAGNOSE) {
-    if (DIAGNOSE) return diagnose();
-    try {
-      const response = await fetch(`${API_BASE}/ping`, { headers: { 'x-appwrite-project': PROJECT }, signal: AbortSignal.timeout(TIMEOUT_MS) });
-      console.log(`ping ${API_BASE} → ${response.status} ${(await response.text()).slice(0, 120)}`);
-      if (!response.ok) process.exitCode = 1;
-    } catch (error) {
-      console.log(explain(new ApiError(String(error?.cause?.code || error?.name), { transport: true, cause: error?.cause?.code || error?.name })));
-      process.exitCode = 1;
-    }
-    return;
-  }
+  if (PING) return pingOnly();
+  if (DIAGNOSE) return diagnose();
 
-  if (!API_KEY && !DRY_RUN && !STATUS && !PING && !DIAGNOSE) {
+  if (!API_KEY && !DRY_RUN && !STATUS) {
     console.error(
       'APPWRITE_API_KEY manquante. Crée une clé serveur dans Console → API Keys\n'
       + '(scope databases:write) puis relance :\n'
-      + '  APPWRITE_API_KEY="***" npm run appwrite:setup\n'
-      + '--diagnose, --ping et --dry-run fonctionnent sans clé.',
+      + '  export APPWRITE_API_KEY=$(read -s …) ; npm run appwrite:setup\n'
+      + '--status, --diagnose, --ping et --dry-run fonctionnent sans clé.',
     );
     process.exitCode = 1;
     return;
@@ -427,46 +325,39 @@ async function main() {
   console.log(`\nAppwrite ${API_BASE} · projet ${PROJECT}`);
   const flavor = await resolveFlavor();
   const spec = SPECS[flavor];
+  FLAVOR = flavor;
   console.log(`api      : ${spec.label}${FLAVOR_REQUEST === 'auto' ? ' (auto-détectée)' : ' (imposée par --flavor)'}\n`);
 
   if (STATUS) return status();
   if (DROP) return drop();
 
-  const extra = spec.specifications ? { specification: await pickSpecification(spec.specifications) } : {};
-  const database = spec.createDatabase(extra);
-  await ensure(spec.database(DATABASE_ID), database.path, database.body, `base ${DATABASE_ID}`);
+  const plan = buildPlan({ spec, databaseId: DATABASE_ID });
+  const databaseOp = plan[0];
+  if (spec.specifications) {
+    const specification = await pickSpecification(spec.specifications);
+    if (specification) databaseOp.body = { ...databaseOp.body, specification };
+  }
 
-  for (const table of TABLES) {
-    console.log(`\n${spec.flavor === 'tablesdb' ? 'table' : 'collection'} ${table.id}`);
-    await ensure(spec.table(DATABASE_ID, table), spec.createTable(DATABASE_ID, table).path, spec.createTable(DATABASE_ID, table).body, table.id);
-    for (const column of table.columns) {
-      await ensure(
-        spec.columnPath(DATABASE_ID, table, column),
-        spec.column(DATABASE_ID, table, column).path,
-        spec.column(DATABASE_ID, table, column).body,
-        `${spec.flavor === 'tablesdb' ? 'colonne' : 'attribut'} ${column.key}`,
-      );
+  for (const op of plan) {
+    if (op.group === 'table') console.log(`\n${spec.noun} ${op.label}`);
+    if (op.method === 'PATCH') {
+      if (DRY_RUN) {
+        console.log(`  · ${op.label} → PATCH ${op.patch} ${JSON.stringify(op.body)}`);
+      } else {
+        await request('PATCH', op.patch, op.body)
+          .then(() => console.log(`  ✓ ${op.parent} — permissions appliquées`))
+          .catch((error) => console.warn(`  ! ${op.parent} — permissions : ${explain(error).split('\n')[0]}`));
+      }
+      continue;
     }
-    for (const index of table.indexes) {
-      await ensure(
-        spec.indexPath(DATABASE_ID, table, index),
-        spec.index(DATABASE_ID, table, index).path,
-        spec.index(DATABASE_ID, table, index).body,
-        `index ${index.key}`,
-      );
-    }
-    // Les permissions ne sont pas lisibles par un GET simple : on les pose à chaque run.
-    const permissions = spec.updatePermissions(DATABASE_ID, table);
-    if (DRY_RUN) {
-      console.log(`  · permissions → PATCH ${permissions.path} ${JSON.stringify(permissions.body)}`);
-    } else {
-      await request('PATCH', permissions.path, permissions.body)
-        .then(() => console.log('  ✓ permissions appliquées'))
-        .catch((error) => console.warn(`  ! permissions : ${explain(error).split('\n')[0]}`));
-    }
+    await ensure(op.get, op.post, op.body, op.label);
   }
 
   console.log([
+    '',
+    'Contrôle',
+    '--------',
+    `   npm run appwrite:status      # colonnes et index attendus vs réels`,
     '',
     'À faire ensuite',
     '---------------',
@@ -475,12 +366,12 @@ async function main() {
     '   VITE_APPWRITE_PROFILE_TABLE_ID="profiles"',
     '   VITE_APPWRITE_FAVORITES_TABLE_ID="favorites"',
     `   VITE_APPWRITE_FLAVOR="${flavor}"`,
-    '2. Console → Settings → Domains & Platforms : ajouter le hostname du site et',
-    '   localhost, sinon le navigateur bloque les appels en CORS.',
-    '3. Console → Settings → Auth : mot de passe minimum 12 caractères, vérification',
-    '   d’email obligatoire, sessions limitées à 5.',
-    '4. Rôles : pas de colonne « role » (éditable par le client) — attribuer le label',
-    '   « admin » aux comptes concernés via PUT /v1/users/{userId}/labels.',
+    '2. Console → Settings → Domains & Platforms : hostname du site + localhost,',
+    '   sinon le navigateur bloque les appels en CORS.',
+    '3. Console → Settings → Auth : 12 caractères minimum, vérification d’email',
+    '   obligatoire, 5 sessions maximum.',
+    '4. Rôles : pas de colonne « role » (éditable par le client) — label « admin »',
+    '   via PUT /v1/users/{userId}/labels.',
     '',
   ].join('\n'));
 }

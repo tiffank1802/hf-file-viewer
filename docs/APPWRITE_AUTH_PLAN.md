@@ -473,10 +473,31 @@ problème de route ou de réseau — et l'en-tête `server` suffit à les sépar
 Triage, sans clé :
 
 ```bash
-npm run appwrite:ping                            # attendu : 200 + « Welcome to the Appwrite REST API »
+npm run appwrite:ping                            # attendu : 200 + corps exact « Pong! »
 node scripts/appwrite-setup.mjs --diagnose       # base utilisée + routes tablesdb / databases
 node scripts/appwrite-setup.mjs --dry-run        # les appels qui seraient faits
 ```
+
+⚠️ Le contrat du `ping` est **`HTTP 200` + corps exact `Pong!`** en `text/plain` — pas un
+JSON, et pas le texte d'accueil du Console. Une version antérieure du script attendait
+« Welcome to the Appwrite REST API » et déclarait donc suspect un endpoint parfaitement
+valide.
+
+### Retrouver la base dans la console
+
+« `+ base enise_docs — créée` » puis rien de visible dans la console a deux causes
+distinctes, à vérifier dans cet ordre :
+
+1. **Le sélecteur de produit** : depuis Appwrite 2.x, Databases est découpé en
+   *Tables*, *Documents*, *Vectors*. Une base TablesDB n'apparaît **que** dans l'onglet
+   **Tables** (et une base de l'API héritée dans *Documents* aussi). Console →
+   Project → **Databases → Tables** → `enise_docs`.
+2. **La base est vide parce que le run a échoué juste après sa création** (le
+   `[object Object]` sur `tableId`) : aucune table, donc rien à afficher. Relancer
+   `npm run appwrite:setup` — le plan est idempotent, la base existante est détectée
+   (`✓ base enise_docs — déjà en place`) et les tables sont créées dans la foulée.
+3. Contrôle sans oeil : `npm run appwrite:status` affiche
+   `profiles : 7/7 colonnes, 2/2 index, sécurité par ligne=true` quand tout est en place.
 
 **Sécurité** : une clé collée dans un terminal, un historique shell ou une conversation est
 à considérer comme compromise — la révoquer et la recréer dans Console → API Keys, puis la

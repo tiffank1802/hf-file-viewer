@@ -385,12 +385,15 @@ Le frontend est branché sur le projet Appwrite **Django objects**
 
 ```bash
 APPWRITE_API_KEY="***" npm run appwrite:setup
-npm run appwrite:ping     # attendu : 200 + « Welcome to the Appwrite REST API »
+npm run appwrite:ping     # attendu : 200 + corps exact « Pong! »
 npm run appwrite:status   # contrôler ce qui existe
 node scripts/appwrite-setup.mjs --diagnose   # base utilisée + routes disponibles
 ```
 
-Un 404 **JSON** (`type: general_route_not_found`) vient d’Appwrite ; un 404 **HTML avec
+Un 404 **JSON** (`type: general_route_not_found`) vient d’Appwrite ; une erreur
+`Invalid \`tableId\` param: UID must contain at most 36 chars` avec `[object Object]` dans
+l’URL signifiait qu’un objet était passé là où l’API attend un identifiant (corrigé, et
+couvert par `tests/appwrite-provisioning-plan.test.js`) ; un 404 **HTML avec
 `server: Appwrite`** signifie qu’Appwrite a bien été joint mais que la route est fausse
 (la base doit finir par un unique `/v1`) ; un 404 HTML sans cet en-tête vient du réseau
 sortant ou d’un proxy. Le tableau complet du diagnostic est dans
