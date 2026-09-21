@@ -1,3 +1,5 @@
+import { normalizeAppwriteEndpoint } from './utils/appwriteEndpoint.js';
+
 export const BUCKET_ID = 'ktongue/ENISE-SITE';
 export const BUCKET_URL = `https://huggingface.co/buckets/${BUCKET_ID}`;
 
@@ -15,6 +17,13 @@ const appwriteEnv = typeof import.meta.env === 'object' && import.meta.env ? imp
 export const APPWRITE_ENDPOINT = appwriteEnv.VITE_APPWRITE_ENDPOINT || 'https://fra.cloud.appwrite.io/v1';
 export const APPWRITE_PROJECT_ID = appwriteEnv.VITE_APPWRITE_PROJECT_ID || '69cedb12002acdd498e0';
 export const APPWRITE_PROJECT_NAME = 'Django objects';
+
+/**
+ * Base absolue pour les appels REST bruts (outillage de provisioning). L'SDK
+ * web, lui, consomme APPWRITE_ENDPOINT tel quel — le `/v1` ne doit y apparaître
+ * qu'une fois, d'où la normalisation partagée.
+ */
+export const APPWRITE_API_BASE = normalizeAppwriteEndpoint(APPWRITE_ENDPOINT);
 export const APPWRITE_ENABLED = Boolean(APPWRITE_ENDPOINT && APPWRITE_PROJECT_ID);
 
 /**

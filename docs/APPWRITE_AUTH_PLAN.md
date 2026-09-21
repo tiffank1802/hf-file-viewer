@@ -460,6 +460,7 @@ une réponse d'Appwrite est **toujours du JSON** avec un `type` d'erreur.
 
 | Sortie du script | Ce que ça veut dire | Que faire |
 | --- | --- | --- |
+| --- | --- | --- |
 | `POST /tablesdb → 404 Not Found` (texte, pas de JSON) | **Ce n'est pas Appwrite qui répond** : egress du sandbox ou proxy d'entreprise qui renvoie son propre 404 | Lancer le script depuis une machine qui joint Internet, ou provisionner dans la console (§3.2). `npm run appwrite:diagnose` le confirme |
 | `aucune route réseau vers … (ECONNRESET)` | TLS coupé vers `fra.cloud.appwrite.io` | Idem ; avec un proxy : `HTTPS_PROXY=http://127.0.0.1:port npm run appwrite:setup` |
 | `401` | `APPWRITE_API_KEY` absente, expirée, révoquée | Recréer la clé (Console → API Keys) |
@@ -474,6 +475,11 @@ npm run appwrite:ping       # attend exactement : "Welcome to the Appwrite REST 
 node scripts/appwrite-setup.mjs --diagnose   # qui répond, sur quelles routes
 node scripts/appwrite-setup.mjs --dry-run    # les appels qui seraient faits
 ```
+
+**Une clé API collée dans un terminal, un historique shell ou une conversation est à
+considerer comme compromise** : la révoquer/recréer dans Console → API Keys dès qu'elle a
+été visible ailleurs que dans une variable d'environnement, et la transmettre par
+`.env.local` (ignorée par Git) ou `read -s`.
 
 Le client n'a pas besoin d'attendre le provisioning : `APPWRITE_DATABASE_ID` vide
 court‑circuite `rows.*`, donc ni erreur ni requête — seul le `ping` et la connexion

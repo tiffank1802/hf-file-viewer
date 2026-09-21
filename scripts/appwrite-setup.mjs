@@ -17,7 +17,8 @@
  * Scopes minimaux de la clé : databases:write. Elle ne doit JAMAIS être commitée
  * ni porter un préfixe VITE_ : elle atterrirait dans le bundle du navigateur.
  */
-import { APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID } from '../src/config.js';
+import { APPWRITE_API_BASE, APPWRITE_PROJECT_ID } from '../src/config.js';
+import { looksLikeAppwriteResponse, normalizeAppwriteEndpoint } from '../src/utils/appwriteEndpoint.js';
 
 const argv = process.argv.slice(2);
 const flags = new Set(argv.filter((a) => a.startsWith('--') && !a.includes('=')));
@@ -34,11 +35,14 @@ const DIAGNOSE = flags.has('--diagnose');
 const VERBOSE = flags.has('--verbose');
 const TIMEOUT_MS = Number(process.env.APPWRITE_TIMEOUT_MS || 30_000);
 
-const ENDPOINT = (process.env.APPWRITE_ENDPOINT || APPWRITE_ENDPOINT).replace(/\/$/, '');
+// Base normalisée : l'endpoint public contient déjà /v1, coller nos chemins
+// derrière sans normaliser produisait /v1/v1/… (404 HTML d'Appwrite).
+const API_BASE = normalizeAppwriteEndpoint(process.env.APPWRITE_ENDPOINT || APPWRITE_API_BASE);
 const PROJECT = process.env.APPWRITE_PROJECT_ID || APPWRITE_PROJECT_ID;
 const API_KEY = process.env.APPWRITE_API_KEY || '';
 const DATABASE_ID = process.env.APPWRITE_DATABASE_ID || 'enise_docs';
 const FLAVOR_REQUEST = option('flavor', process.env.APPWRITE_FLAVOR || 'auto').toLowerCase();
+const SPECIFICATION = option('specification', process.env.APPWRITE_SPECIFICATION || 'auto');
 
 /** Rôles Appwrite, au format littéral attendu par l'API. */
 const ROLE_USERS = 'users';
@@ -97,7 +101,7 @@ const SPECS = {
     label: 'TablesDB (API 2.x)',
     listDatabases: '/tablesdb?limit=1',
     database: (db) => `/tablesdb/${db}`,
-    createDatabase: () => ({ path: '/tablesdb', body: { databaseId: DATABASE_ID, name: 'ENISE Docs' } }),
+    createDatabase: (extra) => ({ path: '/tablesdb', body: { databaseId: DATABASE_ID, name: 'ENISE Docs', ...extra } }),
     table: (db, table) => `/tablesdb/${db}/tables/${table}`,
     createTable: (db, table) => ({
       path: `/tablesdb/${db}/tables`,
@@ -115,12 +119,16 @@ const SPECS = {
     }),
     indexPath: (db, table, index) => `/tablesdb/${db}/tables/${table.id}/indexes/${index.key}`,
     flavor: 'tablesdb',
+    // Les plans Cloud récents demandent une spécification (serveurless ou
+    // dédiée). Sur une instance qui n'expose pas cette route, on omet le champ.
+    specifications: '/tablesdb/specifications',
   },
   databases: {
     label: 'Databases (API héritée 1.x)',
     listDatabases: '/databases?limit=1',
     database: (db) => `/databases/${db}`,
     createDatabase: () => ({ path: '/databases', body: { databaseId: DATABASE_ID, name: 'ENISE Docs' } }),
+    specifications: null,
     table: (db, table) => `/databases/${db}/collections/${table.id}`,
     createTable: (db, table) => ({
       path: `/databases/${db}/collections`,
@@ -163,8 +171,12 @@ class ApiError extends Error {
   }
 }
 
+/** --diagnose et --status doivent interroger le réseau réel, même en dry-run. */
+const NETWORK_PROBE = DIAGNOSE || STATUS;
+
 async function request(method, path, body) {
-  const url = `${ENDPOINT}/v1${path}`;
+  if (DRY_RUN && !NETWORK_PROBE) return { __dryRun: true };
+  const url = `${API_BASE}${path}`;
   if (VERBOSE) console.log(`  → ${method} ${path}`);
   let response;
   try {
@@ -203,25 +215,35 @@ async function request(method, path, body) {
   return payload ?? {};
 }
 
-/** Message actionnable : ce qui a échoué n'est presque jamais Appwrite. */
+/** Message actionnable : distinguer le réseau, le proxy, la route et l'autorisation. */
 function explain(error) {
   if (error.transport) {
     return [
-      `aucune route réseau vers ${ENDPOINT} (${error.cause}).`,
-      '  L’API Appwrite n’est pas joignable depuis ce poste : egress filtré (TLS coupé) ou proxy',
-      '  d’entreprise. Vérifie avec :  curl -i ' + `${ENDPOINT}/v1/ping`,
+      `aucune route réseau vers ${API_BASE} (${error.cause}).`,
+      `  L’API Appwrite n’est pas joignable depuis ce poste : egress filtré (TLS coupé) ou proxy d’entreprise.`,
+      `  Vérifie avec :  curl -i ${API_BASE}/ping`,
       '  Si un proxy est requis :  HTTPS_PROXY="http://127.0.0.1:port" npm run appwrite:setup',
       '  Sinon, provisionne depuis la console (checklist docs/APPWRITE_AUTH_PLAN.md §3.2) ou',
       '  depuis une machine qui joint Internet, puis relance ce script avec --status.',
     ].join('\n');
   }
   if (error.status === 404 && !error.isJson) {
+    const { fromAppwrite } = looksLikeAppwriteResponse({ server: error.server, contentType: error.contentType });
+    if (fromAppwrite) {
+      return [
+        `${error.method} ${error.url} → Appwrite a répondu (en-tête server = ${error.server}) mais ne connaît pas cette route.`,
+        `  content-type = ${error.contentType} (page HTML du Console, pas l’API).`,
+        '  L’accès sortant fonctionne donc : c’est la ROUTE qui est fausse.',
+        `  Base utilisée = ${API_BASE} ; elle doit finir par un unique /v1`,
+        '  (ex. https://fra.cloud.appwrite.io/v1). Un …/v1/v1 est le cas classique.',
+      ].join('\n');
+    }
     return [
       `${error.method} ${error.url} → 404 texte, pas du JSON : ce n’est pas l’API Appwrite qui répond.`,
       `  serveur = ${error.server || 'inconnu'}, content-type = ${error.contentType || 'aucun'}`,
       '  corps   = ' + (error.rawBody || '(vide)'),
-      '  Causes classiques : egress du sandbox qui renvoie son propre 404, proxy, ou',
-      '  endpoint erroné. Un 404 Appwrite légitime est TOUJOURS en JSON avec',
+      '  Causes classiques : egress du sandbox qui renvoie son propre 404, ou proxy.',
+      '  Un 404 Appwrite légitime est TOUJOURS en JSON avec',
       '  "type":"general_route_not_found". Utilise --diagnose pour trancher.',
     ].join('\n');
   }
@@ -239,6 +261,25 @@ function otherFlavor(flavor) {
 }
 
 let FLAVOR = null;
+
+/**
+ * Spécification à demander pour créer une base TablesDB.
+ *
+ * 'auto' lit /v1/tablesdb/specifications et retient la première offre serveurless
+ * ; une instance qui ne sert pas cette route (ou une liste vide) donne `undefined`,
+ * donc le champ est omis et le serveur applique son défaut.
+ */
+async function pickSpecification(listPath) {
+  if (SPECIFICATION === 'none') return undefined;
+  if (SPECIFICATION !== 'auto') return SPECIFICATION;
+  const list = await request('GET', listPath)
+    .then((payload) => (Array.isArray(payload?.specifications) ? payload.specifications : []))
+    .catch(() => []);
+  const serverless = list.find((item) => item?.serverless === true) ?? list.find((item) => /serverless/i.test(String(item?.slug ?? item?.id ?? '')));
+  const chosen = serverless?.slug ?? serverless?.id;
+  if (chosen) console.log(`  · spécification retenue : ${chosen}`);
+  return chosen || undefined;
+}
 
 /** GET puis POST : renvoie 'created' | 'exists' | 'skipped' | 'planned'. */
 async function ensure(getPath, postPath, body, label) {
@@ -298,28 +339,37 @@ async function resolveFlavor() {
 }
 
 async function diagnose() {
-  console.log(`endpoint : ${ENDPOINT}`);
+  console.log(`base     : ${API_BASE}`);
   console.log(`projet   : ${PROJECT}`);
   console.log(`clé      : ${API_KEY ? 'présente' : 'absente'} (len ${API_KEY.length})`);
   let ping;
   try {
-    const response = await fetch(`${ENDPOINT}/v1/ping`, { headers: { 'x-appwrite-project': PROJECT }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    const response = await fetch(`${API_BASE}/ping`, { headers: { 'x-appwrite-project': PROJECT }, signal: AbortSignal.timeout(TIMEOUT_MS) });
     const body = (await response.text()).slice(0, 120).replace(/\s+/g, ' ');
     ping = { status: response.status, contentType: response.headers.get('content-type'), server: response.headers.get('server'), body };
     console.log(`ping     : HTTP ${response.status} · content-type=${ping.contentType} · server=${ping.server} · corps="${body}"`);
-    if (response.status !== 200 || !/appwrite/i.test(ping.server || '')) {
-      console.log('           ↑ le 200 d’Appwrite a un corps exactement "Welcome to the Appwrite REST API".');
-      console.log('             Un 404 HTML ou un server != Appwrite = proxy/egress, pas ton projet.');
+    const { fromAppwrite } = looksLikeAppwriteResponse(ping);
+    if (response.status === 200 && /^Welcome to the Appwrite REST API/.test(ping.body)) {
+      console.log('           ✓ réseau et endpoint corrects (corps attendu de /ping).');
+    } else if (fromAppwrite) {
+      console.log('           ↑ Appwrite a répondu mais ne connaît pas cette route : la base est');
+      console.log(`             suspecte (attendu ${'`'}…/v1${'`'} simple, obtenu ${'`'}${API_BASE}${'`'}).`);
+    } else {
+      console.log('           ↑ ni le statut ni l’en-tête server d’Appwrite : proxy ou egress filtré.');
     }
   } catch (error) {
     console.log(`ping     : ${error?.cause?.code || error?.name} — réseau sortant coupé vers cet hôte`);
   }
   for (const name of ['tablesdb', 'databases']) {
+    const path = SPECS[name].listDatabases;
     try {
-      await request('GET', SPECS[name].listDatabases);
-      console.log(`route    : /v1${SPECS[name].listDatabases} → 200 (API ${name} disponible)`);
+      await request('GET', path);
+      console.log(`route    : ${API_BASE}${path} → 200 (API ${name} disponible)`);
     } catch (error) {
-      console.log(`route    : /v1${SPECS[name].listDatabases} → ${error.transport ? error.cause : `${error.status} ${error.isJson ? 'json' : 'non-json'}`}`);
+      const verdict = error.transport
+        ? error.cause
+        : `${error.status}${error.isJson ? ' json' : ' html'}${error.status !== 404 ? ' → route existante' : ''}`;
+      console.log(`route    : ${API_BASE}${path} → ${verdict}`);
     }
   }
 }
@@ -353,8 +403,8 @@ async function main() {
   if (PING || DIAGNOSE) {
     if (DIAGNOSE) return diagnose();
     try {
-      const response = await fetch(`${ENDPOINT}/v1/ping`, { headers: { 'x-appwrite-project': PROJECT }, signal: AbortSignal.timeout(TIMEOUT_MS) });
-      console.log(`ping ${ENDPOINT} → ${response.status} ${(await response.text()).slice(0, 120)}`);
+      const response = await fetch(`${API_BASE}/ping`, { headers: { 'x-appwrite-project': PROJECT }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+      console.log(`ping ${API_BASE} → ${response.status} ${(await response.text()).slice(0, 120)}`);
       if (!response.ok) process.exitCode = 1;
     } catch (error) {
       console.log(explain(new ApiError(String(error?.cause?.code || error?.name), { transport: true, cause: error?.cause?.code || error?.name })));
@@ -374,7 +424,7 @@ async function main() {
     return;
   }
 
-  console.log(`\nAppwrite ${ENDPOINT} · projet ${PROJECT}`);
+  console.log(`\nAppwrite ${API_BASE} · projet ${PROJECT}`);
   const flavor = await resolveFlavor();
   const spec = SPECS[flavor];
   console.log(`api      : ${spec.label}${FLAVOR_REQUEST === 'auto' ? ' (auto-détectée)' : ' (imposée par --flavor)'}\n`);
@@ -382,7 +432,9 @@ async function main() {
   if (STATUS) return status();
   if (DROP) return drop();
 
-  await ensure(spec.database(DATABASE_ID), spec.createDatabase().path, spec.createDatabase().body, `base ${DATABASE_ID}`);
+  const extra = spec.specifications ? { specification: await pickSpecification(spec.specifications) } : {};
+  const database = spec.createDatabase(extra);
+  await ensure(spec.database(DATABASE_ID), database.path, database.body, `base ${DATABASE_ID}`);
 
   for (const table of TABLES) {
     console.log(`\n${spec.flavor === 'tablesdb' ? 'table' : 'collection'} ${table.id}`);
