@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  TABLES,
   SPECS,
+  TABLES,
   buildPlan,
+  columnDrift,
+  enumColumns,
   isValidAppwriteUid,
+  validateModel,
 } from '../scripts/appwrite-spec.js';
 
 const DB = 'enise_docs';
@@ -116,4 +119,49 @@ test('les permissions sont toujours la dernière opération de chaque table', ()
       assert.equal(owned.at(-1).method, 'PATCH');
     }
   }
+});
+
+test('le modèle respecte les règles que le serveur applique', () => {
+  // 400 « Cannot set default value for required column » : confluence exacte du
+  // plantage rencontré, où quatre colonnes portaient un défaut tout en étant
+  // obligatoires. Le validateur local doit le refuser avant tout appel réseau.
+  assert.deepEqual(
+    TABLES.flatMap((table) => table.columns.filter((c) => c.required && c.default !== undefined).map((c) => `${table.id}.${c.key}`)),
+    [],
+  );
+  // Seules les invariants écrites par le code restent obligatoires.
+  assert.deepEqual(
+    TABLES.flatMap((table) => table.columns.filter((c) => c.required).map((c) => `${table.id}.${c.key}`)).sort(),
+    ['favorites.filePath', 'favorites.pathKey', 'favorites.userId', 'profiles.userId'],
+  );
+  for (const { table, column } of enumColumns(TABLES)) {
+    assert.ok(column.elements.includes(column.default), `${table.id}.${column.key} : défaut hors enum`);
+  }
+
+  const invalide = [{ id: 't', name: 'T', columns: [{ type: 'string', key: 'a', size: 8, required: true, default: '' }], indexes: [] }];
+  assert.throws(() => validateModel(invalide), /Cannot set default value for required column/);
+  // Colonne système autorisée dans un index sans être déclarée.
+  assert.doesNotThrow(() => validateModel([{
+    id: 't', name: 'T',
+    columns: [{ type: 'string', key: 'a', size: 8, required: true }],
+    indexes: [{ key: 'idx_a_created', type: 'key', columns: ['a', '$createdAt'] }],
+  }]));
+  assert.throws(() => validateModel([{
+    id: 't', name: 'T',
+    columns: [{ type: 'string', key: 'a', size: 8, required: true }],
+    indexes: [{ key: 'idx_bad', type: 'hash', columns: ['a'] }],
+  }]), /type d'index « hash » inconnu/);
+  // buildPlan appelle le validateur : pas de plan partiel sur un modèle faux.
+  assert.throws(() => buildPlan({ spec: SPECS.tablesdb, databaseId: DB, tables: invalide }), /Modèle de provisioning invalide/);
+});
+
+test('columnDrift voit une définition modifiée après création', () => {
+  const profiles = TABLES.find((t) => t.id === 'profiles');
+  const displayName = profiles.columns.find((c) => c.key === 'displayName');
+  assert.deepEqual(columnDrift(displayName, { key: 'displayName', required: true, size: 128, default: '' }), {
+    required: { expected: false, actual: true },
+  });
+  assert.equal(columnDrift(displayName, { key: 'displayName', required: false, size: 128, default: '' }), null);
+  // Une colonne absente de la base n'est pas une dérive : le run la créera.
+  assert.equal(columnDrift(displayName, undefined), null);
 });

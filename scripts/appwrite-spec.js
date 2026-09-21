@@ -26,12 +26,14 @@ export const TABLES = [
     rowSecurity: true,
     permissions: [`create("${ROLE_USERS_VERIFIED}")`, `read("${ROLE_USERS}")`],
     columns: [
+      // Seules les colonnes que le code écrit toujours restent obligatoires :
+      // `required: true` exclut tout `default` côté Appwrite.
       { type: 'string', key: 'userId', size: 36, required: true },
-      { type: 'string', key: 'displayName', size: 128, required: true, default: '' },
-      { type: 'enum', key: 'promotion', elements: [...PROFILE_PROMOTIONS], required: true, default: PROFILE_PROMOTIONS[0] },
-      { type: 'enum', key: 'filiere', elements: [...PROFILE_FILIERES], required: true, default: PROFILE_FILIERES[0] },
+      { type: 'string', key: 'displayName', size: 128, required: false, default: '' },
+      { type: 'enum', key: 'promotion', elements: [...PROFILE_PROMOTIONS], required: false, default: PROFILE_PROMOTIONS[0] },
+      { type: 'enum', key: 'filiere', elements: [...PROFILE_FILIERES], required: false, default: PROFILE_FILIERES[0] },
       { type: 'string', key: 'bio', size: 280, required: false, default: '' },
-      { type: 'boolean', key: 'emailVerified', required: true, default: false },
+      { type: 'boolean', key: 'emailVerified', required: false, default: false },
       { type: 'datetime', key: 'lastSeenAt', required: false },
     ],
     indexes: [
@@ -45,10 +47,12 @@ export const TABLES = [
     rowSecurity: true,
     permissions: [`create("${ROLE_USERS_VERIFIED}")`],
     columns: [
+      // Seules les colonnes que le code écrit toujours restent obligatoires :
+      // `required: true` exclut tout `default` côté Appwrite.
       { type: 'string', key: 'userId', size: 36, required: true },
       { type: 'string', key: 'filePath', size: 1024, required: true },
       { type: 'string', key: 'pathKey', size: 64, required: true },
-      { type: 'enum', key: 'kind', elements: ['file', 'folder'], required: true, default: 'file' },
+      { type: 'enum', key: 'kind', elements: ['file', 'folder'], required: false, default: 'file' },
       { type: 'string', key: 'title', size: 240, required: false, default: '' },
       { type: 'string', key: 'note', size: 280, required: false, default: '' },
     ],
@@ -154,6 +158,7 @@ export function omit(object, ...keys) {
  * visible en test plutôt qu'au premier appel réseau.
  */
 export function buildPlan({ spec, databaseId, tables = TABLES }) {
+  validateModel(tables);
   const operations = [{
     label: `base ${databaseId}`,
     group: 'database',
@@ -225,6 +230,70 @@ export function enumDrift(declared, live) {
   const missing = declared.elements.filter((element) => !actual.includes(element));
   const extra = actual.filter((element) => !declared.elements.includes(element));
   return missing.length || extra.length ? { missing, extra } : null;
+}
+
+/**
+ * Vérifie le modèle contre les règles qu'Appwrite applique au serveur.
+ *
+ * Chacune de ces erreurs a été rencontrée en réel : un `default` sur une colonne
+ * `required` (400 « Cannot set default value for required column »), un `enum`
+ * dont la valeur par défaut n'est pas dans la liste, un index unique posé sur une
+ * colonne trop longue. Échouer ici coûte une ligne de log ; échouer après la
+ * troisième colonne créée laisse le projet à moitié provisionné.
+ */
+export function validateModel(tables = TABLES) {
+  const problems = [];
+  for (const table of tables) {
+    const byKey = new Map();
+    for (const column of table.columns) {
+      if (!isValidAppwriteUid(column.key)) problems.push(`${table.id}.${column.key} : clé d'UID invalide`);
+      if (byKey.has(column.key)) problems.push(`${table.id}.${column.key} : colonne déclarée deux fois`);
+      byKey.set(column.key, column);
+      if (column.required && column.default !== undefined) {
+        problems.push(`${table.id}.${column.key} : colonne requise avec une valeur par défaut — Appwrite répond « Cannot set default value for required column »`);
+      }
+      if (column.type === 'enum') {
+        if (!Array.isArray(column.elements) || column.elements.length < 1) problems.push(`${table.id}.${column.key} : enum sans éléments`);
+        if (column.default !== undefined && !column.elements.includes(column.default)) {
+          problems.push(`${table.id}.${column.key} : défaut « ${column.default} » absent de l'enum`);
+        }
+      }
+      if (['string', 'email', 'url'].includes(column.type) && column.required && !column.size && column.type === 'string') {
+        problems.push(`${table.id}.${column.key} : colonne string requise sans taille`);
+      }
+    }
+    for (const index of table.indexes) {
+      if (!['key', 'fulltext', 'unique', 'spatial'].includes(index.type)) {
+        problems.push(`${table.id}.${index.key} : type d'index « ${index.type} » inconnu (attendu key, fulltext, unique, spatial)`);
+      }
+      for (const key of index.columns) {
+        if (key.startsWith('$')) continue; // colonne système : $createdAt, $updatedAt, $id
+        const column = byKey.get(key);
+        if (!column) { problems.push(`${table.id}.${index.key} : colonne inconnue « ${key} »`); continue; }
+        if (index.type === 'unique' && (column.size ?? 0) > 64) {
+          problems.push(`${table.id}.${index.key} : index unique sur ${key} (${column.size} caractères), trop long pour une clé d'index`);
+        }
+      }
+    }
+  }
+  if (problems.length) throw new Error(`Modèle de provisioning invalide :\n  - ${problems.join('\n  - ')}`);
+  return true;
+}
+
+/** Écarts entre colonne déclarée et colonne réellement stockée (hors enum). */
+export function columnDrift(declared, live) {
+  if (!live) return null;
+  const drift = {};
+  const is = (key, expected, actual) => {
+    if (actual === undefined || actual === null) return;
+    if (expected !== actual) drift[key] = { expected, actual };
+  };
+  is('required', declared.required ?? false, live.required);
+  is('size', declared.size, live.size);
+  if (declared.default !== undefined || live.default !== undefined) is('default', declared.default ?? null, live.default ?? null);
+  const enumIssue = enumDrift(declared, live);
+  if (enumIssue) drift.elements = { expected: declared.elements, actual: liveEnumElements(live) };
+  return Object.keys(drift).length ? drift : null;
 }
 
 /** UID Appwrite : 36 caractères max, sans underscore initial, [a-zA-Z0-9_.-]. */

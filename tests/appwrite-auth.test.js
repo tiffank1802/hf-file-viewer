@@ -5,7 +5,7 @@ import test from 'node:test';
 
 const ROOT = resolve(import.meta.dirname, '..');
 
-import { describeAppwriteError, hasDatabase, isMissingRow, isMissingSession, rows } from '../src/services/appwrite.js';
+import { account, describeAppwriteError, hasDatabase, isMissingRow, isMissingSession, rows } from '../src/services/appwrite.js';
 import {
   MIN_PASSWORD_LENGTH,
   getCurrentUser,
@@ -102,7 +102,33 @@ test('isMissingRow couvre les deux vocabulaires d’erreur', () => {
 });
 
 test('une panne réseau remonte un message français, jamais « Fetch failed »', async () => {
-  await assert.rejects(() => getCurrentUser(), /Appwrite est injoignable/);
+  // La panne est SIMULÉE : un test qui dépendrait d'un réseau réellement coupé
+  // passe dans un bac à sable et échoue sur une machine branchée (où Appwrite
+  // répond 401, ce qui n'est pas une panne de transport mais un « pas connecté »).
+  const original = account.get;
+  account.get = async () => { throw new TypeError('Failed to fetch'); };
+  try {
+    await assert.rejects(() => getCurrentUser(), {
+      name: 'Error',
+      message: /^Appwrite est injoignable/,
+    });
+  } finally {
+    account.get = original;
+  }
+
+  // Une vraie réponse Appwrite, elle, ne doit PAS être maquillée en panne réseau.
+  const probe = account.get;
+  account.get = async () => {
+    const error = new Error('Missing or expired session. Please try again.');
+    Object.assign(error, { code: 401, type: 'user_missing' });
+    throw error;
+  };
+  try {
+    assert.equal(await getCurrentUser(), null, 'session absente = null, pas une erreur');
+  } finally {
+    account.get = probe;
+  }
+
   for (const error of [new Error('fetch failed'), new TypeError('Failed to fetch'), new Error('Load failed')]) {
     const message = describeAppwriteError(error);
     assert.match(message, /^Appwrite est injoignable/, `message attendu en français : ${message}`);

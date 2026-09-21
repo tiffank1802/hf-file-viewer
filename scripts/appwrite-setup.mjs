@@ -19,7 +19,7 @@
  */
 import { APPWRITE_API_BASE, APPWRITE_PROJECT_ID } from '../src/config.js';
 import { looksLikeAppwriteResponse, normalizeAppwriteEndpoint } from '../src/utils/appwriteEndpoint.js';
-import { SPECS, TABLES, buildPlan, enumColumns, enumDrift } from './appwrite-spec.js';
+import { SPECS, TABLES, buildPlan, columnDrift, enumColumns } from './appwrite-spec.js';
 
 const argv = process.argv.slice(2);
 const flags = new Set(argv.filter((a) => a.startsWith('--') && !a.includes('=')));
@@ -297,30 +297,49 @@ async function status() {
   for (const op of plan.filter((item) => item.group === 'permissions')) {
     console.log(`  ${op.parent} : permissions ${JSON.stringify(op.body.permissions)}`);
   }
-  const drifts = await enumDriftReport();
-  if (drifts) console.log(`  ${drifts} colonne(s) enum à réaligner avec --fix-enums`);
+  const drifts = await modelDriftReport();
+  if (drifts) console.log(`  ${drifts} colonne(s) en décalage avec le modèle (${FIX_ENUMS ? 'corrigées' : '--fix-enums pour les enums, console pour le reste'}).`);
 }
 
-/** Les colonnes `enum` de la base sont-elles encore alignées sur le modèle ? */
-async function enumDriftReport({ fix = false } = {}) {
+/**
+ * Compare le modèle déclaré à ce que la base contient réellement.
+ *
+ * `ensure()` ne fait que créer ce qui manque : une colonne déjà présente garde sa
+ * vieille définition. C'est exactement le piège du 400 « Cannot set default value
+ * for required column » rencontré ici — la table était à moitié créée, et le
+ * modèle avait changé entre-temps.
+ */
+async function modelDriftReport({ fix = false } = {}) {
   const spec = SPECS[FLAVOR];
   let drifts = 0;
-  for (const { table, column } of enumColumns(TABLES)) {
+  for (const table of TABLES) {
     const row = await request('GET', spec.tablePath(DATABASE_ID, table)).catch(() => null);
     if (!row) continue;
-    const live = (row.columns ?? row.attributes ?? []).find((item) => (item.key ?? item.$id) === column.key);
-    const drift = enumDrift(column, live);
-    if (!drift) continue;
-    drifts += 1;
-    console.log(`  ! ${table.id}.${column.key} : en base [${(live.elements ?? live.enum ?? []).join(', ')}], prévu [${column.elements.join(', ')}]`);
-    if (!fix || DRY_RUN) {
-      console.log(`    → node scripts/appwrite-setup.mjs --fix-enums`);
-      continue;
+    const liveColumns = row.columns ?? row.attributes ?? [];
+    for (const column of table.columns) {
+      const live = liveColumns.find((item) => (item.key ?? item.$id) === column.key);
+      if (!live) continue; // sera créé par le run
+      const drift = columnDrift(column, live);
+      if (!drift) continue;
+      drifts += 1;
+      const parts = [];
+      if (drift.required) parts.push(`requis=${drift.required.actual} prévu=${drift.required.expected}`);
+      if (drift.size) parts.push(`taille=${drift.size.actual} prévue=${drift.size.expected}`);
+      if (drift.default) parts.push(`défaut=${JSON.stringify(drift.default.actual)} prévu=${JSON.stringify(drift.default.expected)}`);
+      if (drift.elements) parts.push(`enum [${drift.elements.actual?.join(', ')}] prévu [${drift.elements.expected.join(', ')}]`);
+      console.log(`  ! ${table.id}.${column.key} : ${parts.join(', ')}`);
+      const enumFix = enumColumns([table]).find(({ column: c }) => c.key === column.key);
+      if (!enumFix) {
+        console.log('    → non réparable en écriture : ajuste dans la console, ou retire la table avec --drop');
+        continue;
+      }
+      if (!fix) { console.log('    → node scripts/appwrite-setup.mjs --fix-enums'); continue; }
+      if (DRY_RUN) continue;
+      const target = spec.enumElements(DATABASE_ID, table, column);
+      await request('PUT', target.path, target.body)
+        .then(() => console.log('    ✓ éléments d’enum réalignés'))
+        .catch((error) => console.warn(`    ✗ ${table.id}.${column.key} — ${explain(error).split('\n')[0]}`));
     }
-    const target = spec.enumElements(DATABASE_ID, table, column);
-    await request('PUT', target.path, target.body)
-      .then(() => console.log(`    ✓ ${table.id}.${column.key} — éléments réalignés`))
-      .catch((error) => console.warn(`    ✗ ${table.id}.${column.key} — ${explain(error).split('\n')[0]}`));
   }
   return drifts;
 }
@@ -359,8 +378,8 @@ async function main() {
   if (STATUS) return status();
   if (DROP) return drop();
   if (FIX_ENUMS) {
-    const drifts = await enumDriftReport({ fix: true });
-    console.log(drifts ? `${drifts} colonne(s) traitée(s).` : 'Aucune dérive : les enums de la base matchent le modèle.');
+    const drifts = await modelDriftReport({ fix: true });
+    console.log(drifts ? `${drifts} colonne(s) en décalage, enums réalignés.` : 'Aucun décalage : la base matche le modèle.');
     return;
   }
 
@@ -386,12 +405,11 @@ async function main() {
     await ensure(op.get, op.post, op.body, op.label);
   }
 
-  // `ensure()` ne fait que créer ce qui manque : une table déjà présente avec un
-  // enum périmé (filière ajoutée après coup) garderait sa vieille liste, et le
-  // formulaire enverrait une valeur refusée. On la signale ici, au moment où
-  // l'utilisateur vient justement de faire évoluer le modèle.
-  const drifts = await enumDriftReport();
-  if (drifts) console.log(`\n${drifts} colonne(s) enum divergente(s) — relance avec --fix-enums.`);
+  // Contrôle immédiat : une colonne déjà présente avant ce run n'a pas été
+  // recréée, donc un modèle modifié entre deux exécutions se voit ici plutôt
+  // qu'au premier écritage refusé par Appwrite.
+  const drifts = await modelDriftReport();
+  if (drifts) console.log(`\n${drifts} colonne(s) en décalage avec la base — relance avec --fix-enums pour les enums.`);
 
   console.log([
     '',
