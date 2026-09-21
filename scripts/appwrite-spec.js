@@ -22,7 +22,7 @@ export const TABLES = [
       { type: 'string', key: 'userId', size: 36, required: true },
       { type: 'string', key: 'displayName', size: 128, required: true, default: '' },
       { type: 'enum', key: 'promotion', elements: ['3A', '4A', '5A', 'Alumni', 'Staff'], required: true, default: '3A' },
-      { type: 'enum', key: 'filiere', elements: ['GM', 'TOEIC', 'Autre'], required: true, default: 'GM' },
+      { type: 'enum', key: 'filiere', elements: ['GM', 'GC', 'GP','Autre'], required: true, default: 'GM' },
       { type: 'string', key: 'bio', size: 280, required: false, default: '' },
       { type: 'boolean', key: 'emailVerified', required: true, default: false },
       { type: 'datetime', key: 'lastSeenAt', required: false },
