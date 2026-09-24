@@ -3,6 +3,7 @@
 package chat
 
 import (
+	"sort"
 	"strings"
 	"unicode"
 
@@ -131,6 +132,104 @@ func Rank(items []catalog.BucketItem, query, contextPath string, limit int) []Hi
 		})
 	}
 	return hits
+}
+
+// ExpandForReading ajoute des fichiers lisibles quand la recherche ne tombe
+// que sur un dossier. Un dossier n’a pas de texte à résumer.
+func ExpandForReading(items []catalog.BucketItem, hits []Hit, limit int) []Hit {
+	if len(hits) == 0 {
+		return hits
+	}
+	if limit <= 0 {
+		limit = 6
+	}
+	seen := map[string]struct{}{}
+	readable := make([]Hit, 0, limit)
+	others := make([]Hit, 0, len(hits))
+	for _, hit := range hits {
+		seen[hit.Path] = struct{}{}
+		if hit.Type == "file" && readableExtension(hit.Path) {
+			readable = append(readable, hit)
+			continue
+		}
+		others = append(others, hit)
+	}
+	if len(readable) == 0 {
+		for _, hit := range hits {
+			if hit.Type != "directory" {
+				continue
+			}
+			for _, child := range filesInside(items, hit.Path, 3) {
+				if _, ok := seen[child.Path]; ok {
+					continue
+				}
+				seen[child.Path] = struct{}{}
+				child.Reason = "Fichier lisible dans " + hit.Name + "."
+				readable = append(readable, child)
+				if len(readable) >= 3 {
+					break
+				}
+			}
+			if len(readable) >= 3 {
+				break
+			}
+		}
+	}
+	out := append(readable, others...)
+	if len(out) > limit {
+		return out[:limit]
+	}
+	return out
+}
+
+func filesInside(items []catalog.BucketItem, dir string, limit int) []Hit {
+	prefix := strings.Trim(dir, "/") + "/"
+	found := make([]catalog.BucketItem, 0, limit)
+	for _, item := range items {
+		if item.Type != "file" || !strings.HasPrefix(item.Path, prefix) || !readableExtension(item.Path) {
+			continue
+		}
+		if item.Size != nil && *item.Size > 25<<20 {
+			continue
+		}
+		found = append(found, item)
+	}
+	sort.SliceStable(found, func(i, j int) bool {
+		left, right := extensionRank(found[i].Path), extensionRank(found[j].Path)
+		if left != right {
+			return left < right
+		}
+		return len(found[i].Path) < len(found[j].Path)
+	})
+	if len(found) > limit {
+		found = found[:limit]
+	}
+	hits := make([]Hit, 0, len(found))
+	for _, item := range found {
+		hits = append(hits, Hit{
+			Path:  item.Path,
+			Type:  item.Type,
+			Name:  baseName(item.Path),
+			Size:  item.Size,
+			Mtime: item.Mtime,
+		})
+	}
+	return hits
+}
+
+func extensionRank(filePath string) int {
+	switch extension(filePath) {
+	case "pdf":
+		return 0
+	case "docx":
+		return 1
+	case "pptx":
+		return 2
+	case "txt", "md":
+		return 3
+	default:
+		return 4
+	}
 }
 
 func scoreItem(item catalog.BucketItem, tokens []string, contextPath string) (scored, bool) {

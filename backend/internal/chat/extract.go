@@ -414,5 +414,8 @@ func mostlyText(value string) bool {
 			printable++
 		}
 	}
+	if letters >= 1 && total <= 3 && printable == total {
+		return true
+	}
 	return letters >= 2 && total > 0 && printable*4 >= total*3
 }

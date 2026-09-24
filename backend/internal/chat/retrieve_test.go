@@ -39,6 +39,22 @@ func TestRankRequiresUsefulTokens(t *testing.T) {
 	}
 }
 
+func TestExpandForReadingOpensAFileInsideTheFolder(t *testing.T) {
+	items := []catalog.BucketItem{
+		{Type: "directory", Path: "GM/Tutos SolidWorks"},
+		{Type: "file", Path: "GM/Tutos SolidWorks/intro.pdf"},
+		{Type: "file", Path: "TOEIC/listening.mp3"},
+	}
+	hits := Rank(items, "tutos solidworks", "", 5)
+	if len(hits) == 0 || hits[0].Type != "directory" {
+		t.Fatalf("classement = %+v", hits)
+	}
+	expanded := ExpandForReading(items, hits, 6)
+	if len(expanded) == 0 || expanded[0].Path != "GM/Tutos SolidWorks/intro.pdf" {
+		t.Fatalf("expansion = %+v", expanded)
+	}
+}
+
 func TestTokensFoldApostrophe(t *testing.T) {
 	tokens := Tokens("l'épreuve d'anglais")
 	if len(tokens) != 2 || tokens[0] != "epreuve" || tokens[1] != "anglais" {

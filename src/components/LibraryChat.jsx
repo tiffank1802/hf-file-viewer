@@ -190,6 +190,9 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
                 {message.role === 'assistant' && message.pending && !message.text && (
                   <span className="library-chat-pending" aria-label="Recherche en cours"><i /><i /><i /></span>
                 )}
+                {message.role === 'assistant' && message.pending && !message.text && message.documents?.length > 0 && (
+                  <p className="library-chat-engine">Lecture des documents…</p>
+                )}
                 {message.text && (
                   <AnswerText text={message.text} documents={message.documents} onOpen={openDocument} />
                 )}
@@ -261,9 +264,54 @@ function DocumentCard({ doc, onOpen }) {
 }
 
 function AnswerText({ text, documents = [], onOpen }) {
-  return text.split('\n').map((line, index) => (
-    <p key={`${index}-${line.slice(0, 12)}`}>{renderInline(line, documents, onOpen)}</p>
-  ));
+  return parseAnswer(text).map((block, index) => {
+    if (block.type === 'h') {
+      return <h3 key={index}>{renderInline(block.text, documents, onOpen)}</h3>;
+    }
+    if (block.type === 'ul' || block.type === 'ol') {
+      const List = block.type === 'ol' ? 'ol' : 'ul';
+      return (
+        <List key={index}>
+          {block.items.map((item, itemIndex) => (
+            <li key={itemIndex}>{renderInline(item, documents, onOpen)}</li>
+          ))}
+        </List>
+      );
+    }
+    return <p key={index}>{renderInline(block.text, documents, onOpen)}</p>;
+  });
+}
+
+function parseAnswer(text) {
+  const blocks = [];
+  let list = null;
+  for (const line of String(text || '').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      list = null;
+      continue;
+    }
+    const heading = /^(#{1,3})\s+(.+)$/.exec(trimmed);
+    if (heading) {
+      list = null;
+      blocks.push({ type: 'h', text: heading[2] });
+      continue;
+    }
+    const bullet = /^[-*•]\s+(.+)$/.exec(trimmed);
+    const numbered = /^\d+[.)]\s+(.+)$/.exec(trimmed);
+    if (bullet || numbered) {
+      const type = bullet ? 'ul' : 'ol';
+      if (!list || list.type !== type) {
+        list = { type, items: [] };
+        blocks.push(list);
+      }
+      list.items.push((bullet || numbered)[1]);
+      continue;
+    }
+    list = null;
+    blocks.push({ type: 'p', text: trimmed });
+  }
+  return blocks;
 }
 
 function renderInline(line, documents, onOpen) {

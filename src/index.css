@@ -1068,6 +1068,10 @@
 .library-chat-log { display: flex; flex: 1; flex-direction: column; gap: 10px; overflow: auto; padding: 14px; }
 .library-chat-bubble { max-width: 94%; padding: 10px 12px; border-radius: 16px; font-size: 0.78rem; line-height: 1.45; }
 .library-chat-bubble p + p { margin-top: 6px; }
+.library-chat-bubble.assistant h3 { margin: 10px 0 4px; color: var(--green-dark); font-size: 0.68rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+.library-chat-bubble.assistant h3:first-child { margin-top: 0; }
+.library-chat-bubble.assistant ul, .library-chat-bubble.assistant ol { margin: 4px 0 2px 1.15rem; }
+.library-chat-bubble.assistant li + li { margin-top: 4px; }
 .library-chat-bubble.user { align-self: flex-end; border-bottom-right-radius: 6px; background: var(--green-dark); color: white; }
 .library-chat-bubble.assistant { align-self: flex-start; border: 1px solid var(--line); border-bottom-left-radius: 6px; background: white; }
 .library-chat-bubble.error { border-color: rgba(187, 24, 53, 0.28); background: var(--red-pale); }
