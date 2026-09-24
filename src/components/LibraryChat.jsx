@@ -24,7 +24,7 @@ const KIND_LABEL = {
   file: 'Fichier',
 };
 
-export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile }) {
+export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile, onOpenAuth }) {
   const auth = useAuth();
   const userId = auth.user?.id ?? null;
   const [open, setOpen] = useState(false);
@@ -32,6 +32,7 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
   const [messages, setMessages] = useState([]);
   const [conversationId, setConversationId] = useState('');
   const [conversations, setConversations] = useState([]);
+  const [pane, setPane] = useState('chat');
   const [historyNote, setHistoryNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null);
@@ -54,6 +55,7 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
     setConversationId('');
     setConversations([]);
     setHistoryNote('');
+    setPane('chat');
   }, [userId]);
 
   useEffect(() => {
@@ -94,13 +96,6 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
         }
         const items = Array.isArray(payload.items) ? payload.items : [];
         setConversations(items);
-        if (!conversationRef.current && items[0]?.id) {
-          return loadConversation(items[0].id, controller.signal).then((loaded) => {
-            setConversationId(items[0].id);
-            setMessages(messagesFromPayload(loaded.messages));
-          });
-        }
-        return undefined;
       })
       .catch((error) => {
         if (error.name === 'AbortError') return;
@@ -244,31 +239,47 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
             </button>
           </header>
 
-          {userId && (
-            <div className="library-chat-history">
-              <button type="button" onClick={startFresh} disabled={busy}>Nouvelle</button>
-              {conversations.length > 0 && (
-                <select
-                  aria-label="Conversations enregistrées"
-                  value={conversationId}
-                  disabled={busy}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    if (!next) startFresh();
-                    else void openStored(next);
-                  }}
-                >
-                  <option value="">Choisir un fil</option>
-                  {conversations.map((item) => (
-                    <option key={item.id} value={item.id}>{item.title || item.preview || 'Conversation'}</option>
-                  ))}
-                </select>
-              )}
-            </div>
-          )}
+          <div className="library-chat-tabs" role="tablist" aria-label="Assistant">
+            <button type="button" role="tab" aria-selected={pane === 'chat'} className={pane === 'chat' ? 'active' : ''} onClick={() => setPane('chat')}>
+              Discussion
+            </button>
+            <button type="button" role="tab" aria-selected={pane === 'history'} className={pane === 'history' ? 'active' : ''} onClick={() => setPane('history')}>
+              Historique
+              {conversations.length > 0 && <span>{conversations.length}</span>}
+            </button>
+          </div>
           {historyNote && <p className="library-chat-note">{historyNote}</p>}
 
-          <div className="library-chat-log" aria-live="polite">
+          {pane === 'history' ? (
+            <div className="library-chat-history" role="tabpanel">
+              {!userId && (
+                <div className="library-chat-empty">
+                  <p>Connecte-toi pour retrouver les conversations de ton compte.</p>
+                  {onOpenAuth && <button type="button" onClick={() => onOpenAuth('signin')}>Se connecter</button>}
+                </div>
+              )}
+              {userId && (
+                <button type="button" className="library-chat-new" onClick={startFresh} disabled={busy}>Nouvelle conversation</button>
+              )}
+              {userId && conversations.length === 0 && (
+                <p className="library-chat-empty">Aucune conversation enregistrée pour le moment.</p>
+              )}
+              {userId && conversations.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`library-chat-thread${item.id === conversationId ? ' current' : ''}`}
+                  disabled={busy}
+                  onClick={() => void openStored(item.id)}
+                >
+                  <strong>{item.title || item.preview || 'Conversation'}</strong>
+                  {item.preview && item.preview !== item.title && <em>{item.preview}</em>}
+                  {item.updatedAt && <time dateTime={item.updatedAt}>{formatChatDate(item.updatedAt)}</time>}
+                </button>
+              ))}
+            </div>
+          ) : (
+          <div className="library-chat-log" role="tabpanel" aria-live="polite">
             {messages.length === 0 && (
               <article className="library-chat-bubble assistant">
                 <AnswerText text="Je parcours la bibliothèque pour te proposer un document, le résumer et t’y emmener. Pose une question sur un cours, une année ou TOEIC." />
@@ -313,7 +324,9 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
             ))}
             <span ref={endRef} />
           </div>
+          )}
 
+          {pane === 'chat' && (
           <form
             className="library-chat-form"
             onSubmit={(event) => {
@@ -347,10 +360,17 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
               : 'Connecte-toi pour garder cette conversation dans ton compte.'}
             {' '}Les cartes viennent de la bibliothèque.
           </p>
+          )}
         </section>
       )}
     </>
   );
+}
+
+function formatChatDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(date);
 }
 
 function messagesFromPayload(list) {
@@ -436,6 +456,19 @@ function renderInline(line, documents, onOpen) {
     if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
       const value = part.slice(1, -1);
       const doc = documents.find((item) => item.path === value || item.name === value);
+      if (doc && onOpen) {
+        return (
+          <button key={index} type="button" className="library-chat-path" onClick={() => onOpen(doc)}>
+            {value}
+          </button>
+        );
+      }
+      return <code key={index}>{value}</code>;
+    }
+    return <span key={index}>{part}</span>;
+  });
+}
+value || item.name === value);
       if (doc && onOpen) {
         return (
           <button key={index} type="button" className="library-chat-path" onClick={() => onOpen(doc)}>

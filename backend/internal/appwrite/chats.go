@@ -24,6 +24,7 @@ type ChatConversation struct {
 	ID          string `json:"id"`
 	Title       string `json:"title"`
 	Preview     string `json:"preview"`
+	UpdatedAt   string `json:"updatedAt,omitempty"`
 	ContextPath string `json:"contextPath,omitempty"`
 }
 
@@ -395,6 +396,7 @@ func conversationFromMap(row map[string]any) ChatConversation {
 		ID:          firstString(row, nil, "$id"),
 		Title:       firstString(row, nested, "title"),
 		Preview:     firstString(row, nested, "preview"),
+		UpdatedAt:   firstString(row, nil, "$updatedAt"),
 		ContextPath: firstString(row, nested, "contextPath"),
 	}
 }

@@ -175,6 +175,7 @@ export default function App() {
         catalog={catalog}
         onNavigate={library.navigate}
         onOpenFile={setSelectedFile}
+        onOpenAuth={openAuth}
       />
       <CloudflareAnalytics />
       <PreviewModal
