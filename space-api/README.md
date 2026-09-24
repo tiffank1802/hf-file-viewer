@@ -12,7 +12,8 @@ short_description: API Go de ENISE Docs (index, aperçus, compte, assistant)
 # ENISE Docs API
 
 > Hugging Face réserve désormais les Spaces Docker aux comptes PRO. Sans
-> abonnement, déployer l’API sur Render avec `render.yaml` (voir le README).
+> abonnement, déployer l’API sur Cloud Run (`npm run deploy:api:firebase`)
+> ou sur Render (`render.yaml`) : voir le README du dépôt.
 
 API Go derrière le site Cloudflare. Le Worker sert les assets et relaie
 `/api/*` vers ce Space.

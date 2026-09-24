@@ -25,7 +25,8 @@
     "cf:typegen": "wrangler types",
     "deploy:space": "node scripts/deploy-space.js",
     "deploy:api": "node scripts/deploy-api.js",
-    "api:origin": "node scripts/set-api-origin.js"
+    "api:origin": "node scripts/set-api-origin.js",
+    "deploy:api:firebase": "node scripts/deploy-cloudrun.js"
   },
   "dependencies": {
     "docx-preview": "^0.4.0",

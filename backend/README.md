@@ -101,20 +101,27 @@ Mêmes noms que `wrangler.jsonc` / `.dev.vars` :
 
 `MODEL3D_CONVERT_URL` absent active Rupture. Une valeur explicitement vide désactive la conversion, comme le Worker.
 
-## Publier l’API sur Render (gratuit)
+## Publier l’API sur Firebase (Cloud Run)
 
-Le Worker Cloudflare reste devant : il sert les assets et appelle cette API. Le Blueprint [`render.yaml`](../render.yaml) décrit le service : runtime Go natif, `rootDir: backend`, build `go build -trimpath -o bin/enise-api ./cmd/enise-api`, démarrage `./bin/enise-api`. Render fournit `PORT` (10000) et le serveur écoute `0.0.0.0:$PORT`.
+Le Worker Cloudflare reste devant : il sert les assets et appelle cette API sur son URL `*.run.app`. [`Dockerfile`](./Dockerfile) construit un binaire statique (image distroless) ; Cloud Run fournit `PORT` (8080) et le serveur écoute `0.0.0.0:$PORT` — ne pas définir `ADDR`, il prendrait le pas.
 
 ```bash
-# 1. Render → New → Blueprint → ce dépôt, puis saisir les clés demandées
-# 2. relier le Worker (vérifie /api/health, écrit GO_API_ORIGIN) et redéployer
-npm run api:origin -- https://enise-docs-api.onrender.com
-npm run deploy
+# projet Firebase au plan Blaze, gcloud connecté (gcloud auth login)
+npm run deploy:api:firebase -- --project <id>   # build Cloud Build + déploiement + GO_API_ORIGIN
+npm run deploy                                  # redéploie le Worker
 ```
 
-Les clés (`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `OPENROUTER_API_KEY`…) se saisissent dans Render (**Environment**), jamais dans les fichiers. `CHAT_TRUST_PROXY=1` est fixé par le Blueprint. Le disque Render gratuit est éphémère : le cache (`CACHE_DIR=/tmp/enise-docs-cache`) repart à vide à chaque réveil, l’index se recharge depuis Hugging Face.
+Équivalent manuel :
 
-Alternative payante : `HF_TOKEN=hf_... npm run deploy:api -- --write-origin` publie la même API comme Space Docker Hugging Face (`space-api/Dockerfile`, port `8788`), mais Hugging Face réserve désormais les Spaces Docker aux comptes PRO.
+```bash
+gcloud run deploy enise-docs-api --source backend --region europe-west1 \
+  --allow-unauthenticated --timeout 300 --max-instances 3 \
+  --set-env-vars CHAT_TRUST_PROXY=1,CLOUDFLARE_ACCOUNT_ID=…,CLOUDFLARE_API_TOKEN=…
+```
+
+Ne pas mettre Firebase Hosting devant : son délai de 60 s couperait les réponses longues de l’assistant (jusqu’à 150 s).
+
+Alternatives : Render ([`render.yaml`](../render.yaml), gratuit, réveil lent) ou Space Docker Hugging Face (`npm run deploy:api`, compte PRO).
 
 ## Héberger Go à la place du Worker
 

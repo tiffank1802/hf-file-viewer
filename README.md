@@ -120,34 +120,30 @@ Les réglages de production sont dans [`wrangler.jsonc`](./wrangler.jsonc) :
 
 Un changement de TTL s’applique aux nouvelles entrées de cache. Les anciennes expirent naturellement ou peuvent être purgées depuis le tableau de bord Cloudflare.
 
-### Héberger l’API Go sur Render (gratuit)
+### Héberger l’API Go sur Firebase (Cloud Run)
 
-Le site reste sur Cloudflare Workers ; seule l’API Go (assistant, compte étudiant) tourne sur [Render](https://render.com), décrite par [`render.yaml`](./render.yaml) : runtime Go natif, palier `free`, région Francfort, `rootDir: backend`, contrôle de santé sur `/api/health`.
+Le site reste sur Cloudflare Workers ; seule l’API Go (assistant, compte étudiant) tourne sur **Cloud Run**, dans le projet Firebase. Le Worker appelle directement l’URL `*.run.app` (`GO_API_ORIGIN`) : passer par Firebase Hosting couperait les réponses de l’assistant à 60 secondes.
 
-1. Render → **New → Blueprint** → choisir ce dépôt GitHub (et la branche qui contient `render.yaml`).
-2. Render demande les valeurs marquées `sync: false` — au moins un moteur :
+**Prérequis, une seule fois :**
 
-   | Variable | Rôle |
-   |---|---|
-   | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | IA intégrée Cloudflare (Workers AI), moteur essayé en premier |
-   | `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, `OPENCODE_API_KEY` | moteurs de secours (facultatifs) |
-   | `HF_TOKEN` | seulement si le bucket devient privé |
+1. Console Firebase → **Mettre à niveau** vers le plan **Blaze** (Cloud Run exige un compte de facturation ; le quota gratuit mensuel couvre largement ce trafic). Conseillé : une alerte de budget à 1 € dans Google Cloud → Facturation → Budgets.
+2. Installer le [Google Cloud SDK](https://cloud.google.com/sdk/docs/install), puis `gcloud auth login`.
+3. Renseigner au moins un moteur dans `.dev.vars` (`CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN`, ou une clé OpenRouter / NVIDIA / OpenCode).
 
-   `CHAT_TRUST_PROXY=1` est déjà fixé dans le Blueprint : la limite de 30 questions par minute s’applique par visiteur, pas au site entier.
-3. Une fois le service en ligne (`https://enise-docs-api.onrender.com/api/health` répond `{"ok":true,…}`), relier le Worker puis redéployer :
+**Déploiement :**
 
-   ```bash
-   npm run api:origin -- https://enise-docs-api.onrender.com
-   npm run deploy
-   ```
+```bash
+npm run deploy:api:firebase -- --project <id-du-projet-firebase>
+npm run deploy
+```
 
-   `api:origin` vérifie `/api/health` (en attendant la sortie de veille) puis écrit `GO_API_ORIGIN` dans `wrangler.jsonc`.
+Le script active les API Cloud Run / Cloud Build / Artifact Registry, construit l’image depuis [`backend/Dockerfile`](./backend/Dockerfile), déploie le service `enise-docs-api` (région `europe-west1`, public, délai 300 s, 0 à 3 instances), vérifie `/api/health` puis écrit `GO_API_ORIGIN` dans `wrangler.jsonc`. `npm run deploy` republie ensuite le Worker.
 
-Seuls les commits qui touchent `backend/` relancent un déploiement Render (`buildFilter`).
+Seules les clés utiles de `.dev.vars` sont transmises au service (moteurs de rédaction, modèles, Appwrite) ; `CHAT_TRUST_PROXY=1` est fixé d’office. `HF_TOKEN` n’est envoyé qu’avec `--with-hf-token` (bucket privé). Autres options : `--region`, `--service`, `--no-origin`, `--dry-run` (affiche la commande `gcloud` sans rien déployer). Le projet peut aussi venir de `GOOGLE_CLOUD_PROJECT` ou du `.firebaserc` (`firebase use --add`).
 
-> Le palier gratuit s’endort après 15 minutes sans requête : la première question après une pause attend 30 à 60 secondes. Pour supprimer l’attente : plan Render `starter`, ou un petit VPS (voir [`backend/README.md`](./backend/README.md)).
+> Cloud Run s’arrête quand personne ne l’utilise ; une instance Go redémarre en une à deux secondes, et le cache repart à vide (l’index se recharge depuis Hugging Face).
 >
-> Hugging Face exige désormais un abonnement PRO pour les Spaces Docker : `npm run deploy:api` (Space `enise-docs-api`) ne fonctionne qu’avec un compte PRO.
+> Alternatives : [`render.yaml`](./render.yaml) (Render, gratuit, mais réveil de 30 à 60 s) ; `npm run deploy:api` (Space Docker Hugging Face, réservé aux comptes PRO). Pour une URL déjà en ligne : `npm run api:origin -- https://…` écrit seulement `GO_API_ORIGIN`.
 
 ### Le Worker sert le site, Go ne sert que l’API
 
