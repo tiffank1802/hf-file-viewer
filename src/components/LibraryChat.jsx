@@ -35,6 +35,7 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
   const [pane, setPane] = useState('chat');
   const [historyNote, setHistoryNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [sessionReady, setSessionReady] = useState(false);
   const [status, setStatus] = useState(null);
   const [statusError, setStatusError] = useState('');
   const conversationRef = useRef('');
@@ -56,7 +57,18 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
     setConversations([]);
     setHistoryNote('');
     setPane('chat');
+    setSessionReady(false);
   }, [userId]);
+
+  useEffect(() => {
+    if (!open || !userId || sessionReady) return undefined;
+    setSessionReady(true);
+    const stored = readStoredSession(userId);
+    if (!stored) return undefined;
+    void openStored(stored);
+    return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, userId, sessionReady]);
 
   useEffect(() => {
     if (!open || status || statusError) return undefined;
@@ -106,10 +118,12 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
 
   function startFresh() {
     abortRef.current?.abort();
+    clearStoredSession(userId);
     setConversationId('');
     setMessages([]);
     setHistoryNote('');
     setBusy(false);
+    setPane('chat');
   }
 
   async function openStored(id) {
@@ -118,10 +132,13 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
     setBusy(true);
     try {
       const loaded = await loadConversation(id);
+      rememberSession(userId, id);
       setConversationId(id);
       setMessages(messagesFromPayload(loaded.messages));
+      setPane('chat');
     } catch (error) {
-      setHistoryNote(error.message || 'Conversation illisible.');
+      clearStoredSession(userId);
+      setHistoryNote(error.message || 'Session illisible.');
     } finally {
       setBusy(false);
     }
@@ -176,10 +193,16 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
           if (event === 'delta') patch((item) => ({ ...item, text: `${item.text}${data.text || ''}` }));
           if (event === 'done') {
             if (data.conversationId) {
+              rememberSession(userId, data.conversationId);
               setConversationId(data.conversationId);
               setConversations((current) => {
-                if (current.some((item) => item.id === data.conversationId)) return current;
-                return [{ id: data.conversationId, title: question.slice(0, 80), preview: question.slice(0, 80) }, ...current];
+                const rest = current.filter((item) => item.id !== data.conversationId);
+                return [{
+                  id: data.conversationId,
+                  title: data.title || question.slice(0, 80),
+                  preview: question.slice(0, 80),
+                  updatedAt: new Date().toISOString(),
+                }, ...rest];
               });
             }
             setHistoryNote(data.saveError || '');
@@ -259,26 +282,39 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
                 </div>
               )}
               {userId && (
-                <button type="button" className="library-chat-new" onClick={startFresh} disabled={busy}>Nouvelle conversation</button>
+                <button type="button" className="library-chat-new" onClick={startFresh} disabled={busy}>Nouvelle session</button>
               )}
               {userId && conversations.length === 0 && (
-                <p className="library-chat-empty">Aucune conversation enregistrée pour le moment.</p>
+                <p className="library-chat-empty">Aucune session enregistrée pour le moment.</p>
               )}
-              {userId && conversations.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`library-chat-thread${item.id === conversationId ? ' current' : ''}`}
-                  disabled={busy}
-                  onClick={() => void openStored(item.id)}
-                >
-                  <strong>{item.title || item.preview || 'Conversation'}</strong>
-                  {item.preview && item.preview !== item.title && <em>{item.preview}</em>}
-                  {item.updatedAt && <time dateTime={item.updatedAt}>{formatChatDate(item.updatedAt)}</time>}
-                </button>
+              {userId && sessionGroups(conversations).map((group) => (
+                <section key={group.label} className="library-chat-group">
+                  <h4>{group.label}</h4>
+                  {group.items.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`library-chat-thread${item.id === conversationId ? ' current' : ''}`}
+                      disabled={busy}
+                      onClick={() => void openStored(item.id)}
+                    >
+                      <strong>{item.title || item.preview || 'Session'}</strong>
+                      {item.preview && item.preview !== item.title && <em>{item.preview}</em>}
+                      {item.updatedAt && <time dateTime={item.updatedAt}>{formatChatDate(item.updatedAt)}</time>}
+                    </button>
+                  ))}
+                </section>
               ))}
             </div>
           ) : (
+          <>
+          {conversationId && (
+            <div className="library-chat-session-bar">
+              <span>Session en cours</span>
+              <strong>{activeSessionTitle(conversations, conversationId)}</strong>
+              <button type="button" onClick={startFresh} disabled={busy}>Nouvelle</button>
+            </div>
+          )}
           <div className="library-chat-log" role="tabpanel" aria-live="polite">
             {messages.length === 0 && (
               <article className="library-chat-bubble assistant">
@@ -324,6 +360,7 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
             ))}
             <span ref={endRef} />
           </div>
+          </>
           )}
 
           {pane === 'chat' && (
@@ -357,8 +394,8 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
           </form>
           <p className="library-chat-trust">
             {userId
-              ? 'Cette conversation est enregistrée dans ton compte.'
-              : 'Connecte-toi pour garder cette conversation dans ton compte.'}
+              ? 'Cette session est enregistrée dans ton compte.'
+              : 'Connecte-toi pour garder cette session dans ton compte.'}
             {' '}Les cartes viennent de la bibliothèque.
           </p>
           </>
@@ -367,6 +404,62 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
       )}
     </>
   );
+}
+
+function sessionKeyFor(userId) {
+  return userId ? `enise-chat-session:${userId}` : '';
+}
+
+function rememberSession(userId, id) {
+  const key = sessionKeyFor(userId);
+  if (!key) return;
+  try {
+    if (id) window.localStorage.setItem(key, id);
+    else window.localStorage.removeItem(key);
+  } catch {
+    // stockage indisponible
+  }
+}
+
+function clearStoredSession(userId) {
+  rememberSession(userId, '');
+}
+
+function readStoredSession(userId) {
+  const key = sessionKeyFor(userId);
+  if (!key) return '';
+  try {
+    return window.localStorage.getItem(key) || '';
+  } catch {
+    return '';
+  }
+}
+
+function activeSessionTitle(items, id) {
+  const found = items.find((item) => item.id === id);
+  return found?.title || found?.preview || 'Discussion';
+}
+
+function sessionGroups(items) {
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startYesterday = startToday - 86400000;
+  const startWeek = startToday - 6 * 86400000;
+  const groups = [
+    { label: 'Aujourd’hui', items: [] },
+    { label: 'Hier', items: [] },
+    { label: 'Cette semaine', items: [] },
+    { label: 'Plus tôt', items: [] },
+  ];
+  for (const item of items) {
+    const at = item.updatedAt ? Date.parse(item.updatedAt) : NaN;
+    if (Number.isNaN(at)) groups[0].items.push(item);
+    else if (at >= startToday) groups[0].items.push(item);
+    else if (at >= startYesterday) groups[1].items.push(item);
+    else if (at >= startWeek) groups[2].items.push(item);
+    else groups[3].items.push(item);
+  }
+  return groups.filter((group) => group.items.length > 0);
 }
 
 function formatChatDate(value) {

@@ -173,6 +173,7 @@ func (s *Server) finishChat(w http.ResponseWriter, r *http.Request, conversation
 		"engine":         engine,
 		"documents":      publicHits(hits),
 		"conversationId": saved.ID,
+		"title":          saved.Title,
 		"saved":          saved.ID != "",
 		"saveError":      saved.Error,
 	})
@@ -180,6 +181,7 @@ func (s *Server) finishChat(w http.ResponseWriter, r *http.Request, conversation
 
 type chatSave struct {
 	ID    string
+	Title string
 	Error string
 }
 
@@ -214,7 +216,7 @@ func (s *Server) rememberChat(r *http.Request, conversationID, question, answer,
 		}
 		return chatSave{Error: "Conversation non enregistrée : " + detail}
 	}
-	return chatSave{ID: saved.ID}
+	return chatSave{ID: saved.ID, Title: saved.Title}
 }
 
 func chatSources(hits []chat.Hit) []appwrite.ChatSource {
