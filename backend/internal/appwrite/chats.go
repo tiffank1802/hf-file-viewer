@@ -261,10 +261,8 @@ func (c *Client) nextMessageSeq(ctx context.Context, api dataAPI, session, conve
 	}
 	items, err := c.listMessagesAt(ctx, api, session, queries, "", conversationID)
 	if err != nil {
-		if isSkippableFavoriteQuery(err) {
-			return 1, nil
-		}
-		return 0, err
+		// Un index encore en construction ne doit pas empêcher d'écrire le message.
+		return 1, nil
 	}
 	max := 0
 	for _, item := range items {

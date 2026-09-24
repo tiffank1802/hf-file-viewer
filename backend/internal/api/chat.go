@@ -141,13 +141,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) error {
 	if len(chat.Tokens(message)) == 0 {
 		answer := "Formule une question avec une matière, une année (3A, 4A, 5A) ou TOEIC."
 		_ = writeSSE(w, "delta", map[string]string{"text": answer})
-		_ = writeSSE(w, "done", map[string]any{"answer": answer, "engine": "local", "documents": []chat.Hit{}})
+		s.finishChat(w, r, body.ConversationID, message, answer, contextPath, "local", nil)
 		return nil
 	}
 	if len(items) == 0 {
 		answer := "La bibliothèque n’est pas encore indexée. Réessaie dans un instant."
 		_ = writeSSE(w, "delta", map[string]string{"text": answer})
-		_ = writeSSE(w, "done", map[string]any{"answer": answer, "engine": "local", "documents": []chat.Hit{}})
+		s.finishChat(w, r, body.ConversationID, message, answer, contextPath, "local", nil)
 		return nil
 	}
 
@@ -161,13 +161,21 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	answer, engine := s.composeAnswer(r.Context(), w, message, contextPath, sanitizeHistory(body.History, message), hits)
-	hits = promoteMentioned(answer, hits)
-	_ = writeSSE(w, "done", map[string]any{
-		"answer":    answer,
-		"engine":    engine,
-		"documents": publicHits(hits),
-	})
+	s.finishChat(w, r, body.ConversationID, message, answer, contextPath, engine, hits)
 	return nil
+}
+
+func (s *Server) finishChat(w http.ResponseWriter, r *http.Request, conversationID, question, answer, contextPath, engine string, hits []chat.Hit) {
+	hits = promoteMentioned(answer, hits)
+	saved := s.rememberChat(r, conversationID, question, answer, contextPath, hits)
+	_ = writeSSE(w, "done", map[string]any{
+		"answer":         answer,
+		"engine":         engine,
+		"documents":      publicHits(hits),
+		"conversationId": saved.ID,
+		"saved":          saved.ID != "",
+		"saveError":      saved.Error,
+	})
 }
 
 type chatSave struct {
@@ -187,7 +195,8 @@ func (s *Server) rememberChat(r *http.Request, conversationID, question, answer,
 	defer cancel()
 	user, err := s.appwrite().GetAccount(ctx, secret)
 	if err != nil {
-		return chatSave{}
+		log.Printf("chat mémoire: session illisible: %v", err)
+		return chatSave{Error: "Session non reconnue : la conversation n’a pas été enregistrée."}
 	}
 	saved, err := s.appwrite().AppendChatTurn(ctx, secret, user.ID, conversationID, question, answer, contextPath, chatSources(hits))
 	if err != nil {
@@ -195,7 +204,15 @@ func (s *Server) rememberChat(r *http.Request, conversationID, question, answer,
 		if appwrite.IsMissingTable(err) {
 			return chatSave{Error: "Lance npm run appwrite:setup pour garder les conversations."}
 		}
-		return chatSave{Error: "La conversation n’a pas pu être enregistrée."}
+		detail := appwrite.French(err)
+		var apiErr *appwrite.APIError
+		if errors.As(err, &apiErr) && apiErr != nil && apiErr.Detail != "" {
+			detail = apiErr.Detail
+		}
+		if len(detail) > 180 {
+			detail = detail[:180]
+		}
+		return chatSave{Error: "Conversation non enregistrée : " + detail}
 	}
 	return chatSave{ID: saved.ID}
 }
