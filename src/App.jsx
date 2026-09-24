@@ -21,9 +21,13 @@ import './index.css';
 export default function App() {
   const library = useLibrary();
   const catalog = useIndexCatalog();
-  // Les cartes d’accueil et la barre latérale sont dérivées de l’index :
-  // un dossier ajouté au bucket apparaît sans redéploiement.
-  const home = useMemo(() => buildHomeCards(catalog), [catalog]);
+  // Les cartes d’accueil et la barre latérale sont dérivées de l’index et du
+  // listage racine (`/api/tree`, l’en-tête du bucket) : un dossier ajouté
+  // apparaît sans redéploiement, même s’il est encore vide.
+  const home = useMemo(
+    () => buildHomeCards(catalog, { rootItems: library.path === '' ? library.items : [] }),
+    [catalog, library.path, library.items],
+  );
   const [selectedFile, setSelectedFile] = useState(null);
   const [searchState, setSearchState] = useState({ open: false, mode: 'search' });
   const [authPanel, setAuthPanel] = useState({ open: false, mode: 'signin' });

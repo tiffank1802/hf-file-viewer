@@ -13,7 +13,7 @@ Bibliothèque étudiante moderne pour les ressources de **Centrale Lyon ENISE**,
 - aperçu 3D hybride : conversion **GLB gratuite** (FreeCAD) pour `.step`, `.iges`, `.stl`, `.obj` avec rotation, zoom et déplacement, **Autodesk APS** (Model Derivative) pour les autres formats (`.dwg`, `.rvt`, `.sldprt`, `.ifc`, `.catpart`, … — FreeCAD ne lit pas les formats propriétaires), et plugin iframe **ShareCAD** en roue de secours gratuite sans conversion ;
 - téléchargement, partage et favoris enregistrés dans le navigateur ;
 - assistant bibliothèque : il retrouve un document, l’ouvre, le résume, et sait croiser plusieurs annales pour répondre à « comment se structure l’examen d’économie ? ». La rédaction reste côté serveur Go ; sans clé, les cartes de documents sont quand même proposées ;
-- **cartes d’espaces construites depuis l’index du bucket** : un dossier ajouté dans Hugging Face apparaît sur l’accueil en quelques minutes, sans redéploiement, avec un badge « Nouveau » et une entrée « Autres dossiers » dans la barre latérale ;
+- **cartes d’espaces construites depuis le bucket** : l’index (`/api/index`) donne l’arborescence et les effectifs, l’en-tête du bucket (`/api/tree` racine) fait foi pour le premier niveau. Un dossier ajouté dans Hugging Face apparaît donc en quelques minutes — **même s’il est encore vide** — avec un badge « Nouveau » et une entrée « Autres dossiers » dans la barre latérale ;
 - effectifs par dossier calculés **une seule fois à l’indexation** et stockés dans le JSON d’index ;
 - Worker Cloudflare servant à la fois les assets statiques et l’API proxy ;
 - Cache API configuré pour les arbres, l’index et les fichiers raisonnablement petits ;
@@ -518,7 +518,16 @@ Le bucket n’est parcouru récursivement qu’au **premier** `GET /api/index` d
 3. `counts` (chemin → nombre) et `totalFiles` sont écrits **dans le document d’index** ;
 4. ce document part au Cache API, et dans Workers KV si le binding existe.
 
-Le frontend charge ce JSON au démarrage (`useIndexCatalog`) puis le relit toutes les 5 minutes (uniquement quand l’onglet est visible). L’accueil, les cartes d’espaces, l’explorateur et la recherche lisent ensuite les mêmes valeurs : **changer de dossier ne déclenche aucun recomptage**, seule la liste du dossier est demandée à `/api/tree` (elle-même cachée). Pendant le tout premier index, l’interface affiche « Indexation… ».
+Le frontend charge ce JSON au démarrage (`useIndexCatalog`) puis le relit toutes les 5 minutes (uniquement quand l’onglet est visible). L’accueil, les cartes d’espaces, l’explorateur et la recherche lisent ensuite les mêmes valeurs : **changer de dossier ne déclenche aucun recomptage**, seule la liste du dossier est demandée à `/api/tree` (elle-même cachée, et relue en arrière-plan toutes les 5 minutes pour l’onglet affiché). Pendant le tout premier index, l’interface affiche « Indexation… ».
+
+#### Cartes d’accueil et en-tête du bucket
+
+`src/utils/spaces.js` fusionne deux sources, dans cet ordre :
+
+1. **l’index récursif** (`/api/index`) : quels dossiers existent, leurs effectifs et la date du dernier dépôt (badge « Nouveau » sous 30 jours) ;
+2. **le listage racine** (`/api/tree` sans préfixe) : l’en-tête du bucket, qui fait foi pour le premier niveau. Un dossier de la racine obtient donc sa carte **même s’il est vide** — cas où l’index récursif ne le voit pas.
+
+Les espaces connus (3A, 4A, 5A, TOEIC, SolidWorks) gardent leur titre, leur icône et leur couleur, mais ne s’affichent que s’ils existent encore. Un dossier conteneur (par exemple `GM`, qui regroupe 3A / 4A / 5A) n’a pas de carte : ses sous-dossiers prennent la place, ce qui fait apparaître `GM/Stages` sans toucher au code. La carte **Toute la bibliothèque** ouvre la racine et affiche en description les dossiers de l’en-tête. Si l’index ne répond pas, les espaces connus restent affichés comme avant, complétés par les dossiers réellement présents à la racine.
 
 #### Fraîcheur sans attente
 

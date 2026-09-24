@@ -3,6 +3,9 @@ import { fetchTree } from '../services/api';
 import { getFallbackTree } from '../data/fallbackData';
 import { hrefFromLibraryPath, pathFromHash, pathFromLocation } from '../utils/routes';
 
+/** Un onglet resté ouvert relit le dossier affiché à ce rythme. */
+const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+
 export function useLibrary() {
   const [path, setPath] = useState(() => pathFromLocation());
   const [state, setState] = useState({
@@ -15,6 +18,8 @@ export function useLibrary() {
   });
   const [reloadKey, setReloadKey] = useState(0);
   const cacheRef = useRef(new Map());
+  // Une relecture périodique ne doit ni vider la liste ni afficher de squelette.
+  const backgroundRef = useRef(false);
 
   useEffect(() => {
     const syncPath = () => {
@@ -34,14 +39,19 @@ export function useLibrary() {
 
   useEffect(() => {
     const controller = new AbortController();
-    const cached = cacheRef.current.get(path);
+    const background = backgroundRef.current;
+    backgroundRef.current = false;
+    // Une relecture en arrière-plan ignore le cache : c’est tout son intérêt.
+    const cached = background ? null : cacheRef.current.get(path);
 
     if (cached) {
       setState({ ...cached, loading: false });
       return () => controller.abort();
     }
 
-    setState((current) => ({ ...current, items: [], loading: true, error: null }));
+    if (!background) {
+      setState((current) => ({ ...current, items: [], loading: true, error: null }));
+    }
 
     fetchTree(path, controller.signal)
       .then((payload) => {
@@ -58,6 +68,9 @@ export function useLibrary() {
       })
       .catch((error) => {
         if (error.name === 'AbortError') return;
+        // Relecture silencieuse : un échec réseau passager ne remplace pas la
+        // liste affichée par les données de secours.
+        if (background) return;
         const fallbackItems = getFallbackTree(path);
         const nextState = {
           items: fallbackItems,
@@ -72,6 +85,18 @@ export function useLibrary() {
 
     return () => controller.abort();
   }, [path, reloadKey]);
+
+  // Le dossier affiché est relu en arrière-plan : un dossier ajouté dans le
+  // bucket apparaît sans rechargement de page.
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      cacheRef.current.delete(path);
+      backgroundRef.current = true;
+      setReloadKey((key) => key + 1);
+    }, REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [path]);
 
   const navigate = useCallback(
     (nextPath = '', options = {}) => {

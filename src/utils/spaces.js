@@ -4,6 +4,7 @@ import {
   NEW_SPACE_WINDOW_DAYS,
   SPACE_TONES,
 } from '../config.js';
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Noms « lisibles » des dossiers conteneurs du bucket. */
@@ -39,6 +40,38 @@ export function indexedDirectories(items = []) {
     }
   }
   return directories;
+}
+
+/**
+ * Dossiers de premier niveau d’un listage de racine.
+ *
+ * C’est l’en-tête du bucket : `/api/tree` sans préfixe. Il fait foi pour la
+ * racine, y compris pour un dossier vide que l’index récursif ignore.
+ */
+export function rootDirectories(rootItems = []) {
+  const directories = new Set();
+  for (const item of rootItems) {
+    const path = normalizeSpacePath(item?.path);
+    if (!path) continue;
+    const parts = path.split('/').filter(Boolean);
+    if (!parts.length) continue;
+    if (parts.length === 1 && item?.type !== 'directory') continue;
+    directories.add(parts[0]);
+  }
+  return directories;
+}
+
+/** Fusionne deux listages en gardant la première entrée vue pour un chemin. */
+export function mergeItems(primary = [], extra = []) {
+  const seen = new Set();
+  const merged = [];
+  for (const item of [...primary, ...extra]) {
+    const path = normalizeSpacePath(item?.path);
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    merged.push(item);
+  }
+  return merged;
 }
 
 /** Vrai si le dossier existe encore dans l’index. */
@@ -80,7 +113,9 @@ export function isRecentActivity(time, now = Date.now(), windowDays = NEW_SPACE_
 
 /** Titre lisible pour un dossier découvert dans le bucket. */
 export function titleFromPath(path = '') {
-  const name = segmentsOf(path).pop() || '';
+  const normalized = normalizeSpacePath(path);
+  if (FOLDER_LABELS[normalized]) return FOLDER_LABELS[normalized];
+  const name = segmentsOf(normalized).pop() || '';
   const words = name.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
   if (!words) return 'Dossier';
   return words.charAt(0).toUpperCase() + words.slice(1);
@@ -106,16 +141,25 @@ function finiteCount(value) {
   return Number.isFinite(number) ? number : null;
 }
 
-function countFor(catalog, path) {
-  return finiteCount(catalog?.counts?.[normalizeSpacePath(path)]);
+function countFor(catalog, path, entry = null) {
+  const fromIndex = finiteCount(catalog?.counts?.[normalizeSpacePath(path)]);
+  if (fromIndex !== null) return fromIndex;
+  // Sans index, un dossier peut déjà annoncer son effectif dans le listage.
+  return finiteCount(entry?.count ?? entry?.numItems ?? entry?.totalFiles);
 }
 
-function curatedSpace(space, catalog) {
+/** Entrée de listage d’un dossier, pour son effectif ou sa date. */
+function entryFor(items, path) {
+  const base = normalizeSpacePath(path);
+  return items.find((item) => normalizeSpacePath(item?.path) === base) || null;
+}
+
+function curatedSpace(space, catalog, items = []) {
   const path = normalizeSpacePath(space.path);
   return {
     ...space,
     path,
-    count: countFor(catalog, path),
+    count: countFor(catalog, path, entryFor(items, path)),
     dynamic: false,
     badge: null,
     updatedAt: null,
@@ -153,8 +197,10 @@ export function dynamicSpacePaths(directories = new Set(), knownPaths = []) {
 }
 
 function dynamicSpace(path, items, catalog, now) {
-  const updatedAt = latestActivity(items, path);
-  const recent = isRecentActivity(updatedAt, now);
+  const entry = entryFor(items, path);
+  const updatedAt = latestActivity(items, path) ?? Date.parse(entry?.mtime ?? '');
+  const updated = Number.isFinite(updatedAt) ? updatedAt : null;
+  const recent = isRecentActivity(updated, now);
   return {
     path,
     title: titleFromPath(path),
@@ -162,10 +208,10 @@ function dynamicSpace(path, items, catalog, now) {
     description: describeDynamicSpace(path, recent),
     tone: SPACE_TONES[0],
     icon: 'folder',
-    count: countFor(catalog, path),
+    count: countFor(catalog, path, entry),
     dynamic: true,
     badge: recent ? 'Nouveau' : null,
-    updatedAt,
+    updatedAt: updated,
   };
 }
 
@@ -177,16 +223,24 @@ function byActivity(a, b) {
 }
 
 /**
- * Construit les cartes d’espaces à partir de l’index du bucket.
+ * Construit les cartes d’espaces à partir du bucket.
  *
- * - les espaces connus ne s’affichent que s’ils existent toujours ;
- * - tout autre dossier (racine, ou sous-dossier d’un conteneur) est ajouté,
- *   trié du plus récemment modifié au plus ancien ;
- * - si l’index n’a pas répondu (chargement, panne), les espaces connus
- *   restent affichés comme avant.
+ * Deux sources se complètent :
+ *
+ * - l’index (`/api/index`) donne l’arborescence complète et les effectifs ;
+ * - le listage racine (`/api/tree` sans préfixe, l’en-tête du bucket) fait foi
+ *   pour le premier niveau : un dossier qui y figure obtient une carte même
+ *   s’il est vide, donc absent de l’index récursif.
+ *
+ * Les espaces connus ne s’affichent que s’ils existent toujours ; tout autre
+ * dossier (racine, ou sous-dossier d’un conteneur) est ajouté, trié du plus
+ * récemment modifié au plus ancien. Si l’index n’a pas répondu, les espaces
+ * connus restent affichés comme avant.
  */
 export function buildSpaces(catalog, options = {}) {
-  const items = Array.isArray(catalog?.items) ? catalog.items : [];
+  const indexItems = Array.isArray(catalog?.items) ? catalog.items : [];
+  const rootItems = Array.isArray(options.rootItems) ? options.rootItems : [];
+  const items = mergeItems(indexItems, rootItems);
   const now = Number.isFinite(options.now) ? options.now : Date.now();
 
   if (items.length === 0) {
@@ -196,9 +250,13 @@ export function buildSpaces(catalog, options = {}) {
   const knownPaths = FEATURED_SPACES.map((space) => normalizeSpacePath(space.path));
   const directories = indexedDirectories(items);
 
-  const curated = FEATURED_SPACES.filter((space) =>
-    directories.has(normalizeSpacePath(space.path)),
-  ).map((space) => curatedSpace(space, catalog));
+  // Index indisponible : la liste connue sert de repli, complétée par les
+  // dossiers réellement présents à la racine du bucket.
+  const curated = indexItems.length === 0
+    ? FEATURED_SPACES.map((space) => curatedSpace(space, catalog, items))
+    : FEATURED_SPACES
+        .filter((space) => directories.has(normalizeSpacePath(space.path)))
+        .map((space) => curatedSpace(space, catalog, items));
 
   const dynamic = dynamicSpacePaths(directories, knownPaths)
     .map((path) => dynamicSpace(path, items, catalog, now))
@@ -208,11 +266,25 @@ export function buildSpaces(catalog, options = {}) {
   return [...curated, ...dynamic];
 }
 
+/**
+ * Description de la carte racine : les dossiers de l’en-tête du bucket, pour
+ * que le lien annonce ce qu’il ouvre vraiment.
+ */
+export function libraryDescription(rootItems = [], max = 3) {
+  const names = [...rootDirectories(rootItems)].sort((a, b) => a.localeCompare(b, 'fr'));
+  if (names.length === 0) return LIBRARY_ROOT_CARD.description;
+  if (names.length <= max) return names.join(' · ');
+  return `${names.slice(0, max).join(' · ')} · +${names.length - max}`;
+}
+
 /** Carte qui ouvre la racine du bucket (toujours disponible). */
-export function buildLibraryCard(catalog) {
+export function buildLibraryCard(catalog, options = {}) {
+  const rootItems = Array.isArray(options.rootItems) ? options.rootItems : [];
   return {
     ...LIBRARY_ROOT_CARD,
     path: '',
+    description: libraryDescription(rootItems),
+    folders: rootDirectories(rootItems).size,
     count: finiteCount(catalog?.totalFiles),
     dynamic: false,
     badge: null,
@@ -223,5 +295,5 @@ export function buildLibraryCard(catalog) {
 /** Cartes de l’accueil : espaces réels + accès à toute la bibliothèque. */
 export function buildHomeCards(catalog, options = {}) {
   const spaces = buildSpaces(catalog, options);
-  return { spaces, cards: [...spaces, buildLibraryCard(catalog)] };
+  return { spaces, cards: [...spaces, buildLibraryCard(catalog, options)] };
 }

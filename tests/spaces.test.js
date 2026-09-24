@@ -8,6 +8,8 @@ import {
   hasDirectory,
   indexedDirectories,
   latestActivity,
+  libraryDescription,
+  rootDirectories,
 } from '../src/utils/spaces.js';
 
 const NOW = Date.parse('2026-09-24T12:00:00Z');
@@ -113,4 +115,76 @@ test('les dossiers de l’index se déduisent des fichiers et des entrées de ty
   assert.equal(hasDirectory(items, 'TOEIC'), true);
   assert.equal(latestActivity(items, 'GM/3A GM'), Date.parse(daysBefore(1)));
   assert.equal(latestActivity(items, 'GM/4A GM'), null);
+});
+
+test('un dossier de l’en-tête du bucket obtient sa carte même s’il est vide', () => {
+  // L’index récursif ne voit pas un dossier vide : le listage racine fait foi.
+  const { spaces, cards } = buildHomeCards(
+    catalogOf([file('GM/3A GM/S5/poly.pdf', daysBefore(4))], { 'GM/3A GM': 1 }, 1),
+    {
+      now: NOW,
+      rootItems: [
+        folder('GM'),
+        folder('TOEIC'),
+        folder('Annales 2025'),
+        file('Annales 2025/sujet.pdf', daysBefore(3)),
+        file('README.md', daysBefore(200)),
+      ],
+    },
+  );
+
+  // Les espaces connus d’abord, puis les dossiers découverts.
+  assert.deepEqual(spaces.map((space) => space.path), ['GM/3A GM', 'TOEIC', 'Annales 2025']);
+  const annales = spaces[2];
+  assert.equal(annales.dynamic, true);
+  assert.equal(annales.badge, 'Nouveau');
+  // TOEIC n’existe que dans l’index mais pas encore dans le listage : la carte
+  // de l’espace connu reste affichée, sans doublon dynamique.
+  assert.equal(spaces[1].dynamic, false);
+
+  const library = cards[cards.length - 1];
+  assert.equal(library.folders, 3);
+  assert.equal(library.description, 'Annales 2025 · GM · TOEIC');
+});
+
+test('sans index, l’en-tête du bucket complète les espaces connus', () => {
+  const { spaces, cards } = buildHomeCards(
+    { items: [], counts: {}, totalFiles: null, loading: false, error: 'Index indisponible' },
+    {
+      now: NOW,
+      rootItems: [
+        folder('GM'),
+        folder('TOEIC'),
+        folder('Stages 2026'),
+        file('Stages 2026/offre.pdf', daysBefore(5)),
+      ],
+    },
+  );
+
+  // Les 5 espaces connus restent affichés comme avant…
+  assert.equal(spaces.length, FEATURED_SPACES.length + 1);
+  assert.deepEqual(
+    spaces.slice(0, FEATURED_SPACES.length).map((space) => space.path),
+    FEATURED_SPACES.map((space) => space.path),
+  );
+  // … et le nouveau dossier racine apparaît, sans doublon pour GM / TOEIC.
+  const added = spaces.slice(FEATURED_SPACES.length);
+  assert.deepEqual(added.map((space) => space.path), ['Stages 2026']);
+  assert.equal(added[0].badge, 'Nouveau');
+  assert.equal(cards[cards.length - 1].description, 'GM · Stages 2026 · TOEIC');
+});
+
+test('les dossiers de l’en-tête se lisent depuis les entrées du listage', () => {
+  const directories = rootDirectories([
+    folder('GM'),
+    file('GM/3A GM/poly.pdf', daysBefore(1)),
+    folder('TOEIC'),
+    file('README.md', daysBefore(2)),
+  ]);
+  assert.deepEqual([...directories].sort(), ['GM', 'TOEIC']);
+  assert.equal(libraryDescription([]), 'Tous les dossiers du bucket');
+  assert.equal(
+    libraryDescription(['A', 'B', 'C', 'D', 'E'].map((name) => folder(name))),
+    'A · B · C · +2',
+  );
 });
