@@ -1116,7 +1116,7 @@
 .library-chat-head button { width: 32px; cursor: pointer; }
 .library-chat-pill { padding: 0 8px; font-size: 0.58rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
 .library-chat-model select {
-  max-width: 150px;
+  max-width: 170px;
   padding: 0 6px;
   border: 0;
   background: transparent;
@@ -1129,7 +1129,8 @@
   cursor: pointer;
   outline: none;
 }
-.library-chat-model option { color: var(--ink); background: white; }
+.library-chat-model option, .library-chat-model optgroup { color: var(--ink); background: white; text-transform: none; letter-spacing: 0; font-size: 0.72rem; font-weight: 600; }
+.library-chat-model optgroup { font-weight: 800; }
 .library-chat-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 8px 12px 0; }
 .library-chat-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 8px; border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--ink-soft); font: inherit; font-size: 0.7rem; font-weight: 700; cursor: pointer; }
 .library-chat-tabs button.active { border-color: rgba(0, 122, 94, 0.2); background: white; color: var(--green-deep); }

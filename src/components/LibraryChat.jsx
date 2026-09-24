@@ -45,6 +45,13 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
       return '';
     }
   });
+  const [selectedModel, setSelectedModel] = useState(() => {
+    try {
+      return window.localStorage.getItem('enise-chat-model') || '';
+    } catch {
+      return '';
+    }
+  });
   const conversationRef = useRef('');
   const inputRef = useRef(null);
   const endRef = useRef(null);
@@ -193,8 +200,8 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
         history,
         conversationId: currentConversation,
         contextPath: path,
-        provider: selectedProvider,
-        model: activeOption?.model || '',
+        provider: activeOption?.id || selectedProvider,
+        model: selectedModel || activeOption?.model || '',
         catalog: catalogHint(catalog, status),
         signal: controller.signal,
         onEvent: ({ event, data }) => {
@@ -244,13 +251,34 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
 
   const providers = Array.isArray(status?.providers) ? status.providers : [];
   const enabledProviders = providers.filter((item) => item.enabled);
-  const activeOption = selectedProvider
-    ? enabledProviders.find((item) => item.id === selectedProvider)
-    : (enabledProviders[0] || null);
+  const activeOption = enabledProviders.find((item) => item.id === selectedProvider)
+    || enabledProviders[0]
+    || null;
+  const modelOptions = enabledProviders.flatMap((provider) => {
+    const models = Array.isArray(provider.models) ? provider.models : [];
+    const defaultModel = provider.model
+      ? [{ id: provider.model, label: `${provider.model} · par défaut`, free: false, reasoning: false }]
+      : [];
+    const seen = new Set();
+    return [...models, ...defaultModel]
+      .filter((model) => {
+        if (!model?.id || seen.has(model.id)) return false;
+        seen.add(model.id);
+        return true;
+      })
+      .map((model) => ({ ...model, providerId: provider.id, providerLabel: provider.label }));
+  });
+  const currentModelId = selectedModel
+    || modelOptions.find((item) => item.providerId === activeOption?.id && !item.reasoning)?.id
+    || modelOptions.find((item) => item.providerId === activeOption?.id)?.id
+    || '';
+  const currentModel = modelOptions.find((item) => item.id === currentModelId && item.providerId === activeOption?.id)
+    || modelOptions.find((item) => item.id === currentModelId)
+    || null;
   const engineLabel = statusError
     ? 'Hors ligne'
     : activeOption
-      ? `${activeOption.label}`
+      ? activeOption.label
       : 'Bibliothèque';
 
   return (
@@ -280,22 +308,36 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
               <label className="library-chat-model">
                 <span className="sr-only">Modèle de la requête</span>
                 <select
-                  value={activeOption?.id || ''}
+                  value={currentModel ? `${currentModel.providerId}|${currentModel.id}` : ''}
                   disabled={busy}
                   onChange={(event) => {
-                    const next = event.target.value;
-                    setSelectedProvider(next);
+                    const raw = event.target.value;
+                    const sep = raw.indexOf('|');
+                    if (sep < 1) return;
+                    const providerId = raw.slice(0, sep);
+                    const modelId = raw.slice(sep + 1);
+                    if (!providerId || !modelId) return;
+                    setSelectedProvider(providerId);
+                    setSelectedModel(modelId);
                     try {
-                      if (next) window.localStorage.setItem('enise-chat-provider', next);
-                      else window.localStorage.removeItem('enise-chat-provider');
+                      window.localStorage.setItem('enise-chat-provider', providerId);
+                      window.localStorage.setItem('enise-chat-model', modelId);
                     } catch {
                       // stockage indisponible
                     }
                   }}
                 >
                   {enabledProviders.length === 0 && <option value="">Bibliothèque</option>}
-                  {enabledProviders.map((item) => (
-                    <option key={item.id} value={item.id}>{item.label} · {item.model}</option>
+                  {enabledProviders.map((provider) => (
+                    <optgroup key={provider.id} label={provider.label}>
+                      {modelOptions
+                        .filter((item) => item.providerId === provider.id)
+                        .map((item) => (
+                          <option key={`${provider.id}|${item.id}`} value={`${provider.id}|${item.id}`}>
+                            {item.label}
+                          </option>
+                        ))}
+                    </optgroup>
                   ))}
                 </select>
               </label>

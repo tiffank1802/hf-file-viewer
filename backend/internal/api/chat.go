@@ -127,18 +127,42 @@ func (s *Server) chatProviders() []map[string]any {
 			"label":   "OpenRouter",
 			"model":   s.cfg.OpenRouterModel,
 			"enabled": strings.TrimSpace(s.cfg.OpenRouterAPIKey) != "",
+			"models": []map[string]any{
+				{"id": "openai/gpt-oss-120b:free", "label": "GPT-OSS 120B · raisonnement", "free": true, "reasoning": true},
+				{"id": "nvidia/nemotron-3-ultra-550b-a55b:free", "label": "Nemotron 3 Ultra · raisonnement", "free": true, "reasoning": true},
+				{"id": "nvidia/nemotron-3-super-120b-a12b:free", "label": "Nemotron 3 Super · raisonnement", "free": true, "reasoning": true},
+				{"id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "label": "Nemotron Nano Omni · raisonnement", "free": true, "reasoning": true},
+				{"id": "poolside/laguna-m.1:free", "label": "Laguna M.1 · code + raisonnement", "free": true, "reasoning": true},
+				{"id": "cohere/north-mini-code:free", "label": "North Mini Code · code", "free": true, "reasoning": true},
+			},
 		},
 		{
 			"id":      "nvidia",
 			"label":   "NVIDIA",
 			"model":   s.cfg.NvidiaModel,
 			"enabled": strings.TrimSpace(s.cfg.NvidiaAPIKey) != "",
+			"models": []map[string]any{
+				{"id": "nvidia/nemotron-3-ultra-550b-a55b", "label": "Nemotron 3 Ultra · raisonnement", "free": true, "reasoning": true},
+				{"id": "nvidia/nemotron-3-super-120b-a12b", "label": "Nemotron 3 Super · raisonnement", "free": true, "reasoning": true},
+				{"id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "label": "Nemotron Nano Omni · raisonnement", "free": true, "reasoning": true},
+				{"id": "openai/gpt-oss-120b", "label": "GPT-OSS 120B · raisonnement", "free": true, "reasoning": true},
+				{"id": "deepseek-ai/deepseek-v4-pro", "label": "DeepSeek V4 Pro · raisonnement", "free": true, "reasoning": true},
+				{"id": "z-ai/glm-5.1", "label": "GLM-5.1 · raisonnement", "free": true, "reasoning": true},
+			},
 		},
 		{
 			"id":      "opencode",
 			"label":   "OpenCode",
 			"model":   s.cfg.OpenCodeModel,
 			"enabled": strings.TrimSpace(s.cfg.OpenCodeAPIKey) != "",
+			"models": []map[string]any{
+				{"id": "nemotron-3-ultra-free", "label": "Nemotron 3 Ultra · raisonnement", "free": true, "reasoning": true},
+				{"id": "nemotron-3.5-lightning-free", "label": "Nemotron 3.5 Lightning · raisonnement", "free": true, "reasoning": true},
+				{"id": "deepseek-v4-flash-free", "label": "DeepSeek V4 Flash · raisonnement", "free": true, "reasoning": true},
+				{"id": "mimo-v2.5-free", "label": "MiMo-V2.5 · raisonnement", "free": true, "reasoning": true},
+				{"id": "minimax-m2.5-free", "label": "MiniMax M2.5 · raisonnement", "free": true, "reasoning": true},
+				{"id": "big-pickle", "label": "Big Pickle · raisonnement", "free": true, "reasoning": true},
+			},
 		},
 	}
 }
