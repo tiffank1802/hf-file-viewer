@@ -529,7 +529,7 @@ Le frontend charge ce JSON au démarrage (`useIndexCatalog`) puis le relit toute
 1. **l’index récursif** (`/api/index`) : quels dossiers existent, leurs effectifs et la date du dernier dépôt (badge « Nouveau » sous 30 jours) ;
 2. **le listage racine** (`/api/tree` sans préfixe) : l’en-tête du bucket, qui fait foi pour le premier niveau. Un dossier de la racine obtient donc sa carte **même s’il est vide** — cas où l’index récursif ne le voit pas.
 
-Les espaces connus (3A, 4A, 5A, TOEIC, SolidWorks) gardent leur titre, leur icône et leur couleur, mais ne s’affichent que s’ils existent encore. Un dossier conteneur (par exemple `GM`, qui regroupe 3A / 4A / 5A) n’a pas de carte : ses sous-dossiers prennent la place, ce qui fait apparaître `GM/Stages` sans toucher au code. La carte **Toute la bibliothèque** ouvre la racine et affiche en description les dossiers de l’en-tête. Si l’index ne répond pas, les espaces connus restent affichés comme avant, complétés par les dossiers réellement présents à la racine.
+Les espaces connus (3A, 4A, 5A, TOEIC, SolidWorks, Commun) gardent leur titre, leur icône et leur couleur, mais ne s’affichent que s’ils existent encore. `Commun` est décrit comme « Espace commun » : c’est le quatrième dossier de la racine du bucket, à côté de `GM` et `TOEIC`. Un dossier conteneur (par exemple `GM`, qui regroupe 3A / 4A / 5A) n’a pas de carte : ses sous-dossiers prennent la place, ce qui fait apparaître `GM/Stages` sans toucher au code. La carte **Toute la bibliothèque** ouvre la racine et affiche en description les dossiers de l’en-tête. Si l’index ne répond pas, les espaces connus restent affichés comme avant, complétés par les dossiers réellement présents à la racine.
 
 #### Fraîcheur sans attente
 

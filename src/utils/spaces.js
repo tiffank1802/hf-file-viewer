@@ -292,6 +292,18 @@ export function buildLibraryCard(catalog, options = {}) {
   };
 }
 
+/**
+ * Espaces à ajouter dans la barre latérale, sous « Autres dossiers ».
+ *
+ * Tout espace de l’accueil qui n’a pas déjà son lien fixe : un dossier
+ * ajouté au bucket, mais aussi un espace connu que `SIDE_LINKS` ne couvre
+ * pas encore (par exemple `Commun`).
+ */
+export function sidebarSpaces(spaces = [], sideLinks = []) {
+  const fixed = new Set(sideLinks.map((link) => normalizeSpacePath(link?.path)));
+  return spaces.filter((space) => !fixed.has(normalizeSpacePath(space?.path)));
+}
+
 /** Cartes de l’accueil : espaces réels + accès à toute la bibliothèque. */
 export function buildHomeCards(catalog, options = {}) {
   const spaces = buildSpaces(catalog, options);

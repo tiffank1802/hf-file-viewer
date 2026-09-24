@@ -1,5 +1,6 @@
 import { FiHeart, FiInfo, FiSearch } from 'react-icons/fi';
 import { SIDE_LINKS } from '../config';
+import { sidebarSpaces } from '../utils/spaces';
 import { NavigationIcon } from './Icons';
 
 function isActiveLink(currentPath, linkPath) {
@@ -16,8 +17,8 @@ export default function SideNav({
   spaces = [],
 }) {
   // Dossiers présents dans le bucket mais absents des liens fixes : ils
-  // apparaissent ici dès que l’index les découvre.
-  const otherSpaces = spaces.filter((space) => space.dynamic);
+  // apparaissent ici dès que l’index ou l’en-tête du bucket les découvre.
+  const otherSpaces = sidebarSpaces(spaces, SIDE_LINKS);
 
   return (
     <aside className="library-sidebar glass-panel" aria-label="Navigation de la bibliothèque">

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FEATURED_SPACES } from '../src/config.js';
+import { FEATURED_SPACES, SIDE_LINKS } from '../src/config.js';
 import {
   buildHomeCards,
   buildLibraryCard,
@@ -10,6 +10,7 @@ import {
   latestActivity,
   libraryDescription,
   rootDirectories,
+  sidebarSpaces,
 } from '../src/utils/spaces.js';
 
 const NOW = Date.parse('2026-09-24T12:00:00Z');
@@ -85,7 +86,7 @@ test('sans index, les espaces connus restent affichés comme avant', () => {
   const { spaces, cards } = buildHomeCards({ items: [], counts: {}, loading: true });
   assert.equal(spaces.length, FEATURED_SPACES.length);
   assert.deepEqual(spaces.map((space) => space.path), [
-    'GM/3A GM', 'GM/4A GM', 'GM/5A GM', 'TOEIC', 'GM/Tutos SolidWorks',
+    'GM/3A GM', 'GM/4A GM', 'GM/5A GM', 'TOEIC', 'GM/Tutos SolidWorks', 'Commun',
   ]);
   assert.equal(cards.length, FEATURED_SPACES.length + 1);
 });
@@ -187,4 +188,49 @@ test('les dossiers de l’en-tête se lisent depuis les entrées du listage', ()
     libraryDescription(['A', 'B', 'C', 'D', 'E'].map((name) => folder(name))),
     'A · B · C · +2',
   );
+});
+
+test('un espace connu sans lien fixe apparaît dans la barre latérale', () => {
+  const spaces = buildSpaces(
+    catalogOf([file('Commun/annales.pdf', daysBefore(3)), file('GM/3A GM/poly.pdf', daysBefore(3))]),
+    { now: NOW },
+  );
+  const extras = sidebarSpaces(spaces, SIDE_LINKS);
+
+  // 3A et TOEIC ont déjà leur lien fixe : pas de doublon dans la barre.
+  assert.deepEqual(extras.map((space) => space.path), ['Commun']);
+  assert.equal(extras[0].title, 'Espace commun');
+  assert.equal(sidebarSpaces([], SIDE_LINKS).length, 0);
+});
+
+test('le bucket réel de référence affiche Commun à côté de GM et TOEIC', () => {
+  const rootItems = [
+    folder('Commun'),
+    folder('GM'),
+    folder('TOEIC'),
+    file('Commun/annales communes.pdf', daysBefore(4)),
+    file('GM/3A GM/poly.pdf', daysBefore(4)),
+    { type: 'file', path: 'TOEIC/audio.mp3', mtime: daysBefore(300) },
+  ];
+  const { spaces, cards } = buildHomeCards(
+    catalogOf(
+      [
+        file('Commun/annales communes.pdf', daysBefore(4)),
+        file('GM/3A GM/poly.pdf', daysBefore(4)),
+        file('TOEIC/audio.mp3', daysBefore(300)),
+      ],
+      { Commun: 1, GM: 1, TOEIC: 1, 'GM/3A GM': 1 },
+      10_957,
+    ),
+    { now: NOW, rootItems },
+  );
+
+  const library = cards[cards.length - 1];
+  assert.equal(library.description, 'Commun · GM · TOEIC');
+  assert.equal(library.folders, 3);
+  assert.ok(spaces.some((space) => space.path === 'Commun'));
+  // Chaque dossier de l’en-tête est représenté : GM par ses sous-espaces,
+  // TOEIC et Commun par leur carte.
+  const shown = new Set(spaces.map((space) => space.path.split('/')[0]));
+  assert.deepEqual([...shown].sort(), ['Commun', 'GM', 'TOEIC']);
 });

@@ -85,6 +85,14 @@ export const FEATURED_SPACES = [
     tone: 'red',
     icon: 'box',
   },
+  {
+    title: 'Espace commun',
+    shortTitle: 'Commun',
+    description: 'Ressources partagées',
+    path: 'Commun',
+    tone: 'green',
+    icon: 'globe',
+  },
 ];
 
 /**
