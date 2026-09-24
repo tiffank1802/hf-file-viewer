@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import worker, {
   buildApsObjectKey,
   buildHfFileUrl,
@@ -380,6 +381,47 @@ test('le chat sans origine Go répond 501 et n’appelle pas NVIDIA', async () =
 
   const missing = await worker.fetch(new Request('https://enise.test/api/chat', { method: 'POST' }), { GO_API_ORIGIN: '' }, {});
   assert.equal(missing.status, 501);
+});
+
+test('le compte sans origine Go répond 501', async () => {
+  const response = await worker.fetch(new Request('https://enise.test/api/auth/session'), {}, {});
+  assert.equal(response.status, 501);
+  const payload = await response.json();
+  assert.equal(payload.configured, false);
+  assert.match(payload.error, /backend Go/);
+});
+
+test('le relais compte transmet le cookie et le renvoie au navigateur', async () => {
+  const seen = {};
+  const server = http.createServer((req, res) => {
+    seen.cookie = req.headers.cookie || '';
+    seen.host = req.headers['x-forwarded-host'] || '';
+    seen.proto = req.headers['x-forwarded-proto'] || '';
+    res.writeHead(200, {
+      'content-type': 'application/json',
+      'set-cookie': 'enise_session=abcsecret; HttpOnly; Path=/',
+    });
+    res.end('{"configured":true}');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const response = await worker.fetch(new Request('https://enise.test/api/auth/login', {
+      method: 'POST',
+      headers: {
+        cookie: 'enise_session=abcsecret',
+        'content-type': 'application/json',
+      },
+      body: '{}',
+    }), { GO_API_ORIGIN: `http://127.0.0.1:${port}` }, {});
+    assert.equal(response.status, 200);
+    assert.equal(seen.cookie, 'enise_session=abcsecret');
+    assert.equal(seen.host, 'enise.test');
+    assert.equal(seen.proto, 'https');
+    assert.match(response.headers.get('set-cookie') || '', /enise_session=abcsecret/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test('les redirections vers le login Microsoft sont détectées', () => {

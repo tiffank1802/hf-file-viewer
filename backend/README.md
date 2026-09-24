@@ -82,7 +82,12 @@ Mêmes noms que `wrangler.jsonc` / `.dev.vars` :
 | `NVIDIA_API_KEY` | rédaction de l’assistant, jamais envoyée au navigateur. Vide = recherche locale seulement |
 | `NVIDIA_API_BASE` | défaut `https://integrate.api.nvidia.com/v1` |
 | `NVIDIA_MODEL` | défaut `meta/llama-3.1-8b-instruct` |
-| `CHAT_TRUST_PROXY` | `1` seulement si Go n’est joignable que par le Worker, pour limiter le débit par étudiant |
+| `CHAT_TRUST_PROXY` | `1` seulement si Go n’est joignable que par le Worker, pour limiter le débit par étudiant et faire confiance à `X-Forwarded-Host` sur les emails de compte |
+| `APPWRITE_ENDPOINT` | défaut `https://fra.cloud.appwrite.io/v1` |
+| `APPWRITE_PROJECT_ID` | défaut `69cedb12002acdd498e0` |
+| `APPWRITE_DATABASE_ID` | vide tant que la table `profiles` n’existe pas. Le compte Auth fonctionne quand même |
+| `APPWRITE_PUBLIC_ORIGIN` | origine des liens d’email, par exemple `https://le-site`. Vide = hôte de la requête, seulement s’il n’est pas usurpé |
+| `APPWRITE_ENABLED` | `0` masque le bouton de connexion |
 
 `MODEL3D_CONVERT_URL` absent active Rupture. Une valeur explicitement vide désactive la conversion, comme le Worker.
 
@@ -104,6 +109,12 @@ Ne pas publier `HF_TOKEN`, la clé NVIDIA ni les secrets APS dans l’image. Les
 Le bouton **Assistant** interroge Go, pas NVIDIA directement. Go classe l’index déjà en mémoire, renvoie tout de suite les cartes, lit au plus trois extraits (texte, PDF, docx, pptx, xlsx), puis demande une rédaction courte si `NVIDIA_API_KEY` est définie. Chaque chemin proposé est un chemin de l’index : un chemin inventé par le modèle n’ouvre pas un fichier.
 
 En production Cloudflare, le Worker ne fait pas lui-même l’appel NVIDIA. Sans `GO_API_ORIGIN`, `/api/chat` répond 501. Avec cette variable, il relaie seulement vers le processus Go.
+
+## Compte
+
+Le bouton **Se connecter** parle à Go (`/api/auth/*`). Go ouvre la session Appwrite et pose un cookie `enise_session` HttpOnly. Le mot de passe n’est pas écrit dans une table, et il ne revient jamais dans le JSON. Sans `APPWRITE_DATABASE_ID`, le profil (promotion, filière) n’est pas encore stocké : le compte Auth fonctionne quand même.
+
+Le Worker relaie `/api/auth/*` vers `GO_API_ORIGIN` en transmettant le cookie. Sans cette origine, la route répond 501 et le bouton reste masqué.
 
 ## Tests
 

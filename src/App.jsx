@@ -9,6 +9,7 @@ import LibraryChat from './components/LibraryChat';
 import PreviewModal from './components/PreviewModal';
 import SearchPalette from './components/SearchPalette';
 import SideNav from './components/SideNav';
+import AuthPanel from './components/AuthPanel';
 import CloudflareAnalytics from './components/CloudflareAnalytics';
 import { useLibrary } from './hooks/useLibrary';
 import { useIndexCatalog } from './hooks/useIndexCatalog';
@@ -20,6 +21,7 @@ export default function App() {
   const catalog = useIndexCatalog();
   const [selectedFile, setSelectedFile] = useState(null);
   const [searchState, setSearchState] = useState({ open: false, mode: 'search' });
+  const [authPanel, setAuthPanel] = useState({ open: false, mode: 'signin' });
   const [storedFavorites, setStoredFavorites] = useLocalStorage('enise-docs:favorites', []);
 
   const favoriteItems = useMemo(
@@ -31,6 +33,8 @@ export default function App() {
   const openSearch = useCallback((mode = 'search') => {
     setSearchState({ open: true, mode });
   }, []);
+  const openAuth = useCallback((mode = 'signin') => setAuthPanel({ open: true, mode }), []);
+  const closeAuth = useCallback(() => setAuthPanel((current) => ({ ...current, open: false })), []);
   const closeSearch = useCallback(() => {
     setSearchState((current) => ({ ...current, open: false }));
   }, []);
@@ -45,6 +49,12 @@ export default function App() {
       return [...items, item];
     });
   }, [setStoredFavorites]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('recover') === '1') openAuth('recover');
+    else if (params.get('verify') === '1') openAuth('signin');
+  }, [openAuth]);
 
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -75,7 +85,13 @@ export default function App() {
         <span className="aurora-red" />
       </div>
 
-      <Header navigate={library.navigate} onOpenSearch={() => openSearch('search')} />
+      <Header
+        navigate={library.navigate}
+        onOpenSearch={() => openSearch('search')}
+        onOpenAuth={openAuth}
+        onOpenFavorites={() => openSearch('favorites')}
+        favoriteCount={favoriteItems.length}
+      />
 
       <main id="main-content">
         {library.path === '' && (
@@ -128,6 +144,13 @@ export default function App() {
           <span>Favoris</span>
         </button>
       </nav>
+
+      <AuthPanel
+        open={authPanel.open}
+        mode={authPanel.mode}
+        onModeChange={(mode) => setAuthPanel({ open: true, mode })}
+        onClose={closeAuth}
+      />
 
       <SearchPalette
         open={searchState.open}

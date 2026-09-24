@@ -7,6 +7,7 @@ function apiProxyOptions(target) {
   return {
     target,
     changeOrigin: true,
+    xfwd: true,
     timeout: 300_000,
     proxyTimeout: 300_000,
     configure(proxy) {

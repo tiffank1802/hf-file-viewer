@@ -32,6 +32,8 @@ const (
 	defaultMaxSWBundle    = 250 * 1024 * 1024
 	defaultNvidiaBase     = "https://integrate.api.nvidia.com/v1"
 	defaultNvidiaModel    = "meta/llama-3.1-8b-instruct"
+	defaultAppwriteURL    = "https://fra.cloud.appwrite.io/v1"
+	defaultAppwriteProj   = "69cedb12002acdd498e0"
 )
 
 // Config rassemble les mêmes variables que le Worker Cloudflare.
@@ -74,6 +76,14 @@ type Config struct {
 	NvidiaAPIBase  string
 	NvidiaModel    string
 	ChatTrustProxy bool
+
+	AppwriteEnabled      bool
+	AppwriteEndpoint     string
+	AppwriteProjectID    string
+	AppwriteDatabaseID   string
+	AppwriteProfileTable string
+	AppwriteFlavor       string
+	AppwritePublicOrigin string
 }
 
 func Load(root string) Config {
@@ -139,6 +149,19 @@ func Load(root string) Config {
 	cfg.NvidiaAPIBase = catalog.TrimTrailingSlashes(firstNonEmpty(get("NVIDIA_API_BASE"), defaultNvidiaBase))
 	cfg.NvidiaModel = sanitizeModel(get("NVIDIA_MODEL"))
 	cfg.ChatTrustProxy = truthy(get("CHAT_TRUST_PROXY"))
+	cfg.AppwriteEndpoint = catalog.TrimTrailingSlashes(firstNonEmpty(get("APPWRITE_ENDPOINT"), get("VITE_APPWRITE_ENDPOINT"), defaultAppwriteURL))
+	cfg.AppwriteProjectID = firstNonEmpty(get("APPWRITE_PROJECT_ID"), get("VITE_APPWRITE_PROJECT_ID"), defaultAppwriteProj)
+	cfg.AppwriteDatabaseID = firstNonEmpty(get("APPWRITE_DATABASE_ID"), get("VITE_APPWRITE_DATABASE_ID"))
+	cfg.AppwriteProfileTable = firstNonEmpty(get("APPWRITE_PROFILE_TABLE_ID"), get("VITE_APPWRITE_PROFILE_TABLE_ID"), "profiles")
+	cfg.AppwritePublicOrigin = strings.TrimSpace(get("APPWRITE_PUBLIC_ORIGIN"))
+	cfg.AppwriteFlavor = "tablesdb"
+	if strings.EqualFold(firstNonEmpty(get("APPWRITE_FLAVOR"), get("VITE_APPWRITE_FLAVOR")), "databases") {
+		cfg.AppwriteFlavor = "databases"
+	}
+	cfg.AppwriteEnabled = true
+	if value, ok := lookup("APPWRITE_ENABLED"); ok && falsy(value) {
+		cfg.AppwriteEnabled = false
+	}
 	return cfg
 }
 
@@ -244,6 +267,15 @@ func sanitizeModel(value string) string {
 func truthy(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func falsy(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "0", "false", "no", "off":
 		return true
 	default:
 		return false

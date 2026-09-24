@@ -27,6 +27,8 @@ type Server struct {
 	linkClient    *http.Client
 	tokens        *tokenCache
 	chatHits      *chatLimiter
+	authClient    *http.Client
+	authHits      *authLimiter
 }
 
 func New(cfg config.Config) *Server {
@@ -46,6 +48,14 @@ func New(cfg config.Config) *Server {
 		linkClient: newLinkClient(),
 		tokens:     &tokenCache{},
 		chatHits:   newChatLimiter(),
+		authHits:   newAuthLimiter(),
+		authClient: &http.Client{
+			Timeout:   12 * time.Second,
+			Transport: transport,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 	if server.cache.LoadIndex() {
 		log.Printf("index disque chargé (%s)", cfg.BucketID)
@@ -108,6 +118,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		err = s.allow(w, r, http.MethodGet, s.handleChatStatus)
 	case r.URL.Path == "/api/chat":
 		err = s.allow(w, r, http.MethodPost, s.handleChat)
+	case strings.HasPrefix(r.URL.Path, "/api/auth/"):
+		err = s.handleAuth(w, r)
 	case r.URL.Path == "/api/tree":
 		err = s.allow(w, r, http.MethodGet, s.handleTree)
 	case r.URL.Path == "/api/index":

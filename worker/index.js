@@ -153,6 +153,11 @@ export default {
         return await proxyGoChat(request, env);
       }
 
+      if (url.pathname.startsWith('/api/auth/')) {
+        assertMethod(request, url.pathname === '/api/auth/session' ? ['GET'] : ['POST']);
+        return await proxyGoAuth(request, env);
+      }
+
       return jsonResponse(
         { error: 'Route API introuvable.' },
         { status: 404, cacheControl: 'no-store' },
@@ -2196,6 +2201,75 @@ async function proxyGoChat(request, env) {
   }
   responseHeaders.set('Cache-Control', responseHeaders.get('Cache-Control') || 'no-store');
   responseHeaders.set('X-Backend', 'go');
+  applySecurityHeaders(responseHeaders);
+  return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
+}
+
+async function proxyGoAuth(request, env) {
+  const origin = String(env?.GO_API_ORIGIN || '').trim().replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(origin)) {
+    return jsonResponse(
+      {
+        configured: false,
+        status: 'not-configured',
+        error: 'Le compte étudiant est servi par le backend Go. Définissez GO_API_ORIGIN pour le joindre.',
+      },
+      { status: 501, cacheControl: 'no-store' },
+    );
+  }
+  let target;
+  try {
+    const incoming = new URL(request.url);
+    target = new URL(incoming.pathname + incoming.search, origin);
+    if (target.origin === incoming.origin) {
+      return jsonResponse(
+        { error: 'GO_API_ORIGIN ne doit pas pointer vers le Worker lui-même.' },
+        { status: 501, cacheControl: 'no-store' },
+      );
+    }
+  } catch {
+    return jsonResponse({ error: 'Origine Go invalide.' }, { status: 501, cacheControl: 'no-store' });
+  }
+  const declared = Number(request.headers.get('Content-Length') || 0);
+  if (declared > 16 * 1024) {
+    return jsonResponse({ error: 'Requête de compte trop volumineuse.' }, { status: 413, cacheControl: 'no-store' });
+  }
+  const headers = new Headers();
+  headers.set('Accept', 'application/json');
+  const contentType = request.headers.get('Content-Type');
+  if (contentType) headers.set('Content-Type', contentType);
+  const cookie = request.headers.get('Cookie');
+  if (cookie) headers.set('Cookie', cookie);
+  const incoming = new URL(request.url);
+  headers.set('X-Forwarded-Host', incoming.host);
+  headers.set('X-Forwarded-Proto', incoming.protocol.replace(':', ''));
+  const client = String(request.headers.get('CF-Connecting-IP') || '').trim();
+  if (client && !/[\s,]/.test(client)) headers.set('X-Enise-Client', client);
+  const init = { method: request.method, headers };
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    init.body = request.body;
+    init.duplex = 'half';
+  }
+  let upstream;
+  try {
+    upstream = await fetch(target, init);
+  } catch {
+    return jsonResponse(
+      { configured: false, error: 'Le backend Go du compte est injoignable.' },
+      { status: 502, cacheControl: 'no-store' },
+    );
+  }
+  const responseHeaders = new Headers();
+  responseHeaders.set('Content-Type', upstream.headers.get('content-type') || 'application/json; charset=utf-8');
+  responseHeaders.set('Cache-Control', 'no-store');
+  responseHeaders.set('X-Backend', 'go');
+  const cookies = typeof upstream.headers.getSetCookie === 'function' ? upstream.headers.getSetCookie() : [];
+  if (cookies.length) {
+    for (const value of cookies) responseHeaders.append('Set-Cookie', value);
+  } else {
+    const single = upstream.headers.get('set-cookie');
+    if (single) responseHeaders.append('Set-Cookie', single);
+  }
   applySecurityHeaders(responseHeaders);
   return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
 }

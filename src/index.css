@@ -859,6 +859,49 @@
   .footer-stripe i:nth-child(3) { background: #fcd116; }
 
   .mobile-bottom-nav { display: none; }
+
+  .auth-backdrop { z-index: 540; align-items: center; padding: 20px; }
+  .auth-card { position: relative; display: flex; flex-direction: column; gap: 18px; width: min(460px, 100%); max-height: 88vh; overflow: auto; padding: 26px; border: 1px solid rgba(255, 255, 255, 0.8); border-radius: var(--radius-lg); background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(18px); box-shadow: var(--shadow-lg); animation: preview-in 220ms ease both; }
+  .auth-head { display: grid; gap: 6px; padding-right: 40px; }
+  .auth-head h2 { font-size: 1.3rem; letter-spacing: -0.035em; }
+  .auth-head p { max-width: 40ch; color: var(--ink-soft); font-size: 0.75rem; line-height: 1.6; }
+  .auth-close { position: absolute; top: 20px; right: 20px; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; background: rgba(20, 37, 31, 0.05); color: var(--ink-soft); cursor: pointer; }
+  .auth-close:hover { background: rgba(20, 37, 31, 0.09); color: var(--ink); }
+  .auth-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; border-radius: 15px; background: rgba(20, 37, 31, 0.05); }
+  .auth-tabs button { flex: 1 1 auto; padding: 8px 10px; border-radius: 11px; background: transparent; color: var(--ink-soft); font-size: 0.7rem; font-weight: 800; cursor: pointer; }
+  .auth-tabs button.is-active { background: var(--white); color: var(--green-dark); box-shadow: var(--shadow-sm); }
+  .auth-form { display: grid; gap: 14px; }
+  .auth-form form { display: grid; gap: 14px; }
+  .auth-field { display: grid; gap: 6px; font-size: 0.72rem; font-weight: 800; color: var(--ink); }
+  .auth-field input, .auth-field select, .auth-field textarea { width: 100%; padding: 11px 13px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.92); color: var(--ink); font-size: 0.85rem; font-weight: 600; font-family: inherit; }
+  .auth-field textarea { resize: vertical; min-height: 58px; }
+  .auth-field input:focus-visible, .auth-field select:focus-visible, .auth-field textarea:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+  .auth-field small { color: var(--ink-faint); font-size: 0.65rem; font-weight: 700; }
+  .auth-field-error { color: var(--red); }
+  .auth-password { position: relative; display: block; }
+  .auth-password input { padding-right: 46px; }
+  .auth-password button { position: absolute; top: 50%; right: 7px; transform: translateY(-50%); display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: transparent; color: var(--ink-faint); cursor: pointer; }
+  .auth-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .auth-submit { padding: 12px 16px; border-radius: 999px; background: linear-gradient(135deg, var(--green), var(--green-dark)); color: #fff; font-size: 0.82rem; font-weight: 800; cursor: pointer; }
+  .auth-submit:disabled { opacity: 0.62; cursor: progress; }
+  .auth-ghost { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 13px; border-radius: 999px; background: transparent; box-shadow: inset 0 0 0 1px var(--line); color: var(--green-deep); font-size: 0.72rem; font-weight: 800; cursor: pointer; }
+  .auth-message { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: var(--radius-sm); font-size: 0.72rem; font-weight: 700; line-height: 1.45; }
+  .auth-message svg { flex: none; margin-top: 1px; }
+  .auth-message--error { background: var(--red-pale); color: var(--red-dark); }
+  .auth-message--ok { background: var(--green-pale); color: var(--green-deep); }
+  .auth-note { display: flex; align-items: flex-start; gap: 8px; color: var(--ink-soft); font-size: 0.7rem; line-height: 1.55; }
+  .auth-note svg { flex: none; margin-top: 2px; color: var(--green); }
+  .auth-advanced { display: grid; gap: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .auth-signout { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 11px 14px; border-radius: var(--radius-sm); background: var(--red-pale); color: var(--red-dark); font-size: 0.76rem; font-weight: 800; cursor: pointer; }
+  .user-chip-wrap { position: relative; }
+  .user-chip { display: inline-flex; align-items: center; gap: 8px; padding: 5px 11px 5px 5px; border-radius: 999px; background: var(--glass); box-shadow: var(--shadow-sm); color: var(--ink); font-size: 0.7rem; font-weight: 800; cursor: pointer; }
+  .user-chip > svg:last-child { color: var(--ink-faint); }
+  .user-chip-avatar { display: grid; place-items: center; width: 27px; height: 27px; border-radius: 50%; background: linear-gradient(135deg, var(--green), var(--green-deep)); color: #fff; font-size: 0.58rem; font-weight: 800; }
+  .user-chip--guest { gap: 7px; padding: 9px 13px; background: transparent; box-shadow: inset 0 0 0 1px var(--line); color: var(--green-deep); }
+  .user-menu { position: absolute; top: calc(100% + 8px); right: 0; z-index: 60; display: grid; gap: 3px; min-width: 212px; padding: 10px; border: 1px solid rgba(255, 255, 255, 0.8); border-radius: var(--radius-md); background: rgba(255, 255, 255, 0.97); box-shadow: var(--shadow-md); backdrop-filter: blur(14px); }
+  .user-menu-mail { padding: 4px 8px 8px; color: var(--ink-faint); font-size: 0.64rem; font-weight: 700; overflow-wrap: anywhere; }
+  .user-menu button { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 11px; background: transparent; color: var(--ink); font-size: 0.74rem; font-weight: 700; text-align: left; cursor: pointer; }
+  .user-menu button:hover { background: var(--green-pale); color: var(--green-deep); }
 }
 
 @layer responsive {
@@ -902,6 +945,8 @@
     .brand-divider, .product-name small { display: none; }
     .product-name strong { font-size: 0.78rem; }
     .contribute-button { display: none; }
+    .user-chip-name { display: none; }
+    .auth-grid { grid-template-columns: 1fr; }
     .header-flag { display: none; }
     .header-actions { margin-left: auto; }
     .header-search { height: 40px; }
