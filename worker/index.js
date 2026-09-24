@@ -11,10 +11,30 @@ const DEFAULT_BUCKET_ID = 'ktongue/ENISE-SITE';
  * naturellement selon leur TTL.
  */
 const CACHE_KEY_VERSION = 'v2';
-const DEFAULT_TREE_TTL = 6 * 60 * 60;
-const DEFAULT_INDEX_TTL = 12 * 60 * 60;
+/**
+ * Fraîcheur des documents d’arborescence et d’index.
+ *
+ * Un document plus vieux que ce délai est encore servi immédiatement, mais le
+ * Worker relit le bucket en arrière-plan : un dossier ajouté dans Hugging Face
+ * apparaît donc en quelques minutes, sans déploiement. Garder ces valeurs
+ * courtes ne coûte rien au visiteur, qui ne paie jamais la relecture.
+ */
+const DEFAULT_TREE_TTL = 5 * 60;
+const DEFAULT_INDEX_TTL = 10 * 60;
 const DEFAULT_FILE_TTL = 7 * 24 * 60 * 60;
 const DEFAULT_KV_TTL = 24 * 60 * 60;
+/**
+ * TTL de l’entrée conservée dans le Cache API.
+ *
+ * Volontairement long : la fraîcheur est jugée sur l’horodatage du contenu
+ * (`storedAt`), pas sur l’expiration de l’entrée. Un document périmé reste
+ * ainsi disponible le temps de la relecture en arrière-plan.
+ */
+const DEFAULT_EDGE_ENTRY_TTL = 24 * 60 * 60;
+/** Cache navigateur des documents d’index (1 à 2 minutes). */
+const DEFAULT_BROWSER_CACHE_TTL = 120;
+/** Délai minimal entre deux rattrapages d’un même document. */
+const REFRESH_COOLDOWN_MS = 30_000;
 const DEFAULT_MAX_CACHEABLE_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_TREE_PAGES = 45;
 const MAX_INDEX_ITEMS = 50_000;
@@ -180,53 +200,211 @@ export default {
   },
 };
 
+/** Cache navigateur des documents d’index : court, pour voir les nouveautés. */
+export function browserCacheControl(env) {
+  const seconds = positiveInteger(env?.DOCUMENT_BROWSER_TTL, DEFAULT_BROWSER_CACHE_TTL);
+  return `public, max-age=${seconds}, stale-while-revalidate=${seconds * 5}`;
+}
+
+/** Enveloppe stockée : corps du document + instant de la relecture du bucket. */
+export function encodeCacheEntry(body, storedAt = null) {
+  return JSON.stringify({ storedAt, body });
+}
+
+/**
+ * Relit une entrée de cache.
+ *
+ * Les entrées écrites avant l’arrivée de l’enveloppe sont des documents
+ * bruts : elles restent lisibles mais sans date, donc considérées comme
+ * périmées et rafraîchies en arrière-plan.
+ */
+export function decodeCacheEntry(raw) {
+  if (typeof raw !== 'string' || raw === '') return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && typeof parsed.body === 'string') {
+      return {
+        body: parsed.body,
+        storedAt: typeof parsed.storedAt === 'string' ? parsed.storedAt : null,
+      };
+    }
+  } catch {
+    // Corps brut : traité comme une entrée sans horodatage.
+  }
+  return { body: raw, storedAt: null };
+}
+
+/** Âge d’une entrée en millisecondes ; `Infinity` sans horodatage. */
+export function entryAgeMs(entry, now = Date.now()) {
+  const storedAt = Date.parse(entry?.storedAt ?? '');
+  return Number.isFinite(storedAt) ? now - storedAt : Infinity;
+}
+
+/** Empreinte du contenu utile d’un document, sans sa date de collecte. */
+export function payloadSignature(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      delete parsed.fetchedAt;
+      return JSON.stringify(parsed);
+    }
+  } catch {
+    // Corps non JSON : comparé tel quel.
+  }
+  return String(raw);
+}
+
+function edgeEntryTtl(env) {
+  return positiveInteger(env?.EDGE_ENTRY_TTL, DEFAULT_EDGE_ENTRY_TTL);
+}
+
+function refreshKey({ cacheKey, kvKey }) {
+  return kvKey || cacheKey.url;
+}
+
+/**
+ * Délai minimal entre deux rattrapages du même document.
+ *
+ * Il n’a d’effet qu’après un échec : une relecture réussie remet l’entrée à
+ * l’heure, donc plus aucun rattrapage n’est déclenché avant le TTL suivant.
+ */
+export function refreshCooldownMs(env) {
+  const value = Number.parseInt(env?.REFRESH_COOLDOWN_MS, 10);
+  return Number.isFinite(value) && value >= 0 ? value : REFRESH_COOLDOWN_MS;
+}
+
+/** Relecture en arrière-plan, sans faire attendre la requête en cours. */
+function scheduleRefresh(ctx, env, options) {
+  const key = refreshKey(options);
+  const now = Date.now();
+  if (now - (refreshAttempts.get(key) || 0) < refreshCooldownMs(env)) return;
+  refreshAttempts.set(key, now);
+  ctx.waitUntil(
+    refreshJson(ctx, env, options).catch((error) => {
+      console.error('Relecture du bucket impossible', error);
+    }),
+  );
+}
+
+const inflightRefreshes = new Map();
+const refreshAttempts = new Map();
+
+/**
+ * Relit le bucket puis met à jour le Cache API et Workers KV.
+ *
+ * Deux précautions ménagent le quota gratuit de Workers KV (1000 écritures
+ * par jour) : une seule relecture à la fois par document, et une écriture
+ * seulement quand le contenu a réellement changé (la date de collecte
+ * `fetchedAt` change à chaque passage et ne compte pas).
+ */
+async function refreshJson(ctx, env, { cacheKey, kvKey, buildBody }) {
+  const key = refreshKey({ cacheKey, kvKey });
+  const running = inflightRefreshes.get(key);
+  if (running) return running;
+
+  const task = (async () => {
+    const body = await buildBody();
+    const envelope = encodeCacheEntry(body, new Date().toISOString());
+    storeJsonInCache(ctx, caches.default, cacheKey, envelope, edgeEntryTtl(env));
+    if (kvKey) {
+      const previous = decodeCacheEntry(await readMetadataKv(env, kvKey));
+      if (!previous || payloadSignature(previous.body) !== payloadSignature(body)) {
+        storeMetadataKv(ctx, env, kvKey, envelope);
+      }
+    }
+    return body;
+  })();
+
+  inflightRefreshes.set(key, task);
+  const release = () => {
+    if (inflightRefreshes.get(key) === task) inflightRefreshes.delete(key);
+  };
+  task.then(release, release);
+  return task;
+}
+
+/**
+ * Sert un document JSON mis en cache (Cache API → Workers KV → Hugging Face).
+ *
+ * Un document périmé est renvoyé immédiatement : la relecture du bucket se
+ * poursuit en arrière-plan pour les visiteurs suivants. La fraîcheur vient de
+ * `storedAt`, ce qui permet de garder l’entrée plus longtemps que son TTL
+ * logique sans jamais bloquer une requête sur le parcours du bucket.
+ */
+async function readCachedJson(ctx, env, { cacheKey, kvKey, ttlMs, buildBody }) {
+  const startedAt = Date.now();
+  const cache = caches.default;
+
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    const entry = decodeCacheEntry(await cached.text());
+    if (entry) {
+      const stale = entryAgeMs(entry) >= ttlMs;
+      if (stale) scheduleRefresh(ctx, env, { cacheKey, kvKey, buildBody });
+      return {
+        body: entry.body,
+        cacheStatus: stale ? 'STALE' : 'HIT',
+        timing: stale ? 'edge;desc="cache stale";dur=0' : 'edge;desc="cache hit";dur=0',
+      };
+    }
+  }
+
+  const kvEntry = decodeCacheEntry(await readMetadataKv(env, kvKey));
+  if (kvEntry) {
+    const stale = entryAgeMs(kvEntry) >= ttlMs;
+    storeJsonInCache(
+      ctx,
+      cache,
+      cacheKey,
+      encodeCacheEntry(kvEntry.body, kvEntry.storedAt),
+      edgeEntryTtl(env),
+    );
+    if (stale) scheduleRefresh(ctx, env, { cacheKey, kvKey, buildBody });
+    return {
+      body: kvEntry.body,
+      cacheStatus: stale ? 'KV-STALE' : 'KV-HIT',
+      timing: 'edge;desc="cache miss", kv;desc="metadata hit"',
+    };
+  }
+
+  const body = await refreshJson(ctx, env, { cacheKey, kvKey, buildBody });
+  return {
+    body,
+    cacheStatus: 'MISS',
+    timing: `edge;desc="cache miss", hf;dur=${Date.now() - startedAt}`,
+  };
+}
+
 async function handleTree(request, env, ctx) {
   const requestUrl = new URL(request.url);
   const prefix = normalizePrefix(requestUrl.searchParams.get('prefix') ?? '');
   const bucketId = getBucketId(env);
-  const edgeTtl = positiveInteger(env.TREE_CACHE_TTL, DEFAULT_TREE_TTL);
-  const cache = caches.default;
+  const ttlMs = positiveInteger(env.TREE_CACHE_TTL, DEFAULT_TREE_TTL) * 1000;
   const cacheKey = makeCacheKey('tree', bucketId, { prefix });
-  const startedAt = Date.now();
-
-  const cached = await cache.match(cacheKey);
-  if (cached) {
-    return responseFromCache(cached, 'HIT', 'public, max-age=300, stale-while-revalidate=3600');
-  }
-
   const kvKey = makeKvKey('tree', bucketId, prefix);
-  const kvBody = await readMetadataKv(env, kvKey);
-  if (kvBody) {
-    storeJsonInCache(ctx, cache, cacheKey, kvBody, edgeTtl);
-    return jsonResponse(kvBody, {
-      serialized: true,
-      cacheControl: 'public, max-age=300, stale-while-revalidate=3600',
-      headers: {
-        'X-Cache-Status': 'KV-HIT',
-        'Server-Timing': 'edge;desc="cache miss", kv;desc="metadata hit"',
-      },
-    });
-  }
 
-  const { items, complete } = await fetchBucketTree(env, prefix, false);
-  const payload = {
-    bucketId,
-    prefix,
-    items,
-    complete,
-    fetchedAt: new Date().toISOString(),
-  };
-
-  const body = JSON.stringify(payload);
-  storeJsonInCache(ctx, cache, cacheKey, body, edgeTtl);
-  storeMetadataKv(ctx, env, kvKey, body);
+  const { body, cacheStatus, timing } = await readCachedJson(ctx, env, {
+    cacheKey,
+    kvKey,
+    ttlMs,
+    buildBody: async () => {
+      const { items, complete } = await fetchBucketTree(env, prefix, false);
+      return JSON.stringify({
+        bucketId,
+        prefix,
+        items,
+        complete,
+        fetchedAt: new Date().toISOString(),
+      });
+    },
+  });
 
   return jsonResponse(body, {
     serialized: true,
-    cacheControl: 'public, max-age=300, stale-while-revalidate=3600',
+    cacheControl: browserCacheControl(env),
     headers: {
-      'X-Cache-Status': 'MISS',
-      'Server-Timing': `edge;desc="cache miss", hf;dur=${Date.now() - startedAt}`,
+      'X-Cache-Status': cacheStatus,
+      'Server-Timing': timing,
     },
   });
 }
@@ -241,58 +419,30 @@ async function handleTree(request, env, ctx) {
  */
 async function loadIndexDocument(env, ctx) {
   const bucketId = getBucketId(env);
-  const edgeTtl = positiveInteger(env.INDEX_CACHE_TTL, DEFAULT_INDEX_TTL);
-  const cache = caches.default;
+  const ttlMs = positiveInteger(env.INDEX_CACHE_TTL, DEFAULT_INDEX_TTL) * 1000;
   const cacheKey = makeCacheKey('index', bucketId);
-  const startedAt = Date.now();
-
-  const cached = await cache.match(cacheKey);
-  if (cached) {
-    return {
-      body: await cached.text(),
-      bucketId,
-      cacheStatus: 'HIT',
-      timing: 'edge;desc="cache hit";dur=0',
-      durationMs: Date.now() - startedAt,
-    };
-  }
-
   const kvKey = makeKvKey('index', bucketId, 'recursive-counts');
-  const kvBody = await readMetadataKv(env, kvKey);
-  if (kvBody) {
-    storeJsonInCache(ctx, cache, cacheKey, kvBody, edgeTtl);
-    return {
-      body: kvBody,
-      bucketId,
-      cacheStatus: 'KV-HIT',
-      timing: 'edge;desc="cache miss", kv;desc="index hit"',
-      durationMs: Date.now() - startedAt,
-    };
-  }
 
-  const { items, complete } = await fetchBucketTree(env, '', true);
-  const compactItems = items.slice(0, MAX_INDEX_ITEMS).map(compactBucketItem);
-  const { counts, totalFiles } = countFilesByDirectory(compactItems);
-  const payload = {
-    bucketId,
-    items: compactItems,
-    counts,
-    totalFiles,
-    complete: complete && items.length <= MAX_INDEX_ITEMS,
-    fetchedAt: new Date().toISOString(),
-  };
+  const { body, cacheStatus, timing } = await readCachedJson(ctx, env, {
+    cacheKey,
+    kvKey,
+    ttlMs,
+    buildBody: async () => {
+      const { items, complete } = await fetchBucketTree(env, '', true);
+      const compactItems = items.slice(0, MAX_INDEX_ITEMS).map(compactBucketItem);
+      const { counts, totalFiles } = countFilesByDirectory(compactItems);
+      return JSON.stringify({
+        bucketId,
+        items: compactItems,
+        counts,
+        totalFiles,
+        complete: complete && items.length <= MAX_INDEX_ITEMS,
+        fetchedAt: new Date().toISOString(),
+      });
+    },
+  });
 
-  const body = JSON.stringify(payload);
-  storeJsonInCache(ctx, cache, cacheKey, body, edgeTtl);
-  storeMetadataKv(ctx, env, kvKey, body);
-
-  return {
-    body,
-    bucketId,
-    cacheStatus: 'MISS',
-    timing: `edge;desc="cache miss", hf;dur=${Date.now() - startedAt}`,
-    durationMs: Date.now() - startedAt,
-  };
+  return { body, bucketId, cacheStatus, timing };
 }
 
 async function handleIndex(request, env, ctx) {
@@ -300,7 +450,7 @@ async function handleIndex(request, env, ctx) {
 
   return jsonResponse(body, {
     serialized: true,
-    cacheControl: 'public, max-age=1800, stale-while-revalidate=7200',
+    cacheControl: browserCacheControl(env),
     headers: {
       'X-Cache-Status': cacheStatus,
       'X-Data-Source': 'index-json',
@@ -327,7 +477,7 @@ async function handleCounts(request, env, ctx) {
       source: 'index-json',
     },
     {
-      cacheControl: 'public, max-age=1800, stale-while-revalidate=7200',
+      cacheControl: browserCacheControl(env),
       headers: {
         'X-Cache-Status': cacheStatus,
         'X-Data-Source': 'index-json',
@@ -2068,7 +2218,7 @@ export function countFilesByDirectory(items, prefix = '') {
   return { counts, totalFiles };
 }
 
-function makeCacheKey(kind, bucketId, params = {}) {
+export function makeCacheKey(kind, bucketId, params = {}) {
   const url = new URL(`https://edge-cache.enise-docs.internal/${CACHE_KEY_VERSION}/${kind}`);
   url.searchParams.set('bucket', bucketId);
   Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));

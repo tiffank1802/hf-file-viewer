@@ -434,7 +434,14 @@ func readChatRequest(w http.ResponseWriter, r *http.Request) (chatRequest, error
 }
 
 func (s *Server) chatCorpus(body chatRequest) ([]catalog.BucketItem, string) {
-	if doc, _, state := s.cache.Index(); doc != nil && len(doc.Items) > 0 && state != "" {
+	doc, _, state := s.cache.Index()
+	if state != "fresh" {
+		// L’index n’est plus à jour : la réponse part tout de suite avec ce
+		// qui est en cache, et le bucket est relu en arrière-plan pour la
+		// question suivante.
+		s.refreshIndexAsync()
+	}
+	if doc != nil && len(doc.Items) > 0 && state != "" {
 		return doc.Items, state
 	}
 	if len(body.Catalog) == 0 || len(body.Catalog) > 400 {

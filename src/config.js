@@ -36,6 +36,14 @@ export const XLSX_PAGE_SIZE = 500;
 export const AUTODESK_VIEWER_API_URL =
   'https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/viewer3D.min.js';
 
+/**
+ * Espaces connus de la bibliothèque.
+ *
+ * Ce ne sont plus les seules cartes de l’accueil : `src/utils/spaces.js`
+ * construit la liste complète à partir de l’index du bucket. Ces entrées
+ * gardent leur titre, leur icône et leur couleur, mais une carte n’apparaît
+ * que si le dossier existe encore dans le bucket.
+ */
 export const FEATURED_SPACES = [
   {
     title: '3e année GM',
@@ -78,6 +86,34 @@ export const FEATURED_SPACES = [
     icon: 'box',
   },
 ];
+
+/**
+ * Teintes attribuées aux cartes créées depuis l’index (dossiers ajoutés au
+ * bucket après la mise en ligne). Elles tournent pour éviter une grille
+ * monochrome quand plusieurs dossiers apparaissent en même temps.
+ */
+export const SPACE_TONES = ['green', 'red', 'yellow'];
+
+/**
+ * Durée pendant laquelle un dossier compte comme « nouveau ».
+ *
+ * Passé ce délai, la carte reste affichée mais perd son badge.
+ */
+export const NEW_SPACE_WINDOW_DAYS = 30;
+
+/**
+ * Carte qui ouvre la racine du bucket : elle est toujours présente, même si
+ * l’index n’a pas encore répondu.
+ */
+export const LIBRARY_ROOT_CARD = {
+  title: 'Toute la bibliothèque',
+  shortTitle: 'Bibliothèque',
+  description: 'Tous les dossiers du bucket',
+  path: '',
+  tone: 'ink',
+  icon: 'layers',
+  library: true,
+};
 
 export const SIDE_LINKS = [
   { label: 'Accueil', path: '', icon: 'home' },

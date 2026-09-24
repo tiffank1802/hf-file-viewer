@@ -19,8 +19,9 @@ function indexStat(catalog, readyLabel) {
   return { value: formatCount(catalog.totalFiles), label: readyLabel };
 }
 
-export default function Hero({ onOpenSearch, navigate, catalog }) {
+export default function Hero({ onOpenSearch, navigate, catalog, spaceCount = null }) {
   const totalStat = indexStat(catalog, 'ressources indexées');
+  const spacesStat = Number.isFinite(spaceCount) ? formatCount(spaceCount) : '—';
   return (
     <section className="hero-section" aria-labelledby="hero-title">
       <div className="hero-copy">
@@ -60,8 +61,8 @@ export default function Hero({ onOpenSearch, navigate, catalog }) {
             <dd>source des documents</dd>
           </div>
           <div>
-            <dt>5</dt>
-            <dd>espaces clés</dd>
+            <dt>{spacesStat}</dt>
+            <dd>espaces disponibles</dd>
           </div>
         </dl>
       </div>

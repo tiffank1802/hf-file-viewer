@@ -9,12 +9,18 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"enise-docs/backend/internal/cache"
 	"enise-docs/backend/internal/catalog"
 	"enise-docs/backend/internal/config"
 )
+
+// indexRefreshCooldown borne les relectures successives du bucket : après un
+// échec (Hugging Face indisponible), l’index n’est pas relancé à chaque
+// question posée à l’Assistant.
+const indexRefreshCooldown = time.Minute
 
 const staticCSP = "default-src 'self'; script-src 'self' https://static.cloudflareinsights.com https://developer.api.autodesk.com; style-src 'self' 'unsafe-inline' https://developer.api.autodesk.com; img-src 'self' data: blob: https:; media-src 'self' blob: https://developer.api.autodesk.com; frame-src 'self' blob: https://view.officeapps.live.com https://developer.api.autodesk.com https://iframe.sharecad.org; connect-src 'self' https://cloudflareinsights.com https://developer.api.autodesk.com; font-src 'self' data: https://developer.api.autodesk.com; worker-src 'self' blob: https://developer.api.autodesk.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
 
@@ -30,6 +36,11 @@ type Server struct {
 	chatHits      *chatLimiter
 	authClient    *http.Client
 	authHits      *authLimiter
+
+	// Une seule relecture de l’index à la fois, avec un délai minimal entre
+	// deux tentatives.
+	indexRefreshRunning atomic.Bool
+	indexRefreshAt      atomic.Int64
 }
 
 func New(cfg config.Config) *Server {
@@ -365,13 +376,32 @@ func (s *Server) refreshIndex(ctx context.Context) {
 	}
 }
 
+// refreshIndexAsync relit le bucket en arrière-plan, sans faire attendre la
+// requête en cours. La relecture est unique à la fois et espacée d’au moins
+// indexRefreshCooldown : une question posée à l’Assistant ne déclenche jamais
+// une rafale d’appels à Hugging Face.
+func (s *Server) refreshIndexAsync() {
+	now := time.Now().UnixNano()
+	if last := s.indexRefreshAt.Load(); last != 0 && now-last < int64(indexRefreshCooldown) {
+		return
+	}
+	if !s.indexRefreshRunning.CompareAndSwap(false, true) {
+		return
+	}
+	s.indexRefreshAt.Store(now)
+	go func() {
+		defer s.indexRefreshRunning.Store(false)
+		s.refreshIndex(context.Background())
+	}()
+}
+
 func (s *Server) loadIndex(ctx context.Context, force bool) (indexResult, error) {
 	if !force {
 		if doc, body, state := s.cache.Index(); doc != nil && state == "fresh" {
 			return indexResult{doc: doc, body: body, status: "HIT"}, nil
 		}
 		if doc, body, state := s.cache.Index(); doc != nil && state == "stale" {
-			go s.refreshIndex(context.Background())
+			s.refreshIndexAsync()
 			return indexResult{doc: doc, body: body, status: "STALE"}, nil
 		}
 	}

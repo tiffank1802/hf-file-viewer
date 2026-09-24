@@ -37,6 +37,21 @@ export default [
     },
   },
   {
+    // Exemple d’intégration fourni aux étudiants : Node, plus les API web
+    // qu’un runtime moderne expose globalement.
+    files: ['client-examples/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2024,
+      sourceType: 'module',
+      globals: {
+        ...globals.node,
+        Blob: 'readonly',
+        FormData: 'readonly',
+        fetch: 'readonly',
+      },
+    },
+  },
+  {
     files: ['scripts/**/*.mjs', 'scripts/**/*.js', 'vite.config.js'],
     languageOptions: {
       ecmaVersion: 2024,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FiHeart, FiHome, FiSearch } from 'react-icons/fi';
 import CategoryGrid from './components/CategoryGrid';
 import Explorer from './components/Explorer';
@@ -13,6 +13,7 @@ import AuthPanel from './components/AuthPanel';
 import CloudflareAnalytics from './components/CloudflareAnalytics';
 import { useLibrary } from './hooks/useLibrary';
 import { useIndexCatalog } from './hooks/useIndexCatalog';
+import { buildHomeCards } from './utils/spaces';
 import { useAuth } from './hooks/useAuth';
 import { useFavorites } from './hooks/useFavorites';
 import './index.css';
@@ -20,6 +21,9 @@ import './index.css';
 export default function App() {
   const library = useLibrary();
   const catalog = useIndexCatalog();
+  // Les cartes d’accueil et la barre latérale sont dérivées de l’index :
+  // un dossier ajouté au bucket apparaît sans redéploiement.
+  const home = useMemo(() => buildHomeCards(catalog), [catalog]);
   const [selectedFile, setSelectedFile] = useState(null);
   const [searchState, setSearchState] = useState({ open: false, mode: 'search' });
   const [authPanel, setAuthPanel] = useState({ open: false, mode: 'signin' });
@@ -104,8 +108,18 @@ export default function App() {
       <main id="main-content">
         {library.path === '' && (
           <>
-            <Hero onOpenSearch={() => openSearch('search')} navigate={library.navigate} catalog={catalog} />
-            <CategoryGrid navigate={library.navigate} prefetch={library.prefetch} catalog={catalog} />
+            <Hero
+              onOpenSearch={() => openSearch('search')}
+              navigate={library.navigate}
+              catalog={catalog}
+              spaceCount={home.spaces.length}
+            />
+            <CategoryGrid
+              navigate={library.navigate}
+              prefetch={library.prefetch}
+              catalog={catalog}
+              cards={home.cards}
+            />
           </>
         )}
 
@@ -126,6 +140,7 @@ export default function App() {
               favoriteCount={favoriteItems.length}
               onOpenSearch={() => openSearch('search')}
               onOpenFavorites={() => openSearch('favorites')}
+              spaces={home.spaces}
             />
             <Explorer
               library={library}
