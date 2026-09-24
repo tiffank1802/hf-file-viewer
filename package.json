@@ -24,7 +24,8 @@
     "check": "npm run lint && npm run test && npm run build",
     "cf:typegen": "wrangler types",
     "deploy:space": "node scripts/deploy-space.js",
-    "deploy:api": "node scripts/deploy-api.js"
+    "deploy:api": "node scripts/deploy-api.js",
+    "api:origin": "node scripts/set-api-origin.js"
   },
   "dependencies": {
     "docx-preview": "^0.4.0",

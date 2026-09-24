@@ -185,7 +185,8 @@ func Load(root string) Config {
 	cfg.CloudflareAccountID = unsetPlaceholder(get("CLOUDFLARE_ACCOUNT_ID"))
 	cfg.CloudflareAIToken = unsetPlaceholder(firstNonEmpty(get("CLOUDFLARE_AI_TOKEN"), get("CLOUDFLARE_API_TOKEN")))
 	cfg.CloudflareAIBase = strings.TrimRight(catalog.TrimTrailingSlashes(firstNonEmpty(get("CLOUDFLARE_API_BASE"), defaultCloudflareBase)), "/")
-	cfg.CloudflareAIModel = firstNonEmpty(sanitizeModel(get("CLOUDFLARE_AI_MODEL")), defaultCloudflareModel)
+	// CLOUDFLARE_MODEL est le nom documenté ; CLOUDFLARE_AI_MODEL reste accepté.
+	cfg.CloudflareAIModel = firstNonEmpty(sanitizeModel(get("CLOUDFLARE_MODEL")), sanitizeModel(get("CLOUDFLARE_AI_MODEL")), defaultCloudflareModel)
 	cfg.ChatAnswerTimeout = durationSeconds(get("CHAT_ANSWER_TIMEOUT"), defaultChatAnswerTimeout)
 	cfg.ChatMaxTokens = catalog.PositiveInt(get("CHAT_MAX_TOKENS"), defaultChatMaxTokens)
 	cfg.ChatDeepTokens = catalog.PositiveInt(get("CHAT_DEEP_MAX_TOKENS"), defaultChatDeepTokens)

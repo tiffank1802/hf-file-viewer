@@ -120,32 +120,34 @@ Les réglages de production sont dans [`wrangler.jsonc`](./wrangler.jsonc) :
 
 Un changement de TTL s’applique aux nouvelles entrées de cache. Les anciennes expirent naturellement ou peuvent être purgées depuis le tableau de bord Cloudflare.
 
-### Héberger l’API Go sans serveur (Space Hugging Face)
+### Héberger l’API Go sur Render (gratuit)
 
-Pas de VPS à louer : l’API Go est publiée comme **Space Docker** Hugging Face, et le Worker l’appelle.
+Le site reste sur Cloudflare Workers ; seule l’API Go (assistant, compte étudiant) tourne sur [Render](https://render.com), décrite par [`render.yaml`](./render.yaml) : runtime Go natif, palier `free`, région Francfort, `rootDir: backend`, contrôle de santé sur `/api/health`.
 
-```bash
-HF_TOKEN=hf_... npm run deploy:api -- --write-origin
-```
+1. Render → **New → Blueprint** → choisir ce dépôt GitHub (et la branche qui contient `render.yaml`).
+2. Render demande les valeurs marquées `sync: false` — au moins un moteur :
 
-Le script crée (ou met à jour) le Space `<username>/enise-docs-api`, y pousse l’enveloppe Docker (`space-api/`) et les sources Go (`backend/`) en un commit atomique, attend la fin du build puis **écrit l’URL dans `wrangler.jsonc`** (`GO_API_ORIGIN`). Il reste à déployer :
+   | Variable | Rôle |
+   |---|---|
+   | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | IA intégrée Cloudflare (Workers AI), moteur essayé en premier |
+   | `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, `OPENCODE_API_KEY` | moteurs de secours (facultatifs) |
+   | `HF_TOKEN` | seulement si le bucket devient privé |
 
-```bash
-npm run deploy
-```
+   `CHAT_TRUST_PROXY=1` est déjà fixé dans le Blueprint : la limite de 30 questions par minute s’applique par visiteur, pas au site entier.
+3. Une fois le service en ligne (`https://enise-docs-api.onrender.com/api/health` répond `{"ok":true,…}`), relier le Worker puis redéployer :
 
-Puis, dans le Space (**Settings → Repository secrets**, jamais dans les fichiers) :
+   ```bash
+   npm run api:origin -- https://enise-docs-api.onrender.com
+   npm run deploy
+   ```
 
-| Secret | Rôle |
-|---|---|
-| `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, `OPENCODE_API_KEY` | rédaction de l’assistant |
-| `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | IA intégrée Cloudflare (Workers AI), sans service tiers |
-| `CHAT_TRUST_PROXY` | `1` : limite le débit par visiteur derrière le Worker |
-| `HF_TOKEN` | seulement si le bucket devient privé |
+   `api:origin` vérifie `/api/health` (en attendant la sortie de veille) puis écrit `GO_API_ORIGIN` dans `wrangler.jsonc`.
 
-Options utiles : `--space-id <user>/<space>` pour un autre nom, `--private`, `--skip-files`.
+Seuls les commits qui touchent `backend/` relancent un déploiement Render (`buildFilter`).
 
-> Le palier gratuit se met en veille après inactivité : la première question après une pause peut attendre 30 à 60 secondes (cold start). Pour supprimer l’attente, passer le Space en `cpu-upgrade` ou héberger le binaire sur un petit VPS (voir [`backend/README.md`](./backend/README.md)).
+> Le palier gratuit s’endort après 15 minutes sans requête : la première question après une pause attend 30 à 60 secondes. Pour supprimer l’attente : plan Render `starter`, ou un petit VPS (voir [`backend/README.md`](./backend/README.md)).
+>
+> Hugging Face exige désormais un abonnement PRO pour les Spaces Docker : `npm run deploy:api` (Space `enise-docs-api`) ne fonctionne qu’avec un compte PRO.
 
 ### Le Worker sert le site, Go ne sert que l’API
 

@@ -82,7 +82,7 @@ Mêmes noms que `wrangler.jsonc` / `.dev.vars` :
 | `CLOUDFLARE_ACCOUNT_ID` | IA intégrée Cloudflare (Workers AI). Les deux ensemble activent le moteur « cloudflare », essayé en premier |
 | `CLOUDFLARE_API_TOKEN` | jeton Cloudflare avec le droit « Workers AI:Read » |
 | `CLOUDFLARE_API_BASE` | défaut `https://api.cloudflare.com/client/v4` |
-| `CLOUDFLARE_MODEL` | défaut `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. Le modèle est dans l’URL : `/accounts/<id>/ai/run/<modèle>` |
+| `CLOUDFLARE_MODEL` (ou `CLOUDFLARE_AI_MODEL`) | défaut `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. Le modèle est dans l’URL : `/accounts/<id>/ai/run/<modèle>` |
 | `OPENROUTER_API_KEY` | moteur OpenRouter, défaut `https://openrouter.ai/api/v1` |
 | `OPENCODE_API_KEY` | moteur OpenCode Zen, défaut `https://opencode.ai/zen/v1` |
 | `NVIDIA_API_KEY` | rédaction de l’assistant, jamais envoyée au navigateur. Vide = recherche locale seulement |
@@ -101,17 +101,20 @@ Mêmes noms que `wrangler.jsonc` / `.dev.vars` :
 
 `MODEL3D_CONVERT_URL` absent active Rupture. Une valeur explicitement vide désactive la conversion, comme le Worker.
 
-## Publier l’API sur Hugging Face (sans serveur)
+## Publier l’API sur Render (gratuit)
 
-Le Worker Cloudflare reste devant : il sert les assets et appelle cette API.
+Le Worker Cloudflare reste devant : il sert les assets et appelle cette API. Le Blueprint [`render.yaml`](../render.yaml) décrit le service : runtime Go natif, `rootDir: backend`, build `go build -trimpath -o bin/enise-api ./cmd/enise-api`, démarrage `./bin/enise-api`. Render fournit `PORT` (10000) et le serveur écoute `0.0.0.0:$PORT`.
 
 ```bash
-HF_TOKEN=hf_... npm run deploy:api -- --write-origin   # pousse les sources + écrit GO_API_ORIGIN
-npm run deploy                                         # redéploie le Worker
+# 1. Render → New → Blueprint → ce dépôt, puis saisir les clés demandées
+# 2. relier le Worker (vérifie /api/health, écrit GO_API_ORIGIN) et redéployer
+npm run api:origin -- https://enise-docs-api.onrender.com
+npm run deploy
 ```
 
-Le Space construit l’image depuis `space-api/Dockerfile` et écoute sur le port `8788`
-(`app_port` du Space). Les clés de rédaction se mettent dans les **Repository secrets** du Space, pas dans les fichiers. Penser à `CHAT_TRUST_PROXY=1` : sans lui, la limite de 30 questions par minute s’applique au site entier.
+Les clés (`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `OPENROUTER_API_KEY`…) se saisissent dans Render (**Environment**), jamais dans les fichiers. `CHAT_TRUST_PROXY=1` est fixé par le Blueprint. Le disque Render gratuit est éphémère : le cache (`CACHE_DIR=/tmp/enise-docs-cache`) repart à vide à chaque réveil, l’index se recharge depuis Hugging Face.
+
+Alternative payante : `HF_TOKEN=hf_... npm run deploy:api -- --write-origin` publie la même API comme Space Docker Hugging Face (`space-api/Dockerfile`, port `8788`), mais Hugging Face réserve désormais les Spaces Docker aux comptes PRO.
 
 ## Héberger Go à la place du Worker
 

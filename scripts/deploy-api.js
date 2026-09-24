@@ -240,6 +240,11 @@ async function main() {
     }
   } catch (error) {
     console.error(`\n❌ ERREUR CRITIQUE: ${error.message}`);
+    if (/\b402\b|PRO subscription/i.test(error.message)) {
+      console.error('\n💡 Hugging Face réserve les Spaces Docker aux comptes PRO.');
+      console.error('   Alternative gratuite : Render (render.yaml), puis');
+      console.error('   npm run api:origin -- https://enise-docs-api.onrender.com && npm run deploy');
+    }
     process.exit(1);
   }
 }
