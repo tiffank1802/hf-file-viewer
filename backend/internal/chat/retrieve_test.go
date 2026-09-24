@@ -84,7 +84,10 @@ func TestRelatedDocumentsGathersTheSameFolder(t *testing.T) {
 		{Type: "file", Path: "GM/Economie/DS 2024.pdf"},
 		{Type: "file", Path: "TOEIC/listening.mp3"},
 	}
-	hits := Rank(items, "examen économie", "", 4)
+	// Un seul document classé : les autres sujets du dossier doivent venir
+	// en voisins (avec une limite de 4, les trois DS étaient déjà classés
+	// et il ne restait aucun voisin à proposer).
+	hits := Rank(items, "examen économie", "", 1)
 	if len(hits) == 0 {
 		t.Fatal("aucun document classé")
 	}

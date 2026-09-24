@@ -428,6 +428,10 @@ func wordScore(word, token string) int {
 		return 12
 	case len(token) >= 3 && strings.HasPrefix(word, token):
 		return 14
+	// Codes courts avec un chiffre (« 3a », « s5 ») : le nom de dossier
+	// « 3A GM » devient « 3agm » une fois replié, le préfixe doit compter.
+	case len(token) >= 2 && hasDigit(token) && strings.HasPrefix(word, token):
+		return 14
 	default:
 		return 0
 	}

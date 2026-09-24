@@ -27,9 +27,16 @@ func TestChatStatusWithoutKeyDoesNotInventOne(t *testing.T) {
 	if payload["status"] != "not-configured" || payload["engine"] != "local" || payload["backend"] != "go" {
 		t.Fatalf("payload = %#v", payload)
 	}
+	// Cloudflare, OpenRouter, NVIDIA et OpenCode : tous listés, aucun activé.
 	providers, _ := payload["providers"].([]any)
-	if len(providers) != 3 {
+	if len(providers) != 4 {
 		t.Fatalf("providers = %#v", providers)
+	}
+	for _, raw := range providers {
+		provider, _ := raw.(map[string]any)
+		if provider["enabled"] != false {
+			t.Fatalf("moteur activé sans clé: %#v", provider["id"])
+		}
 	}
 	if _, ok := payload["apiKey"]; ok {
 		t.Fatal("la clé ne doit pas sortir")

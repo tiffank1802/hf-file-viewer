@@ -1388,8 +1388,17 @@ func workersAIEndpoint(rawBase, accountID, model string) (string, error) {
 	if err != nil || request.URL == nil || request.URL.Host == "" {
 		return "", fmt.Errorf("origine Cloudflare invalide")
 	}
-	if request.URL.Scheme != "https" {
-		return "", fmt.Errorf("CLOUDFLARE_API_BASE doit être en HTTPS")
+	// Même règle que les autres moteurs : HTTPS, sauf en boucle locale
+	// (serveur de test, proxy sur la machine).
+	switch request.URL.Scheme {
+	case "https":
+	case "http":
+		host := request.URL.Hostname()
+		if host != "localhost" && !strings.HasPrefix(host, "127.") {
+			return "", fmt.Errorf("CLOUDFLARE_API_BASE doit être en HTTPS")
+		}
+	default:
+		return "", fmt.Errorf("origine Cloudflare invalide")
 	}
 	return request.URL.String(), nil
 }
