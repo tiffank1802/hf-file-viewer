@@ -1131,8 +1131,8 @@
 .library-chat-empty { margin: 0; color: var(--ink-soft); font-size: 0.74rem; line-height: 1.45; }
 .library-chat-thread { display: grid; gap: 2px; width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 14px; background: white; color: var(--ink); text-align: left; cursor: pointer; }
 .library-chat-thread.current { border-color: rgba(0, 122, 94, 0.45); background: rgba(231, 243, 238, 0.78); }
-.library-chat-thread strong { font-size: 0.76rem; }
-.library-chat-thread em, .library-chat-thread time { color: var(--ink-faint); font-style: normal; font-size: 0.64rem; }
+.library-chat-thread strong { overflow: hidden; font-size: 0.76rem; text-overflow: ellipsis; white-space: nowrap; }
+.library-chat-thread span { color: var(--ink-faint); font-size: 0.64rem; }
 .library-chat-note { margin: 8px 14px 0; }
 .library-chat-log { display: flex; flex: 1; flex-direction: column; gap: 10px; overflow: auto; padding: 14px; }
 .library-chat-bubble { max-width: 94%; padding: 10px 12px; border-radius: 16px; font-size: 0.78rem; line-height: 1.45; }

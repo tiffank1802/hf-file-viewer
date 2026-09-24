@@ -299,8 +299,7 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
                       onClick={() => void openStored(item.id)}
                     >
                       <strong>{item.title || item.preview || 'Session'}</strong>
-                      {item.preview && item.preview !== item.title && <em>{item.preview}</em>}
-                      {item.updatedAt && <time dateTime={item.updatedAt}>{formatChatDate(item.updatedAt)}</time>}
+                      <span>Session · {formatChatDate(item.updatedAt) || 'à l’instant'}</span>
                     </button>
                   ))}
                 </section>
