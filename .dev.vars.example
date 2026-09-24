@@ -42,6 +42,9 @@ APS_CLIENT_SECRET="your_aps_client_secret"
 # NVIDIA_MODEL="meta/llama-3.1-8b-instruct"
 # À activer seulement si Go n’est joignable que par le Worker.
 # CHAT_TRUST_PROXY="1"
+# Clé serveur Appwrite, uniquement pour `npm run appwrite:setup`.
+# Console → API Keys, scope databases.write (et tablesdb.write). Jamais en VITE_.
+# APPWRITE_API_KEY=""
 
 # MAX_SOLIDWORKS_BYTES="104857600"
 # MAX_SOLIDWORKS_DEPENDENCY_FILES="64"

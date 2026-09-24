@@ -77,13 +77,14 @@ type Config struct {
 	NvidiaModel    string
 	ChatTrustProxy bool
 
-	AppwriteEnabled      bool
-	AppwriteEndpoint     string
-	AppwriteProjectID    string
-	AppwriteDatabaseID   string
-	AppwriteProfileTable string
-	AppwriteFlavor       string
-	AppwritePublicOrigin string
+	AppwriteEnabled        bool
+	AppwriteEndpoint       string
+	AppwriteProjectID      string
+	AppwriteDatabaseID     string
+	AppwriteProfileTable   string
+	AppwriteFavoritesTable string
+	AppwriteFlavor         string
+	AppwritePublicOrigin   string
 }
 
 func Load(root string) Config {
@@ -151,8 +152,9 @@ func Load(root string) Config {
 	cfg.ChatTrustProxy = truthy(get("CHAT_TRUST_PROXY"))
 	cfg.AppwriteEndpoint = catalog.TrimTrailingSlashes(firstNonEmpty(get("APPWRITE_ENDPOINT"), get("VITE_APPWRITE_ENDPOINT"), defaultAppwriteURL))
 	cfg.AppwriteProjectID = firstNonEmpty(get("APPWRITE_PROJECT_ID"), get("VITE_APPWRITE_PROJECT_ID"), defaultAppwriteProj)
-	cfg.AppwriteDatabaseID = firstNonEmpty(get("APPWRITE_DATABASE_ID"), get("VITE_APPWRITE_DATABASE_ID"))
+	cfg.AppwriteDatabaseID = firstNonEmpty(get("APPWRITE_DATABASE_ID"), get("VITE_APPWRITE_DATABASE_ID"), "enise_docs")
 	cfg.AppwriteProfileTable = firstNonEmpty(get("APPWRITE_PROFILE_TABLE_ID"), get("VITE_APPWRITE_PROFILE_TABLE_ID"), "profiles")
+	cfg.AppwriteFavoritesTable = firstNonEmpty(get("APPWRITE_FAVORITES_TABLE_ID"), get("VITE_APPWRITE_FAVORITES_TABLE_ID"), "favorites")
 	cfg.AppwritePublicOrigin = strings.TrimSpace(get("APPWRITE_PUBLIC_ORIGIN"))
 	cfg.AppwriteFlavor = "tablesdb"
 	if strings.EqualFold(firstNonEmpty(get("APPWRITE_FLAVOR"), get("VITE_APPWRITE_FLAVOR")), "databases") {

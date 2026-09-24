@@ -902,6 +902,11 @@
   .user-menu-mail { padding: 4px 8px 8px; color: var(--ink-faint); font-size: 0.64rem; font-weight: 700; overflow-wrap: anywhere; }
   .user-menu button { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 11px; background: transparent; color: var(--ink); font-size: 0.74rem; font-weight: 700; text-align: left; cursor: pointer; }
   .user-menu button:hover { background: var(--green-pale); color: var(--green-deep); }
+  .favorites-alert { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 14px; width: min(calc(100% - 32px), var(--container)); margin: 12px auto 0; padding: 10px 13px; border: 1px solid rgba(198, 60, 50, 0.35); border-radius: var(--radius-md); background: rgba(198, 60, 50, 0.07); color: var(--ink); font-size: 0.74rem; line-height: 1.5; }
+  .favorites-alert p { margin: 0; }
+  .favorites-alert strong { color: var(--red); }
+  .favorites-alert-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .favorites-alert-actions button { padding: 5px 10px; border: 1px solid rgba(20, 37, 31, 0.18); border-radius: 999px; background: rgba(255, 255, 255, 0.65); color: var(--ink-soft); font: inherit; font-size: 0.7rem; cursor: pointer; }
 }
 
 @layer responsive {

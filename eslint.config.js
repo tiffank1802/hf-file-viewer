@@ -37,7 +37,7 @@ export default [
     },
   },
   {
-    files: ['scripts/**/*.mjs', 'vite.config.js'],
+    files: ['scripts/**/*.mjs', 'scripts/**/*.js', 'vite.config.js'],
     languageOptions: {
       ecmaVersion: 2024,
       sourceType: 'module',

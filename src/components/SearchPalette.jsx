@@ -133,7 +133,7 @@ export default function SearchPalette({
             <div className="search-empty">
               <span><FiSearch aria-hidden="true" /></span>
               <h3>{mode === 'favorites' && !favoriteItems.length ? 'Aucun favori pour le moment' : 'Aucun résultat trouvé'}</h3>
-              <p>{mode === 'favorites' && !favoriteItems.length ? 'Ajoutez un document avec l’icône cœur pour le retrouver ici.' : 'Essayez un mot plus court ou le nom d’une matière.'}</p>
+              <p>{mode === 'favorites' && !favoriteItems.length ? 'Connecte-toi, puis épingle un document avec le cœur. La liste est celle du compte.' : 'Essayez un mot plus court ou le nom d’une matière.'}</p>
             </div>
           )}
         </div>

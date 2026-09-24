@@ -153,8 +153,9 @@ export default {
         return await proxyGoChat(request, env);
       }
 
-      if (url.pathname.startsWith('/api/auth/')) {
-        assertMethod(request, url.pathname === '/api/auth/session' ? ['GET'] : ['POST']);
+      if (url.pathname.startsWith('/api/auth/') || url.pathname === '/api/favorites' || url.pathname.startsWith('/api/favorites/')) {
+        const readable = url.pathname === '/api/auth/session' || url.pathname === '/api/favorites';
+        assertMethod(request, readable ? ['GET'] : ['POST']);
         return await proxyGoAuth(request, env);
       }
 

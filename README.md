@@ -368,6 +368,21 @@ Règles importantes :
 
 Pour un déploiement CI GitHub, stocker `CLOUDFLARE_API_TOKEN` et `CLOUDFLARE_ACCOUNT_ID` dans les **GitHub Actions Secrets**, jamais dans le dépôt.
 
+## Compte et favoris
+
+La connexion et les favoris passent par le backend Go, pas par le SDK Appwrite dans le navigateur. Le projet est **Django objects** (`https://fra.cloud.appwrite.io/v1`, `69cedb12002acdd498e0`).
+
+Le compte (email, mot de passe, nom) vit dans Appwrite Auth. La promotion, la filière et les favoris vivent dans la base `enise_docs`, tables `profiles` et `favorites`. Cette base se crée une fois, depuis ta machine, avec une clé serveur :
+
+```bash
+# Console Appwrite → API Keys → databases.write, puis dans .dev.vars :
+# APPWRITE_API_KEY="…"
+npm run appwrite:setup
+npm run appwrite:status
+```
+
+Sans cette clé, la connexion marche déjà. Les cœurs et le profil ne s’enregistrent qu’après le script. Les anciens favoris laissés dans le navigateur sont repris au premier compte connecté, puis la copie locale est effacée.
+
 ## API
 
 Le Worker Cloudflare et le backend Go exposent les mêmes routes. L’en-tête `X-Backend: go` indique que la réponse vient du processus Go ; son absence indique le Worker.

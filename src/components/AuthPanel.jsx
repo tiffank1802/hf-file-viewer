@@ -370,7 +370,7 @@ export default function AuthPanel({ open, mode = 'signin', onModeChange, onClose
             <button className="auth-signout" type="button" onClick={() => run(() => auth.signOut())}>
               <FiLogOut aria-hidden="true" /> Se déconnecter
             </button>
-            <p className="auth-note">Les favoris de cet appareil restent dans le navigateur. Le compte ne les remplace pas encore.</p>
+            <p className="auth-note">Les favoris sont ceux du compte. Un cœur ajouté hors connexion n’est pas gardé sur cet appareil.</p>
           </div>
         )}
       </section>

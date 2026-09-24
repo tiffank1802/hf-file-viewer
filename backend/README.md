@@ -85,7 +85,8 @@ Mêmes noms que `wrangler.jsonc` / `.dev.vars` :
 | `CHAT_TRUST_PROXY` | `1` seulement si Go n’est joignable que par le Worker, pour limiter le débit par étudiant et faire confiance à `X-Forwarded-Host` sur les emails de compte |
 | `APPWRITE_ENDPOINT` | défaut `https://fra.cloud.appwrite.io/v1` |
 | `APPWRITE_PROJECT_ID` | défaut `69cedb12002acdd498e0` |
-| `APPWRITE_DATABASE_ID` | vide tant que la table `profiles` n’existe pas. Le compte Auth fonctionne quand même |
+| `APPWRITE_DATABASE_ID` | défaut `enise_docs`, créé par `npm run appwrite:setup` |
+| `APPWRITE_API_KEY` | seulement pour ce script, jamais envoyée au navigateur |
 | `APPWRITE_PUBLIC_ORIGIN` | origine des liens d’email, par exemple `https://le-site`. Vide = hôte de la requête, seulement s’il n’est pas usurpé |
 | `APPWRITE_ENABLED` | `0` masque le bouton de connexion |
 
@@ -112,9 +113,17 @@ En production Cloudflare, le Worker ne fait pas lui-même l’appel NVIDIA. Sans
 
 ## Compte
 
-Le bouton **Se connecter** parle à Go (`/api/auth/*`). Go ouvre la session Appwrite et pose un cookie `enise_session` HttpOnly. Le mot de passe n’est pas écrit dans une table, et il ne revient jamais dans le JSON. Sans `APPWRITE_DATABASE_ID`, le profil (promotion, filière) n’est pas encore stocké : le compte Auth fonctionne quand même.
+Le bouton **Se connecter** parle à Go (`/api/auth/*`). Go ouvre la session Appwrite et pose un cookie `enise_session` HttpOnly. Le mot de passe n’est pas écrit dans une table, et il ne revient jamais dans le JSON.
 
-Le Worker relaie `/api/auth/*` vers `GO_API_ORIGIN` en transmettant le cookie. Sans cette origine, la route répond 501 et le bouton reste masqué.
+Les favoris du compte passent par `/api/favorites`. Ils ne sont plus gardés dans le navigateur. La base `enise_docs` et les tables `profiles` et `favorites` se créent une fois :
+
+```bash
+# APPWRITE_API_KEY dans .dev.vars, ou devant la commande
+npm run appwrite:setup
+npm run appwrite:status
+```
+
+Le Worker relaie `/api/auth/*` et `/api/favorites` vers `GO_API_ORIGIN` en transmettant le cookie. Sans cette origine, ces routes répondent 501 et le bouton reste masqué.
 
 ## Tests
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { FiHeart, FiHome, FiSearch } from 'react-icons/fi';
 import CategoryGrid from './components/CategoryGrid';
 import Explorer from './components/Explorer';
@@ -13,7 +13,8 @@ import AuthPanel from './components/AuthPanel';
 import CloudflareAnalytics from './components/CloudflareAnalytics';
 import { useLibrary } from './hooks/useLibrary';
 import { useIndexCatalog } from './hooks/useIndexCatalog';
-import { useLocalStorage } from './hooks/useLocalStorage';
+import { useAuth } from './hooks/useAuth';
+import { useFavorites } from './hooks/useFavorites';
 import './index.css';
 
 export default function App() {
@@ -22,13 +23,14 @@ export default function App() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [searchState, setSearchState] = useState({ open: false, mode: 'search' });
   const [authPanel, setAuthPanel] = useState({ open: false, mode: 'signin' });
-  const [storedFavorites, setStoredFavorites] = useLocalStorage('enise-docs:favorites', []);
-
-  const favoriteItems = useMemo(
-    () => (Array.isArray(storedFavorites) ? storedFavorites.filter((item) => item && typeof item === 'object' && item.path) : []),
-    [storedFavorites],
-  );
-  const favoritePaths = useMemo(() => favoriteItems.map((item) => item.path), [favoriteItems]);
+  const [dismissedAlertKey, setDismissedAlertKey] = useState(null);
+  const auth = useAuth();
+  const favorites = useFavorites(auth.user);
+  const favoriteItems = favorites.items;
+  const favoritePaths = favorites.paths;
+  const favoritesAlert = favorites.sync.actionError
+    || (['write-failed', 'read-failed', 'unprovisioned', 'import', 'disabled'].includes(favorites.sync.state) ? favorites.sync.error : null);
+  const favoritesAlertKey = favoritesAlert ? `${favorites.sync.state}::${favoritesAlert}` : null;
 
   const openSearch = useCallback((mode = 'search') => {
     setSearchState({ open: true, mode });
@@ -40,15 +42,7 @@ export default function App() {
   }, []);
   const closePreview = useCallback(() => setSelectedFile(null), []);
 
-  const toggleFavorite = useCallback((item) => {
-    setStoredFavorites((current) => {
-      const items = Array.isArray(current) ? current.filter((entry) => entry && typeof entry === 'object') : [];
-      if (items.some((entry) => entry.path === item.path)) {
-        return items.filter((entry) => entry.path !== item.path);
-      }
-      return [...items, item];
-    });
-  }, [setStoredFavorites]);
+  const toggleFavorite = favorites.toggle;
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -92,6 +86,20 @@ export default function App() {
         onOpenFavorites={() => openSearch('favorites')}
         favoriteCount={favoriteItems.length}
       />
+
+      {favoritesAlertKey && favoritesAlertKey !== dismissedAlertKey && (
+        <div className="favorites-alert" role="alert">
+          <p><strong>Favoris :</strong> {favoritesAlert}</p>
+          <span className="favorites-alert-actions">
+            {auth.isAuthenticated ? (
+              <button type="button" onClick={() => void favorites.sync.retry()}>Réessayer</button>
+            ) : (
+              <button type="button" onClick={() => openAuth('signin')}>Se connecter</button>
+            )}
+            <button type="button" onClick={() => { favorites.sync.clearActionError(); setDismissedAlertKey(favoritesAlertKey); }}>Fermer</button>
+          </span>
+        </div>
+      )}
 
       <main id="main-content">
         {library.path === '' && (

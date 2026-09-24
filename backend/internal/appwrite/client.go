@@ -58,12 +58,13 @@ func (e *APIError) Error() string {
 
 // Client appelle l'API REST Appwrite avec la session de l'étudiant, pas une clé admin.
 type Client struct {
-	Endpoint     string
-	ProjectID    string
-	DatabaseID   string
-	ProfileTable string
-	Flavor       string
-	HTTP         *http.Client
+	Endpoint       string
+	ProjectID      string
+	DatabaseID     string
+	ProfileTable   string
+	FavoritesTable string
+	Flavor         string
+	HTTP           *http.Client
 }
 
 func (c *Client) httpClient() *http.Client {
@@ -463,6 +464,8 @@ var frenchByType = map[string]string{
 	"row_invalid_structure":       "Profil refusé par la table.",
 	"missing_session":             "Session non ouverte.",
 	"not_configured":              "Compte non configuré.",
+	"table_not_found":             "Table absente. Lance npm run appwrite:setup.",
+	"collection_not_found":        "Table absente. Lance npm run appwrite:setup.",
 }
 
 func userFrom(raw []byte) (User, error) {

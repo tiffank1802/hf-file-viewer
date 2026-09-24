@@ -46,6 +46,7 @@ coverage/
 # Testing
 *.test.js
 *.spec.js
+!tests/*.test.js
 
 # Cache directories
 .cache/

@@ -120,6 +120,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		err = s.allow(w, r, http.MethodPost, s.handleChat)
 	case strings.HasPrefix(r.URL.Path, "/api/auth/"):
 		err = s.handleAuth(w, r)
+	case r.URL.Path == "/api/favorites" || strings.HasPrefix(r.URL.Path, "/api/favorites/"):
+		err = s.handleFavorites(w, r)
 	case r.URL.Path == "/api/tree":
 		err = s.allow(w, r, http.MethodGet, s.handleTree)
 	case r.URL.Path == "/api/index":
