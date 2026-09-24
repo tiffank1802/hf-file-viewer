@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { encodeCacheEntry, makeCacheKey } from '../worker/index.js';
+import worker, {
+  childrenFromIndex,
+  encodeCacheEntry,
+  makeCacheKey,
+  mergeChildren,
+} from '../worker/index.js';
 
 const BUCKET = 'ktongue/ENISE-SITE';
 
@@ -522,6 +527,142 @@ test('une entrée KV sans horodatage reste servie et se met à niveau', async ()
     );
     assert.equal((await again.json()).items[0].path, 'GM');
     await retry.done();
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.caches = originalCaches;
+  }
+});
+
+/** Document d’index minimal, avec les chemins SolidWorks réels du bucket. */
+function indexDocument(items) {
+  return JSON.stringify({
+    bucketId: BUCKET,
+    items,
+    counts: {},
+    totalFiles: items.filter((item) => item.type !== 'directory').length,
+    complete: true,
+    fetchedAt: '2026-09-24T10:00:00Z',
+  });
+}
+
+const SOLIDWORKS_INDEX_ITEMS = [
+  { type: 'directory', path: 'GM' },
+  { type: 'directory', path: 'GM/Tutos SolidWorks' },
+  { type: 'directory', path: 'GM/Tutos SolidWorks/SolidProfessor' },
+  { type: 'directory', path: 'GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths' },
+  { type: 'directory', path: 'GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA' },
+  {
+    type: 'file',
+    path: 'GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA/leçon.pdf',
+    size: 1200,
+    mtime: '2026-08-20T10:18:48.209Z',
+  },
+];
+
+test('childrenFromIndex déduit les enfants d’un dossier depuis l’index', () => {
+  const children = childrenFromIndex(SOLIDWORKS_INDEX_ITEMS, 'GM/Tutos SolidWorks/SolidProfessor');
+  assert.deepEqual(children.map((child) => child.path), [
+    'GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths',
+  ]);
+  assert.equal(children[0].type, 'directory');
+
+  // Un dossier listé explicitement par l’index reste un dossier, même si rien
+  // ne suit son chemin dans les fichiers.
+  const root = childrenFromIndex(SOLIDWORKS_INDEX_ITEMS, '');
+  assert.deepEqual(root.map((child) => child.path), ['GM']);
+  assert.equal(root[0].type, 'directory');
+
+  const leaf = childrenFromIndex(SOLIDWORKS_INDEX_ITEMS, 'GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA');
+  assert.deepEqual(leaf.map((child) => `${child.type}:${child.path.split('/').pop()}`), ['file:leçon.pdf']);
+  assert.equal(leaf[0].size, 1200);
+  assert.equal(childrenFromIndex(SOLIDWORKS_INDEX_ITEMS, 'TOEIC').length, 0);
+});
+
+test('mergeChildren complète un listage incomplet sans doublon', () => {
+  const listing = [
+    { type: 'directory', path: 'GM/Tutos SolidWorks/SolidProfessor/SOLIDWORKS CAM' },
+    { type: 'file', path: 'GM/Tutos SolidWorks/SolidProfessor/Courses Catalog.txt', size: 15007 },
+  ];
+  const merged = mergeChildren(listing, childrenFromIndex(SOLIDWORKS_INDEX_ITEMS, 'GM/Tutos SolidWorks/SolidProfessor'));
+  assert.deepEqual(merged.map((item) => item.path.split('/').pop()), [
+    'SOLIDWORKS CAM',
+    'Courses Catalog.txt',
+    '1-SOLIDWORKS Paths',
+  ]);
+});
+
+test('un listage partiel est complété par l’index', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCaches = globalThis.caches;
+  globalThis.caches = { default: createCache() };
+  await seedCache('index', indexDocument(SOLIDWORKS_INDEX_ITEMS));
+  // Hugging Face ne renvoie qu’un seul des deux dossiers du niveau.
+  globalThis.fetch = async () =>
+    Response.json([
+      { type: 'directory', path: 'GM/Tutos SolidWorks/SolidProfessor/SOLIDWORKS CAM' },
+      { type: 'file', path: 'GM/Tutos SolidWorks/SolidProfessor/Courses Catalog.txt', size: 15007 },
+    ]);
+
+  try {
+    const context = createContext();
+    const response = await worker.fetch(
+      new Request(`https://docs.example/api/tree?prefix=${encodeURIComponent('GM/Tutos SolidWorks/SolidProfessor')}`),
+      env,
+      context,
+    );
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    const paths = payload.items.map((item) => item.path.split('/').pop());
+    assert.ok(paths.includes('1-SOLIDWORKS Paths'), `1-SOLIDWORKS Paths manquant : ${paths}`);
+    assert.equal(paths.length, 3);
+    await context.done();
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.caches = originalCaches;
+  }
+});
+
+test('un dossier ignoré de Hugging Face reste servi grâce à l’index', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCaches = globalThis.caches;
+  globalThis.caches = { default: createCache() };
+  await seedCache('index', indexDocument(SOLIDWORKS_INDEX_ITEMS));
+  globalThis.fetch = async () => new Response('{"error":"not found"}', { status: 404 });
+
+  try {
+    const context = createContext();
+    const response = await worker.fetch(
+      new Request(`https://docs.example/api/tree?prefix=${encodeURIComponent('GM/Tutos SolidWorks/SolidProfessor')}`),
+      env,
+      context,
+    );
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(payload.items.map((item) => item.path.split('/').pop()), ['1-SOLIDWORKS Paths']);
+    assert.equal(payload.complete, false);
+    await context.done();
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.caches = originalCaches;
+  }
+});
+
+test('un dossier inconnu des deux côtés reste un 404', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCaches = globalThis.caches;
+  globalThis.caches = { default: createCache() };
+  await seedCache('index', indexDocument(SOLIDWORKS_INDEX_ITEMS));
+  globalThis.fetch = async () => new Response('{"error":"not found"}', { status: 404 });
+
+  try {
+    const context = createContext();
+    const response = await worker.fetch(
+      new Request('https://docs.example/api/tree?prefix=Dossier%20fant%C3%B4me'),
+      env,
+      context,
+    );
+    assert.equal(response.status, 404);
+    await context.done();
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.caches = originalCaches;

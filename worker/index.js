@@ -10,7 +10,7 @@ const DEFAULT_BUCKET_ID = 'ktongue/ENISE-SITE';
  * puis redéployer. Les anciennes entrées deviennent orphelines et expirent
  * naturellement selon leur TTL.
  */
-const CACHE_KEY_VERSION = 'v2';
+const CACHE_KEY_VERSION = 'v3';
 /**
  * Fraîcheur des documents d’arborescence et d’index.
  *
@@ -375,7 +375,81 @@ async function readCachedJson(ctx, env, { cacheKey, kvKey, ttlMs, buildBody }) {
   };
 }
 
+/**
+ * Enfants immédiats d’un dossier, déduits d’un document d’index récursif.
+ *
+ * Le premier segment qui suit le préfixe donne un enfant : un chemin plus
+ * profond est un dossier, un chemin qui s’arrête là est un fichier (ou un
+ * dossier vide, listé comme tel). Sert de filet de sécurité quand le listage
+ * Hugging Face d’un dossier est vide, partiel ou refusé.
+ */
+export function childrenFromIndex(items = [], prefix = '') {
+  const base = normalizePrefix(prefix);
+  const children = new Map();
+
+  for (const item of items) {
+    const path = String(item?.path || '').replace(/^\/+/, '');
+    if (!path) continue;
+    if (base && path !== base && !path.startsWith(`${base}/`)) continue;
+
+    const rest = base ? (path === base ? '' : path.slice(base.length + 1)) : path;
+    if (!rest) continue;
+    const slash = rest.indexOf('/');
+    const name = slash === -1 ? rest : rest.slice(0, slash);
+    const childPath = base ? `${base}/${name}` : name;
+    const isDirectory = slash !== -1 || item.type === 'directory';
+    const previous = children.get(childPath);
+    if (previous) {
+      if (isDirectory) previous.type = 'directory';
+      continue;
+    }
+    const child = { type: isDirectory ? 'directory' : 'file', path: childPath };
+    if (item.mtime) child.mtime = item.mtime;
+    if (!isDirectory && Number.isFinite(item.size)) child.size = item.size;
+    children.set(childPath, child);
+  }
+
+  return [...children.values()];
+}
+
+/** Ajoute au listage les enfants qu’il ne contient pas encore. */
+export function mergeChildren(primary = [], extra = []) {
+  const seen = new Set(primary.map((item) => String(item?.path || '')));
+  const merged = [...primary];
+  for (const item of extra) {
+    const path = String(item?.path || '');
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    merged.push(item);
+  }
+  return merged;
+}
+
+/**
+ * Enfants d’un dossier d’après le document d’index déjà en cache.
+ *
+ * Lecture seule : ne déclenche jamais le parcours complet du bucket, donc un
+ * dossier inconnu de Hugging Face ne peut pas provoquer un parcours récursif.
+ */
+async function indexChildren(env, prefix) {
+  const bucketId = getBucketId(env);
+  const cacheKey = makeCacheKey('index', bucketId);
+  const cached = await caches.default.match(cacheKey);
+  const raw = cached
+    ? await cached.text()
+    : await readMetadataKv(env, makeKvKey('index', bucketId, 'recursive-counts'));
+  const entry = decodeCacheEntry(raw);
+  if (!entry) return [];
+  try {
+    const document = JSON.parse(entry.body);
+    return childrenFromIndex(document?.items, prefix);
+  } catch {
+    return [];
+  }
+}
+
 async function handleTree(request, env, ctx) {
+
   const requestUrl = new URL(request.url);
   const prefix = normalizePrefix(requestUrl.searchParams.get('prefix') ?? '');
   const bucketId = getBucketId(env);
@@ -388,12 +462,30 @@ async function handleTree(request, env, ctx) {
     kvKey,
     ttlMs,
     buildBody: async () => {
-      const { items, complete } = await fetchBucketTree(env, prefix, false);
+      let items = [];
+      let complete = true;
+      let listed = true;
+      try {
+        const result = await fetchBucketTree(env, prefix, false);
+        items = result.items;
+        complete = result.complete;
+      } catch (error) {
+        // Un dossier que Hugging Face ne liste pas peut exister dans l’index :
+        // on ne renonce que si l’index l’ignore lui aussi.
+        if (!(error instanceof HttpError) || error.status !== 404) throw error;
+        listed = false;
+      }
+
+      const known = await indexChildren(env, prefix);
+      if (!listed && known.length === 0) {
+        throw new HttpError(404, 'Ce dossier n’existe pas dans la bibliothèque.');
+      }
+
       return JSON.stringify({
         bucketId,
         prefix,
-        items,
-        complete,
+        items: mergeChildren(items, known),
+        complete: complete && listed,
         fetchedAt: new Date().toISOString(),
       });
     },

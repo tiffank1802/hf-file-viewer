@@ -54,6 +54,8 @@ Le frontend et le Worker sont sur **le même domaine**. Le navigateur n’appell
 | GLB 3D `/api/model3d/glb` | 1 h | Cache API, 7 j | Space FreeCAD |
 | Aperçu lien `/api/link/preview` | 1 h | Cache API, 24 h | page cible |
 
+Un listage de dossier vide, partiel ou refusé par Hugging Face (404) est complété par les enfants du même dossier déjà connus dans l’index : un dossier dont les fichiers sont présents dans le bucket ne peut donc pas apparaître vide sur le site. Si les deux sources l’ignorent, la réponse reste un 404.
+
 Les fichiers ne sont ajoutés au Cache API que si une réponse complète possède une taille connue inférieure ou égale à **25 Mio**. Les requêtes `Range` et les fichiers plus grands sont transmis sans mise en cache par le Worker (`BYPASS-RANGE` ou `BYPASS-SIZE`) ; le CDN de Hugging Face peut néanmoins les optimiser.
 
 > Le **Cache API est un cache temporaire propre au datacenter Cloudflare qui reçoit la requête**. Ce n’est ni une base globale durable, ni Workers KV. Un premier visiteur dans une autre région peut donc provoquer un nouveau MISS. Le site fonctionne ainsi sans aucune base. Une couche Workers KV facultative peut cependant partager les métadonnées entre régions (voir plus bas) ; les fichiers binaires restent dans le Cache API/Hugging Face.
@@ -553,7 +555,7 @@ npm run count:files -- --compare https://enise-docs.example.workers.dev
 
 Si le script trouve des fichiers alors que le site en affiche 0, le document d’index servi a été calculé pendant la création du bucket (bucket alors vide) puis mis en cache. Trois façons de l’invalider :
 
-1. **Redéployer avec une nouvelle version de clés** (recommandé, fonctionne aussi sur `*.workers.dev`) : incrémenter `CACHE_KEY_VERSION` dans `worker/index.js` puis `npm run deploy`. Le Worker utilise des clés de cache personnalisées que la « purge par URL » du tableau de bord ne peut pas atteindre ; changer la version rend les anciennes entrées orphelines (elles expirent seules).
+1. **Redéployer avec une nouvelle version de clés** (recommandé, fonctionne aussi sur `*.workers.dev`) : incrémenter `CACHE_KEY_VERSION` dans `worker/index.js` puis `npm run deploy`. La version courante est `v3` : elle a servi à abandonner les listages vides mis en cache avant l’arrivée des fichiers SolidWorks. Le Worker utilise des clés de cache personnalisées que la « purge par URL » du tableau de bord ne peut pas atteindre ; changer la version rend les anciennes entrées orphelines (elles expirent seules).
 2. **Purge Everything** au niveau de la zone Cloudflare (Caching → Purge Cache → Purge Everything), uniquement si le site est rattaché à un domaine personnalisé. C’est la seule purge du tableau de bord qui vide aussi le Cache API des Workers. Inutile si le site est servi depuis `*.workers.dev` (pas de zone).
 3. **Attendre la relecture automatique** : un index périmé est relu en arrière-plan au bout de 10 min (`INDEX_CACHE_TTL`). Le comptage se corrige donc tout seul, sans purge ni redéploiement.
 
