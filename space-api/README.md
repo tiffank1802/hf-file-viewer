@@ -25,6 +25,7 @@ API Go derrière le site Cloudflare. Le Worker sert les assets et relaie
 | Secret | Rôle |
 |---|---|
 | `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, `OPENCODE_API_KEY` | rédaction de l’assistant |
+| `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | IA intégrée Cloudflare (Workers AI), moteur essayé en premier |
 | `HF_TOKEN` | seulement si le bucket devient privé |
 | `CHAT_TRUST_PROXY` | `1` : limite le débit par visiteur derrière le Worker |
 

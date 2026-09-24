@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -142,6 +143,14 @@ type chatModel struct {
 // de jetons plus large et encadre leur réflexion pour qu’il reste de la
 // place pour la réponse visible.
 var chatModelCatalog = map[string][]chatModel{
+	"cloudflare": {
+		{ID: "@cf/meta/llama-3.3-70b-instruct-fp8-fast", Label: "Llama 3.3 70B (rapide)"},
+		{ID: "@cf/meta/llama-4-scout-17b-16e-instruct", Label: "Llama 4 Scout"},
+		{ID: "@cf/meta/llama-3.1-8b-instruct-fast", Label: "Llama 3.1 8B (économe)"},
+		{ID: "@cf/nvidia/nemotron-3-120b-a12b", Label: "Nemotron 3 Super", Reasoning: true},
+		{ID: "@cf/zai-org/glm-4.7-flash", Label: "GLM-4.7 Flash", Reasoning: true},
+		{ID: "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b", Label: "DeepSeek R1 32B", Reasoning: true},
+	},
 	"openrouter": {
 		{ID: "openai/gpt-oss-120b:free", Label: "GPT-OSS 120B", Reasoning: true},
 		{ID: "nvidia/nemotron-3-ultra-550b-a55b:free", Label: "Nemotron 3 Ultra", Reasoning: true},
@@ -169,15 +178,25 @@ var chatModelCatalog = map[string][]chatModel{
 }
 
 func (s *Server) chatProviders() []map[string]any {
+	ready := func(values ...string) bool {
+		for _, value := range values {
+			if strings.TrimSpace(value) == "" {
+				return false
+			}
+		}
+		return true
+	}
 	definitions := []struct {
-		id    string
-		label string
-		model string
-		key   string
+		id      string
+		label   string
+		model   string
+		enabled bool
 	}{
-		{"openrouter", "OpenRouter", s.cfg.OpenRouterModel, s.cfg.OpenRouterAPIKey},
-		{"nvidia", "NVIDIA", s.cfg.NvidiaModel, s.cfg.NvidiaAPIKey},
-		{"opencode", "OpenCode", s.cfg.OpenCodeModel, s.cfg.OpenCodeAPIKey},
+		// Workers AI exige le jeton ET l’identifiant de compte.
+		{"cloudflare", "Cloudflare", s.cfg.CloudflareAIModel, ready(s.cfg.CloudflareAIToken, s.cfg.CloudflareAccountID)},
+		{"openrouter", "OpenRouter", s.cfg.OpenRouterModel, ready(s.cfg.OpenRouterAPIKey)},
+		{"nvidia", "NVIDIA", s.cfg.NvidiaModel, ready(s.cfg.NvidiaAPIKey)},
+		{"opencode", "OpenCode", s.cfg.OpenCodeModel, ready(s.cfg.OpenCodeAPIKey)},
 	}
 	out := make([]map[string]any, 0, len(definitions))
 	for _, definition := range definitions {
@@ -194,7 +213,7 @@ func (s *Server) chatProviders() []map[string]any {
 			"id":      definition.id,
 			"label":   definition.label,
 			"model":   definition.model,
-			"enabled": strings.TrimSpace(definition.key) != "",
+			"enabled": definition.enabled,
 			"models":  models,
 		})
 	}
@@ -698,6 +717,12 @@ func (s *Server) chatCandidates(providerID, modelOverride string) []*chatProvide
 	modelOverride = sanitizeModel(modelOverride)
 	all := []*chatProvider{
 		{
+			id: "cloudflare", label: "Cloudflare",
+			baseURL: s.cfg.CloudflareAIBase, apiKey: s.cfg.CloudflareAIToken,
+			model:         firstNonEmpty(modelOverride, s.cfg.CloudflareAIModel),
+			fallbackModel: s.cfg.CloudflareAIModel,
+		},
+		{
 			id: "openrouter", label: "OpenRouter",
 			baseURL: s.cfg.OpenRouterAPIBase, apiKey: s.cfg.OpenRouterAPIKey,
 			model:         firstNonEmpty(modelOverride, s.cfg.OpenRouterModel),
@@ -858,12 +883,11 @@ func (s *Server) streamChatCompletion(ctx context.Context, provider *chatProvide
 	if stats == nil {
 		stats = &completionStats{}
 	}
-	endpoint, err := chatEndpoint(provider.baseURL, provider.label)
+	endpoint, err := s.completionEndpoint(provider)
 	if err != nil {
 		return &chatCompletionError{kind: "network", provider: provider.label, message: err.Error()}
 	}
 	payload := map[string]any{
-		"model":       provider.model,
 		"messages":    messages,
 		"temperature": 0.2,
 		"stream":      true,
@@ -871,10 +895,19 @@ func (s *Server) streamChatCompletion(ctx context.Context, provider *chatProvide
 	if options.maxTokens > 0 {
 		payload["max_tokens"] = options.maxTokens
 	}
-	// Encadrer la réflexion : sans ça, un modèle qui raisonne peut consommer
-	// tout le budget en jetons de réflexion et ne renvoyer aucun contenu.
-	if options.effort != "" {
-		payload["reasoning"] = map[string]any{"effort": options.effort}
+	if provider.id == "cloudflare" {
+		// Workers AI porte le modèle dans l’URL et encadre la réflexion avec
+		// « reasoning_effort » (pas l’objet « reasoning » d’OpenRouter).
+		if options.effort != "" {
+			payload["reasoning_effort"] = options.effort
+		}
+	} else {
+		payload["model"] = provider.model
+		// Encadrer la réflexion : sans ça, un modèle qui raisonne peut consommer
+		// tout le budget en jetons de réflexion et ne renvoyer aucun contenu.
+		if options.effort != "" {
+			payload["reasoning"] = map[string]any{"effort": options.effort}
+		}
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -1090,30 +1123,66 @@ func finishStream(stats *completionStats, written int) error {
 	return &chatCompletionError{kind: "empty", finish: finish}
 }
 
-// completionChunk lit un morceau de réponse. Les modèles qui raisonnent
-// écrivent leur réflexion dans « reasoning_content » ou « reasoning » : ne
-// pas les lire faisait croire à un flux vide alors que le modèle travaillait.
+// chunkChoice est un choix de complétion au format OpenAI. Workers AI
+// l’utilise aussi, parfois enveloppé dans « result ».
+type chunkChoice struct {
+	Delta struct {
+		Content          json.RawMessage `json:"content"`
+		ReasoningContent json.RawMessage `json:"reasoning_content"`
+		Reasoning        json.RawMessage `json:"reasoning"`
+	} `json:"delta"`
+	Message struct {
+		Content          json.RawMessage `json:"content"`
+		ReasoningContent json.RawMessage `json:"reasoning_content"`
+		Reasoning        json.RawMessage `json:"reasoning"`
+	} `json:"message"`
+	Text   string `json:"text"`
+	Finish string `json:"finish_reason"`
+}
+
+// completionChunk lit un morceau de réponse, quel que soit le moteur :
+// format OpenAI, Workers AI enrobé dans « result », ou flux SSE Workers AI
+// (« response »). Les modèles qui raisonnent écrivent leur réflexion dans
+// « reasoning_content » ou « reasoning » : ne pas les lire faisait croire à
+// un flux vide alors que le modèle travaillait.
 func completionChunk(payload []byte) completionChunkData {
 	var chunk struct {
-		Choices []struct {
-			Delta struct {
-				Content          json.RawMessage `json:"content"`
-				ReasoningContent json.RawMessage `json:"reasoning_content"`
-				Reasoning        json.RawMessage `json:"reasoning"`
-			} `json:"delta"`
-			Message struct {
-				Content          json.RawMessage `json:"content"`
-				ReasoningContent json.RawMessage `json:"reasoning_content"`
-				Reasoning        json.RawMessage `json:"reasoning"`
-			} `json:"message"`
-			Text   string `json:"text"`
-			Finish string `json:"finish_reason"`
-		} `json:"choices"`
+		Choices []chunkChoice `json:"choices"`
+		Result  struct {
+			Response string        `json:"response"`
+			Choices  []chunkChoice `json:"choices"`
+		} `json:"result"`
+		Response string `json:"response"`
 	}
-	if err := json.Unmarshal(payload, &chunk); err != nil || len(chunk.Choices) == 0 {
+	if err := json.Unmarshal(payload, &chunk); err != nil {
 		return completionChunkData{}
 	}
-	choice := chunk.Choices[0]
+	out := completionChunkData{}
+	if len(chunk.Choices) > 0 {
+		out = choiceChunk(chunk.Choices[0])
+	}
+	if out.content == "" && len(chunk.Result.Choices) > 0 {
+		merged := choiceChunk(chunk.Result.Choices[0])
+		if out.finish == "" {
+			out.finish = merged.finish
+		}
+		if out.thinking == "" {
+			out.thinking = merged.thinking
+		}
+		out.content = merged.content
+	}
+	if out.content == "" {
+		switch {
+		case chunk.Result.Response != "":
+			out.content = chunk.Result.Response
+		case chunk.Response != "":
+			out.content = chunk.Response
+		}
+	}
+	return out
+}
+
+func choiceChunk(choice chunkChoice) completionChunkData {
 	out := completionChunkData{finish: choice.Finish, content: choice.Text}
 	if value := decodeContent(choice.Delta.Content); value != "" {
 		out.content = value
@@ -1173,7 +1242,7 @@ func sanitizeModel(value string) string {
 	for _, r := range value {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		case r == '/' || r == '.' || r == '_' || r == '-' || r == ':':
+		case r == '/' || r == '.' || r == '_' || r == '-' || r == ':' || r == '@':
 		default:
 			return ""
 		}
@@ -1197,7 +1266,7 @@ func (s *Server) nvidiaModel() string {
 	for _, r := range model {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		case r == '/' || r == '.' || r == '_' || r == '-' || r == ':':
+		case r == '/' || r == '.' || r == '_' || r == '-' || r == ':' || r == '@':
 		default:
 			return defaultChatModel
 		}
@@ -1207,6 +1276,45 @@ func (s *Server) nvidiaModel() string {
 
 func (s *Server) nvidiaEndpoint() (string, error) {
 	return chatEndpoint(s.cfg.NvidiaAPIBase, "NVIDIA")
+}
+
+// completionEndpoint choisit l’URL selon le moteur : Workers AI expose
+// /accounts/<compte>/ai/run/<modèle>, les autres suivent l’API OpenAI.
+func (s *Server) completionEndpoint(provider *chatProvider) (string, error) {
+	if provider.id == "cloudflare" {
+		return workersAIEndpoint(s.cfg.CloudflareAIBase, s.cfg.CloudflareAccountID, provider.model)
+	}
+	return chatEndpoint(provider.baseURL, provider.label)
+}
+
+// workersAIEndpoint construit l’URL de l’API REST Workers AI. Le modèle
+// contient des barres obliques (« @cf/meta/llama… ») : chaque segment est
+// échappé séparément pour rester un chemin valide.
+func workersAIEndpoint(rawBase, accountID, model string) (string, error) {
+	if strings.TrimSpace(accountID) == "" {
+		return "", fmt.Errorf("CLOUDFLARE_ACCOUNT_ID manquant")
+	}
+	model = strings.Trim(strings.TrimSpace(model), "/")
+	if model == "" {
+		return "", fmt.Errorf("modèle Cloudflare manquant")
+	}
+	base := strings.TrimRight(strings.TrimSpace(rawBase), "/")
+	if base == "" {
+		base = "https://api.cloudflare.com/client/v4"
+	}
+	segments := strings.Split(model, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(strings.TrimSpace(segment))
+	}
+	target := base + "/accounts/" + url.PathEscape(strings.TrimSpace(accountID)) + "/ai/run/" + strings.Join(segments, "/")
+	request, err := http.NewRequest(http.MethodGet, target, nil)
+	if err != nil || request.URL == nil || request.URL.Host == "" {
+		return "", fmt.Errorf("origine Cloudflare invalide")
+	}
+	if request.URL.Scheme != "https" {
+		return "", fmt.Errorf("CLOUDFLARE_API_BASE doit être en HTTPS")
+	}
+	return request.URL.String(), nil
 }
 
 func chatEndpoint(rawBase, label string) (string, error) {

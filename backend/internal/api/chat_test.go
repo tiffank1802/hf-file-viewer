@@ -373,3 +373,112 @@ func TestChatFallsBackWhenReasoningEatsTheBudget(t *testing.T) {
 		t.Fatalf("réponse de repli = %q", answer)
 	}
 }
+
+func TestWorkersAIEndpointBuildsTheRunURL(t *testing.T) {
+	endpoint, err := workersAIEndpoint("https://api.cloudflare.com/client/v4/", "acc_123", "@cf/meta/llama-3.3-70b-instruct-fp8-fast")
+	if err != nil {
+		t.Fatalf("endpoint: %v", err)
+	}
+	expected := "https://api.cloudflare.com/client/v4/accounts/acc_123/ai/run/@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+	if endpoint != expected {
+		t.Fatalf("endpoint = %q, attendu %q", endpoint, expected)
+	}
+
+	// Le modèle est échappé segment par segment, jamais la barre oblique.
+	escaped, err := workersAIEndpoint("", "acc 1", "@cf/nvidia/nemotron-3-120b-a12b")
+	if err != nil {
+		t.Fatalf("endpoint échappé: %v", err)
+	}
+	if !strings.Contains(escaped, "accounts/acc%201/ai/run/@cf/nvidia/nemotron-3-120b-a12b") {
+		t.Fatalf("compte non échappé: %q", escaped)
+	}
+
+	if _, err := workersAIEndpoint("", "", "@cf/meta/llama-3.1-8b-instruct-fast"); err == nil {
+		t.Fatal("un compte vide doit être refusé")
+	}
+	if _, err := workersAIEndpoint("", "acc", ""); err == nil {
+		t.Fatal("un modèle vide doit être refusé")
+	}
+	if _, err := workersAIEndpoint("http://exemple.test/client/v4", "acc", "@cf/meta/llama-3.1-8b-instruct-fast"); err == nil {
+		t.Fatal("le HTTP simple doit être refusé")
+	}
+}
+
+func TestCompletionChunkReadsEveryProviderShape(t *testing.T) {
+	workersAI := completionChunk([]byte(`{"success":true,"result":{"response":"## Résumé\nLe DS compte trois parties."}}`))
+	if workersAI.content == "" || !strings.Contains(workersAI.content, "trois parties") {
+		t.Fatalf("Workers AI synchrone = %q", workersAI.content)
+	}
+	workersAIStream := completionChunk([]byte(`{"response":"Le devoir surveillé"}`))
+	if workersAIStream.content != "Le devoir surveillé" {
+		t.Fatalf("Workers AI en flux = %q", workersAIStream.content)
+	}
+	openai := completionChunk([]byte(`{"choices":[{"delta":{"content":"Ouvre le poly."}}]}`))
+	if openai.content != "Ouvre le poly." {
+		t.Fatalf("OpenAI = %q", openai.content)
+	}
+	reasoning := completionChunk([]byte(`{"choices":[{"delta":{"reasoning_content":"je relis"}}]}`))
+	if reasoning.thinking != "je relis" || reasoning.content != "" {
+		t.Fatalf("réflexion = %#v", reasoning)
+	}
+	if broken := completionChunk([]byte(`pas du json`)); broken.content != "" {
+		t.Fatalf("un contenu invalide doit être ignoré: %q", broken.content)
+	}
+}
+
+// Workers AI répond `{result:{response}}` en synchrone et `{"response"}` en
+// flux : l’assistant doit produire la même réponse structurée qu’ailleurs.
+func TestChatStreamsFromCloudflareWorkersAI(t *testing.T) {
+	var path string
+	ai := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		if got := r.Header.Get("Authorization"); got != "Bearer cf-test-token" {
+			t.Errorf("entête = %q", got)
+		}
+		_, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"response\":\"## Résumé\\nL’épreuve dure trois heures.\"}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer ai.Close()
+	// Le document doit être lisible : une question de synthèse sans extrait
+	// ne déclenche volontairement aucun appel au modèle.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("Le devoir surveillé de mécanique comporte trois parties et une étude de document."))
+	}))
+	defer upstream.Close()
+
+	server := New(config.Config{
+		BucketID:            "ktongue/ENISE-SITE",
+		HFOrigin:            upstream.URL,
+		CloudflareAccountID: "acc_123",
+		CloudflareAIToken:   "cf-test-token",
+		CloudflareAIBase:    ai.URL + "/client/v4",
+		CloudflareAIModel:   "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+	})
+	size := int64(80)
+	server.cache.SetIndex(&catalog.IndexDocument{
+		BucketID: "ktongue/ENISE-SITE",
+		Complete: true,
+		Items: []catalog.BucketItem{
+			{Type: "file", Path: "GM/3A GM/S5/Mecanique/poly.txt", Size: &size},
+		},
+	}, time.Hour, time.Hour)
+
+	response := postChat(t, server, `{"message":"comment se structure l’examen de mécanique ?"}`)
+	if response.Code != 200 {
+		t.Fatalf("status %d %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(path, "/accounts/acc_123/ai/run/@cf/meta/llama-3.3-70b-instruct-fp8-fast") {
+		t.Fatalf("chemin Workers AI = %q", path)
+	}
+	events := parseSSE(t, response.Body.String())
+	done := eventObject(t, events, "done")
+	if done["engine"] != "cloudflare" {
+		t.Fatalf("moteur = %#v", done["engine"])
+	}
+	answer, _ := done["answer"].(string)
+	if !strings.Contains(answer, "trois heures") {
+		t.Fatalf("réponse = %q", answer)
+	}
+}

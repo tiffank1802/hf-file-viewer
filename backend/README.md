@@ -79,6 +79,12 @@ Mêmes noms que `wrangler.jsonc` / `.dev.vars` :
 | `MODEL3D_CONVERT_URL` | Space FreeCAD, défaut Rupture, vide = désactivé |
 | `SOLIDWORKS_CONVERT_URL` | service HOOPS, vide = désactivé |
 | `APS_CLIENT_ID` / `APS_CLIENT_SECRET` | Autodesk, jamais exposés |
+| `CLOUDFLARE_ACCOUNT_ID` | IA intégrée Cloudflare (Workers AI). Les deux ensemble activent le moteur « cloudflare », essayé en premier |
+| `CLOUDFLARE_API_TOKEN` | jeton Cloudflare avec le droit « Workers AI:Read » |
+| `CLOUDFLARE_API_BASE` | défaut `https://api.cloudflare.com/client/v4` |
+| `CLOUDFLARE_MODEL` | défaut `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. Le modèle est dans l’URL : `/accounts/<id>/ai/run/<modèle>` |
+| `OPENROUTER_API_KEY` | moteur OpenRouter, défaut `https://openrouter.ai/api/v1` |
+| `OPENCODE_API_KEY` | moteur OpenCode Zen, défaut `https://opencode.ai/zen/v1` |
 | `NVIDIA_API_KEY` | rédaction de l’assistant, jamais envoyée au navigateur. Vide = recherche locale seulement |
 | `NVIDIA_API_BASE` | défaut `https://integrate.api.nvidia.com/v1` |
 | `NVIDIA_MODEL` | défaut `meta/llama-3.1-8b-instruct` |

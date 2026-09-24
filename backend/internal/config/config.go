@@ -35,6 +35,10 @@ const (
 	defaultAppwriteURL    = "https://fra.cloud.appwrite.io/v1"
 	defaultAppwriteProj   = "69cedb12002acdd498e0"
 
+	// Cloudflare Workers AI : le modèle est dans l’URL, pas dans le corps.
+	defaultCloudflareBase  = "https://api.cloudflare.com/client/v4"
+	defaultCloudflareModel = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+
 	// Les modèles qui raisonnent consomment leur budget de jetons avant
 	// d’écrire la réponse : 1100 jetons ne laissaient rien pour la réponse
 	// visible (finish_reason "length", contenu vide).
@@ -92,6 +96,11 @@ type Config struct {
 	OpenCodeAPIBase   string
 	OpenCodeModel     string
 	ChatTrustProxy    bool
+
+	CloudflareAccountID string
+	CloudflareAIToken   string
+	CloudflareAIBase    string
+	CloudflareAIModel   string
 
 	AppwriteEnabled            bool
 	AppwriteEndpoint           string
@@ -173,6 +182,10 @@ func Load(root string) Config {
 	cfg.OpenCodeAPIKey = unsetPlaceholder(firstNonEmpty(get("OPENCODE_API_KEY"), get("OPENCODE_ZEN_API_KEY")))
 	cfg.OpenCodeAPIBase = catalog.TrimTrailingSlashes(firstNonEmpty(get("OPENCODE_API_BASE"), "https://opencode.ai/zen/v1"))
 	cfg.OpenCodeModel = firstNonEmpty(sanitizeModel(get("OPENCODE_MODEL")), "nemotron-3-ultra-free")
+	cfg.CloudflareAccountID = unsetPlaceholder(get("CLOUDFLARE_ACCOUNT_ID"))
+	cfg.CloudflareAIToken = unsetPlaceholder(firstNonEmpty(get("CLOUDFLARE_AI_TOKEN"), get("CLOUDFLARE_API_TOKEN")))
+	cfg.CloudflareAIBase = strings.TrimRight(catalog.TrimTrailingSlashes(firstNonEmpty(get("CLOUDFLARE_API_BASE"), defaultCloudflareBase)), "/")
+	cfg.CloudflareAIModel = firstNonEmpty(sanitizeModel(get("CLOUDFLARE_AI_MODEL")), defaultCloudflareModel)
 	cfg.ChatAnswerTimeout = durationSeconds(get("CHAT_ANSWER_TIMEOUT"), defaultChatAnswerTimeout)
 	cfg.ChatMaxTokens = catalog.PositiveInt(get("CHAT_MAX_TOKENS"), defaultChatMaxTokens)
 	cfg.ChatDeepTokens = catalog.PositiveInt(get("CHAT_DEEP_MAX_TOKENS"), defaultChatDeepTokens)
@@ -228,7 +241,8 @@ func unsetPlaceholder(value string) string {
 	switch strings.TrimSpace(value) {
 	case "", "hf_your_read_only_token", "your_aps_client_id", "your_aps_client_secret", "secret-partage-avec-le-service",
 		"nvapi-your-key", "nvapi-votre-cle", "nvapi-VOTRE_CLE",
-		"sk-or-v1-your-key", "sk-or-votre-cle", "opencode-your-key":
+		"sk-or-v1-your-key", "sk-or-votre-cle", "opencode-your-key",
+		"your-account-id", "your-cloudflare-api-token", "your_cloudflare_api_token":
 		return ""
 	default:
 		return strings.TrimSpace(value)
@@ -288,7 +302,7 @@ func sanitizeModel(value string) string {
 	for _, r := range value {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		case r == '/' || r == '.' || r == '_' || r == '-' || r == ':':
+		case r == '/' || r == '.' || r == '_' || r == '-' || r == ':' || r == '@':
 		default:
 			return ""
 		}

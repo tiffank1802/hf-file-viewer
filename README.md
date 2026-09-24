@@ -139,6 +139,7 @@ Puis, dans le Space (**Settings → Repository secrets**, jamais dans les fichie
 | Secret | Rôle |
 |---|---|
 | `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, `OPENCODE_API_KEY` | rédaction de l’assistant |
+| `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | IA intégrée Cloudflare (Workers AI), sans service tiers |
 | `CHAT_TRUST_PROXY` | `1` : limite le débit par visiteur derrière le Worker |
 | `HF_TOKEN` | seulement si le bucket devient privé |
 
@@ -503,7 +504,7 @@ Le Worker Cloudflare et le backend Go exposent les mêmes routes. L’en-tête `
 
 1. **Classement local** de l’index en mémoire (aucun appel réseau). Les mots-outils (« se », « sa ») sont ignorés et un mot-clé doit correspondre à un mot entier : « ex » ne remonte plus « examen ».
 2. **Profil de la question** : une recherche ouvre deux documents, une synthèse (« structure », « annales », « déroulement », « compare »…) en ouvre jusqu’à huit du meilleur dossier et en lit cinq.
-3. **Lecture des extraits** (texte, PDF, docx, pptx, xlsx) puis rédaction par le moteur choisi (OpenRouter, NVIDIA ou OpenCode). Un PDF à polices encodées par glyphes donne du bruit (« ÿÿ A B D… ») : l’extrait est alors écarté, le document reste proposé avec la mention « texte non extractible ».
+3. **Lecture des extraits** (texte, PDF, docx, pptx, xlsx) puis rédaction par le moteur choisi (Cloudflare Workers AI, OpenRouter, NVIDIA ou OpenCode). Un PDF à polices encodées par glyphes donne du bruit (« ÿÿ A B D… ») : l’extrait est alors écarté, le document reste proposé avec la mention « texte non extractible ».
 4. **Réflexion des modèles** : leur raisonnement arrive dans `reasoning_content`. Il est lu (et annoncé au navigateur par un événement `thinking`) au lieu d’être pris pour un flux vide.
 5. **Robustesse** : budget de jetons élargi (`CHAT_MAX_TOKENS`, `CHAT_DEEP_MAX_TOKENS`), délai porté à `CHAT_ANSWER_TIMEOUT`, une seconde tentative si le budget a été épuisé par la réflexion, repli sur le modèle par défaut si le modèle choisi est introuvable, puis le moteur suivant s’il existe. En dernier recours : les documents trouvés, avec la raison réelle de l’échec, le moteur et le modèle essayés.
 

@@ -37,7 +37,16 @@ APS_CLIENT_SECRET="your_aps_client_secret"
 # Assistant documentaire. Les clés restent dans ce fichier, jamais dans le
 # navigateur (ne pas préfixer par VITE_). Copie ce fichier en .dev.vars.
 # Sans clé, le chat propose quand même les documents trouvés dans la bibliothèque.
-# Onglet du haut : menu déroulant OpenRouter / NVIDIA / OpenCode.
+# Onglet du haut : menu déroulant Cloudflare / OpenRouter / NVIDIA / OpenCode.
+# IA intégrée Cloudflare (Workers AI) : pas de service tiers, facturation sur
+# le compte Cloudflare du site. Clé API créée dans le tableau de bord Cloudflare
+# (My Profile → API Tokens) avec le droit « Workers AI:Read ».
+# CLOUDFLARE_ACCOUNT_ID="votre_account_id"
+# CLOUDFLARE_API_TOKEN="votre_token"
+# CLOUDFLARE_API_BASE="https://api.cloudflare.com/client/v4"
+# CLOUDFLARE_MODEL="@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+# Autres modèles essayables : @cf/nvidia/nemotron-3-120b-a12b (raisonnement),
+# @cf/meta/llama-4-scout-17b-16e-instruct, @cf/zai-org/glm-4.7-flash.
 # NVIDIA
 # NVIDIA_API_KEY="nvapi-your-key"
 # NVIDIA_API_BASE="https://integrate.api.nvidia.com/v1"
