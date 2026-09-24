@@ -151,3 +151,17 @@ Appelez toujours le Space depuis votre backend:
 ```
 Browser → Votre Backend (HF_TOKEN) → Space Hugging Face
 ```
+
+## Déployer l’API Go (autre Space)
+
+Le script `scripts/deploy-space.js` déploie les convertisseurs. L’API Go utilise
+`scripts/deploy-api.js` :
+
+```bash
+HF_TOKEN=votre_token npm run deploy:api -- --write-origin
+```
+
+Il crée `<username>/enise-docs-api` (Docker, `app_port: 8788`), pousse
+`space-api/Dockerfile`, `space-api/README.md` et les sources de `backend/`
+(sans les tests ni les binaires), puis reporte l’URL du runtime dans
+`wrangler.jsonc` (`GO_API_ORIGIN`).

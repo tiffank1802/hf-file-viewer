@@ -95,6 +95,18 @@ Mêmes noms que `wrangler.jsonc` / `.dev.vars` :
 
 `MODEL3D_CONVERT_URL` absent active Rupture. Une valeur explicitement vide désactive la conversion, comme le Worker.
 
+## Publier l’API sur Hugging Face (sans serveur)
+
+Le Worker Cloudflare reste devant : il sert les assets et appelle cette API.
+
+```bash
+HF_TOKEN=hf_... npm run deploy:api -- --write-origin   # pousse les sources + écrit GO_API_ORIGIN
+npm run deploy                                         # redéploie le Worker
+```
+
+Le Space construit l’image depuis `space-api/Dockerfile` et écoute sur le port `8788`
+(`app_port` du Space). Les clés de rédaction se mettent dans les **Repository secrets** du Space, pas dans les fichiers. Penser à `CHAT_TRUST_PROXY=1` : sans lui, la limite de 30 questions par minute s’applique au site entier.
+
 ## Héberger Go à la place du Worker
 
 Utile si les visiteurs sont surtout au même endroit et que l’on veut un cache chaud permanent.

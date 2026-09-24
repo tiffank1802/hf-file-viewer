@@ -120,6 +120,32 @@ Les réglages de production sont dans [`wrangler.jsonc`](./wrangler.jsonc) :
 
 Un changement de TTL s’applique aux nouvelles entrées de cache. Les anciennes expirent naturellement ou peuvent être purgées depuis le tableau de bord Cloudflare.
 
+### Héberger l’API Go sans serveur (Space Hugging Face)
+
+Pas de VPS à louer : l’API Go est publiée comme **Space Docker** Hugging Face, et le Worker l’appelle.
+
+```bash
+HF_TOKEN=hf_... npm run deploy:api -- --write-origin
+```
+
+Le script crée (ou met à jour) le Space `<username>/enise-docs-api`, y pousse l’enveloppe Docker (`space-api/`) et les sources Go (`backend/`) en un commit atomique, attend la fin du build puis **écrit l’URL dans `wrangler.jsonc`** (`GO_API_ORIGIN`). Il reste à déployer :
+
+```bash
+npm run deploy
+```
+
+Puis, dans le Space (**Settings → Repository secrets**, jamais dans les fichiers) :
+
+| Secret | Rôle |
+|---|---|
+| `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, `OPENCODE_API_KEY` | rédaction de l’assistant |
+| `CHAT_TRUST_PROXY` | `1` : limite le débit par visiteur derrière le Worker |
+| `HF_TOKEN` | seulement si le bucket devient privé |
+
+Options utiles : `--space-id <user>/<space>` pour un autre nom, `--private`, `--skip-files`.
+
+> Le palier gratuit se met en veille après inactivité : la première question après une pause peut attendre 30 à 60 secondes (cold start). Pour supprimer l’attente, passer le Space en `cpu-upgrade` ou héberger le binaire sur un petit VPS (voir [`backend/README.md`](./backend/README.md)).
+
 ### Le Worker sert le site, Go ne sert que l’API
 
 C’est la configuration à privilégier dès qu’un moteur d’assistant est configuré : le Worker (assets + proxy `/api/*`) reste chez Cloudflare, le binaire Go tourne où tu veux. Le navigateur ne voit qu’une seule origine.
