@@ -441,8 +441,7 @@ func TestChatStreamsFromCloudflareWorkersAI(t *testing.T) {
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer ai.Close()
-	// Le document doit être lisible : une question de synthèse sans extrait
-	// ne déclenche volontairement aucun appel au modèle.
+	// Le document sert d’extrait : le modèle le reçoit dans le prompt.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("Le devoir surveillé de mécanique comporte trois parties et une étude de document."))
 	}))
@@ -480,5 +479,106 @@ func TestChatStreamsFromCloudflareWorkersAI(t *testing.T) {
 	answer, _ := done["answer"].(string)
 	if !strings.Contains(answer, "trois heures") {
 		t.Fatalf("réponse = %q", answer)
+	}
+}
+
+// Le modèle choisi dans le menu ne vaut que pour son moteur : les moteurs de
+// secours gardent leur propre modèle, sinon ils échouent tous à la suite.
+func TestChatCandidatesKeepTheOverrideOnItsProvider(t *testing.T) {
+	server := New(config.Config{
+		BucketID:            "ktongue/ENISE-SITE",
+		CloudflareAccountID: "acc_123",
+		CloudflareAIToken:   "cf-test-token",
+		CloudflareAIBase:    "https://api.cloudflare.com/client/v4",
+		CloudflareAIModel:   "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+		NvidiaAPIKey:        "nv-test-key",
+		NvidiaAPIBase:       "https://integrate.api.nvidia.com/v1",
+		NvidiaModel:         "meta/llama-3.1-8b-instruct",
+	})
+	candidates := server.chatCandidates("nvidia", "deepseek-ai/deepseek-r1")
+	if len(candidates) != 2 {
+		t.Fatalf("moteurs = %d", len(candidates))
+	}
+	if candidates[0].id != "nvidia" || candidates[0].model != "deepseek-ai/deepseek-r1" {
+		t.Fatalf("moteur demandé = %s/%s", candidates[0].id, candidates[0].model)
+	}
+	if candidates[1].id != "cloudflare" || candidates[1].model != "@cf/meta/llama-3.3-70b-instruct-fp8-fast" {
+		t.Fatalf("secours = %s/%s", candidates[1].id, candidates[1].model)
+	}
+
+	// Sans identifiant de compte, Workers AI ne peut pas être appelé.
+	server.cfg.CloudflareAccountID = ""
+	for _, candidate := range server.chatCandidates("", "") {
+		if candidate.id == "cloudflare" {
+			t.Fatal("Cloudflare retenu sans identifiant de compte")
+		}
+	}
+}
+
+// Quand tous les moteurs échouent, la note nomme chacun avec sa raison.
+func TestChatFailuresNoteNamesEveryEngine(t *testing.T) {
+	note := chatFailuresNote([]error{
+		&chatCompletionError{kind: "status", provider: "Cloudflare", status: http.StatusForbidden, message: "Authentication error"},
+		&chatCompletionError{kind: "status", provider: "OpenRouter", status: http.StatusBadRequest, message: "max_tokens trop grand"},
+		&chatCompletionError{kind: "timeout", provider: "NVIDIA", message: "context deadline exceeded"},
+	})
+	for _, want := range []string{"Cloudflare : clé refusée (403) : Authentication error", "OpenRouter : erreur 400 : max_tokens trop grand", "NVIDIA : délai dépassé"} {
+		if !strings.Contains(note, want) {
+			t.Fatalf("note sans %q : %q", want, note)
+		}
+	}
+	if strings.Contains(note, "deadline") {
+		t.Fatalf("détail technique du délai affiché : %q", note)
+	}
+}
+
+// Un 400 (paramètre refusé) ne doit pas condamner le moteur : une requête
+// réduite au minimum est retentée avant de passer au suivant.
+func TestChatRetriesAMinimalRequestAfterA400(t *testing.T) {
+	var budgets []float64
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		tokens, _ := payload["max_tokens"].(float64)
+		budgets = append(budgets, tokens)
+		if tokens > float64(chatMinimalTokens) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"max_tokens is too large"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"## Réponse\\nTrois parties.\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer llm.Close()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("Le partiel d’économie comporte une question de cours et une étude de cas."))
+	}))
+	defer upstream.Close()
+
+	server := New(config.Config{
+		BucketID:      "ktongue/ENISE-SITE",
+		HFOrigin:      upstream.URL,
+		NvidiaAPIKey:  "test-key",
+		NvidiaAPIBase: llm.URL + "/v1",
+		NvidiaModel:   "meta/llama-3.1-8b-instruct",
+	})
+	size := int64(80)
+	server.cache.SetIndex(&catalog.IndexDocument{
+		BucketID: "ktongue/ENISE-SITE",
+		Complete: true,
+		Items: []catalog.BucketItem{
+			{Type: "file", Path: "GM/3A GM/S6/Economie/partiel.txt", Size: &size},
+		},
+	}, time.Hour, time.Hour)
+
+	response := postChat(t, server, `{"message":"comment se structure l’examen d’économie ?"}`)
+	done := eventObject(t, parseSSE(t, response.Body.String()), "done")
+	if done["engine"] != "nvidia" {
+		t.Fatalf("moteur = %#v, appels = %v, note = %v", done["engine"], budgets, done["notice"])
+	}
+	if len(budgets) != 2 || budgets[1] != float64(chatMinimalTokens) {
+		t.Fatalf("budgets envoyés = %v", budgets)
 	}
 }

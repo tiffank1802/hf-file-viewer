@@ -43,6 +43,8 @@ const (
 	chatFallbackTokens = 4096
 	chatDeepTokens     = 8192
 	chatMaxTokens      = 16384
+	chatPlainTokens    = 4096
+	chatMinimalTokens  = 2048
 	defaultChatModel   = "meta/llama-3.1-8b-instruct"
 	nvidiaMissingNote  = "L’analyse rédigée par l’IA n’est pas activée sur ce serveur. Tu peux déjà ouvrir les documents proposés."
 )
@@ -563,15 +565,12 @@ func (s *Server) composeAnswer(ctx context.Context, w http.ResponseWriter, messa
 		_ = writeSSE(w, "delta", map[string]string{"text": answer})
 		return chatDraft{answer: answer, engine: "local", note: nvidiaMissingNote}
 	}
-	if profile.Synthesis && !anyRead(hits) {
-		note := "Je n’ai pas pu lire le texte de ces documents (PDF scannés, images ou formats fermés) : sans texte, je ne peux pas décrire leur structure sans inventer. Ouvre-les plutôt ci-dessus."
-		answer := localAnswer(hits, note)
-		_ = writeSSE(w, "delta", map[string]string{"text": answer})
-		return chatDraft{answer: answer, engine: "local", note: note}
-	}
+	// Même sans texte lisible, le modèle rédige : il sait s’appuyer sur les
+	// noms et chemins des documents, et le prompt lui dit ce qui manque.
 
 	deadline := time.Now().Add(s.chatAnswerBudget())
 	var lastErr error
+	var failures []error
 	attemptedID := ""
 	attemptedModel := ""
 	for _, provider := range providers {
@@ -590,8 +589,12 @@ func (s *Server) composeAnswer(ctx context.Context, w http.ResponseWriter, messa
 		}
 		log.Printf("chat %s/%s: %v", provider.id, provider.model, err)
 		lastErr = err
+		failures = append(failures, err)
 	}
 	note := chatFailureNote(lastErr)
+	if len(failures) > 1 {
+		note = chatFailuresNote(failures)
+	}
 	answer := localAnswer(hits, note)
 	_ = writeSSE(w, "delta", map[string]string{"text": answer})
 	return chatDraft{
@@ -609,19 +612,35 @@ func (s *Server) composeAnswer(ctx context.Context, w http.ResponseWriter, messa
 // avant de passer au moteur suivant.
 func (s *Server) draftWithProvider(ctx context.Context, w http.ResponseWriter, message, contextPath string, history []chatTurn, hits []chat.Hit, provider *chatProvider, profile chat.Profile, budget time.Duration) (chatDraft, error) {
 	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
+	started := time.Now()
+	truncated := false
+	minimal := false
+	for attempt := 0; attempt < 3; attempt++ {
+		remaining := budget - time.Since(started)
+		if remaining < 10*time.Second {
+			break
+		}
 		reasoning := modelIsReasoning(provider.id, provider.model)
 		tokens := s.chatTokens(profile)
-		if attempt > 0 {
+		if !reasoning && tokens > chatPlainTokens {
+			// Un modèle qui ne réfléchit pas n’a pas besoin de 8 000 jetons pour
+			// une réponse structurée, et certains fournisseurs refusent (400)
+			// un max_tokens plus grand que leur limite.
+			tokens = chatPlainTokens
+		}
+		if truncated {
 			// Le modèle a réfléchi au lieu d’écrire : on double la place.
 			tokens *= 2
+		}
+		if minimal {
+			tokens = chatMinimalTokens
 		}
 		// « reasoning » est un paramètre OpenRouter : ailleurs, un fournisseur
 		// qui ne le connaît pas pourrait répondre 400.
 		effort := ""
-		if (reasoning || attempt > 0) && provider.id == "openrouter" {
+		if (reasoning || truncated) && provider.id == "openrouter" && !minimal {
 			switch {
-			case attempt > 0:
+			case truncated:
 				effort = "low"
 			case profile.Synthesis:
 				effort = "medium"
@@ -632,7 +651,7 @@ func (s *Server) draftWithProvider(ctx context.Context, w http.ResponseWriter, m
 		if tokens > chatMaxTokens {
 			tokens = chatMaxTokens
 		}
-		attemptBudget := budget
+		attemptBudget := remaining
 		if attemptBudget > chatAttemptWait {
 			attemptBudget = chatAttemptWait
 		}
@@ -663,15 +682,30 @@ func (s *Server) draftWithProvider(ctx context.Context, w http.ResponseWriter, m
 			return chatDraft{answer: ensureStructure(streamed.String(), hits), engine: provider.id, model: provider.model}, nil
 		}
 		lastErr = err
+		if streamed.Len() > 0 {
+			// Du texte est déjà parti vers le navigateur : une nouvelle tentative
+			// le dupliquerait.
+			break
+		}
 		var completionErr *chatCompletionError
-		if errors.As(err, &completionErr) && completionErr != nil {
-			if completionErr.kind == "truncated" {
+		if !errors.As(err, &completionErr) || completionErr == nil {
+			break
+		}
+		if completionErr.kind == "truncated" && !truncated {
+			truncated = true
+			continue
+		}
+		switch completionErr.status {
+		case http.StatusNotFound, http.StatusBadRequest, http.StatusUnprocessableEntity:
+			// Modèle inconnu ou paramètre refusé : d’abord le modèle par défaut
+			// du fournisseur, puis une requête réduite au strict minimum.
+			if provider.fallbackModel != "" && provider.fallbackModel != provider.model {
+				log.Printf("chat %s: modèle %s refusé (%d), repli sur %s", provider.id, provider.model, completionErr.status, provider.fallbackModel)
+				provider.model = provider.fallbackModel
 				continue
 			}
-			// Modèle inconnu du fournisseur : on retombe sur son modèle par défaut.
-			if completionErr.status == http.StatusNotFound && provider.fallbackModel != "" && provider.fallbackModel != provider.model {
-				log.Printf("chat %s: modèle %s introuvable, repli sur %s", provider.id, provider.model, provider.fallbackModel)
-				provider.model = provider.fallbackModel
+			if completionErr.status != http.StatusNotFound && !minimal {
+				minimal = true
 				continue
 			}
 		}
@@ -715,29 +749,38 @@ type chatProvider struct {
 func (s *Server) chatCandidates(providerID, modelOverride string) []*chatProvider {
 	providerID = strings.ToLower(strings.TrimSpace(providerID))
 	modelOverride = sanitizeModel(modelOverride)
+	// Le modèle choisi dans le menu ne vaut que pour SON moteur : envoyer
+	// « @cf/meta/… » à OpenRouter ou « x/y:free » à Cloudflare fait échouer
+	// tous les moteurs de secours, l’un après l’autre.
+	override := func(id string) string {
+		if providerID == id {
+			return modelOverride
+		}
+		return ""
+	}
 	all := []*chatProvider{
 		{
 			id: "cloudflare", label: "Cloudflare",
 			baseURL: s.cfg.CloudflareAIBase, apiKey: s.cfg.CloudflareAIToken,
-			model:         firstNonEmpty(modelOverride, s.cfg.CloudflareAIModel),
+			model:         firstNonEmpty(override("cloudflare"), s.cfg.CloudflareAIModel),
 			fallbackModel: s.cfg.CloudflareAIModel,
 		},
 		{
 			id: "openrouter", label: "OpenRouter",
 			baseURL: s.cfg.OpenRouterAPIBase, apiKey: s.cfg.OpenRouterAPIKey,
-			model:         firstNonEmpty(modelOverride, s.cfg.OpenRouterModel),
+			model:         firstNonEmpty(override("openrouter"), s.cfg.OpenRouterModel),
 			fallbackModel: s.cfg.OpenRouterModel,
 		},
 		{
 			id: "nvidia", label: "NVIDIA",
 			baseURL: s.cfg.NvidiaAPIBase, apiKey: s.cfg.NvidiaAPIKey,
-			model:         firstNonEmpty(modelOverride, s.cfg.NvidiaModel),
+			model:         firstNonEmpty(override("nvidia"), s.cfg.NvidiaModel),
 			fallbackModel: s.cfg.NvidiaModel,
 		},
 		{
 			id: "opencode", label: "OpenCode",
 			baseURL: s.cfg.OpenCodeAPIBase, apiKey: s.cfg.OpenCodeAPIKey,
-			model:         firstNonEmpty(modelOverride, s.cfg.OpenCodeModel),
+			model:         firstNonEmpty(override("opencode"), s.cfg.OpenCodeModel),
 			fallbackModel: s.cfg.OpenCodeModel,
 		},
 	}
@@ -745,6 +788,9 @@ func (s *Server) chatCandidates(providerID, modelOverride string) []*chatProvide
 	var requested *chatProvider
 	for _, candidate := range all {
 		if strings.TrimSpace(candidate.apiKey) == "" || candidate.model == "" {
+			continue
+		}
+		if candidate.id == "cloudflare" && strings.TrimSpace(s.cfg.CloudflareAccountID) == "" {
 			continue
 		}
 		if providerID != "" && providerID == candidate.id {
@@ -773,49 +819,26 @@ func (s *Server) nvidiaMessages(message, contextPath string, history []chatTurn,
 	return messages
 }
 
-const chatSystemPrompt = `Tu es l’assistant de la bibliothèque ENISE Docs (Centrale Lyon ENISE).
-Tu réponds uniquement à partir des extraits fournis. Tu n’inventes aucun chemin, cours, date, durée ou chiffre.
-Si un extrait manque, dis-le : ne décris jamais un document que tu n’as pas lu.
+const chatSystemPrompt = `Tu es l’assistant de la bibliothèque ENISE Docs (Centrale Lyon ENISE). Tu aides des étudiants ingénieurs à trouver et comprendre leurs cours, TD et annales.
 
-Réponds en français, avec exactement cette structure markdown :
+Réponds à la question posée, en français, de façon claire et utile.
+- Appuie-toi d’abord sur les extraits fournis et cite les documents par leur nom.
+- Les extraits viennent d’une lecture automatique : mots coupés, lettres manquantes ou noms de polices sont des défauts de lecture, pas du contenu. Reconstitue le sens et ignore le bruit.
+- Tu peux compléter avec tes connaissances générales sur le sujet, en le signalant (« en général… »).
+- N’invente jamais un chemin de fichier, une date, un barème ou un chiffre propre à l’ENISE qui n’apparaît pas dans les extraits.
 
-## Recommandation
-Une ou deux phrases : quel document ouvrir, et pourquoi il répond à la question.
+Mise en forme markdown : des titres « ## » adaptés à la question (par exemple Réponse, Détails, Documents à ouvrir), des listes quand c’est plus lisible. Termine par les chemins des documents utiles, entre backticks.`
 
-## Résumé
-Un paragraphe de 5 à 8 lignes qui reformule l’extrait du document principal. S’il n’y a pas d’extrait, écris « Texte non extractible » et n’invente rien.
+const chatSynthesisPrompt = `Tu es l’assistant de la bibliothèque ENISE Docs (Centrale Lyon ENISE). Tu aides des étudiants ingénieurs à préparer leurs examens.
 
-## Points clés
-- trois à six puces concrètes, prises dans l’extrait
-- si l’extrait manque : une seule puce « Texte non extractible »
+La question demande une synthèse (structure d’un examen, déroulement, organisation d’un cours) : croise les documents fournis pour y répondre directement.
+- Commence par la réponse : ce que l’étudiant doit savoir, en quelques phrases.
+- Puis détaille ce que montrent les documents : parties, types d’exercices, notions qui reviennent, différences d’une année à l’autre. Cite le document qui illustre chaque point.
+- Les extraits viennent d’une lecture automatique : mots coupés, lettres manquantes ou noms de polices sont des défauts de lecture. Reconstitue le sens et ignore le bruit.
+- Si un document n’a pas de texte lisible, sers-toi de son nom et de son chemin (année, semestre, type : cours, TD, partiel, annale) et dis-le.
+- Tu peux compléter avec tes connaissances générales sur la matière, en le signalant ; n’invente pas de durée, de barème ni de coefficient propre à l’ENISE.
 
-## À ouvrir
-Le chemin exact du document principal, seul, entre backticks.`
-
-const chatSynthesisPrompt = `Tu es l’assistant de la bibliothèque ENISE Docs (Centrale Lyon ENISE).
-La question porte sur une structure, un format ou un déroulement : tu dois croiser PLUSIEURS documents fournis, pas en résumer un seul.
-Tu n’inventes rien : aucun chemin, cours, date, durée, coefficient ni barème qui ne figure pas dans les extraits.
-Un extrait peut être partiel, tronqué ou absent : dis-le. Ne comble jamais un trou par une supposition, même vraisemblable.
-
-Réponds en français, avec exactement cette structure markdown :
-
-## Recommandation
-Une ou deux phrases : le document à ouvrir en premier, et pourquoi il est le plus représentatif.
-
-## Ce que montrent les documents
-Un paragraphe de 5 à 8 lignes : ce qui revient dans tous les documents, et ce qui change de l’un à l’autre (année, format, durée, type de questions).
-
-## Structure observée
-Une liste numérotée des grandes parties ou étapes, déduite des extraits. Cite entre crochets le nom du document qui illustre chaque partie.
-
-## Points clés
-- trois à six puces concrètes, chacune appuyée sur un extrait
-
-## Ce qui reste à vérifier
-Une ou deux phrases : ce que les extraits ne permettent pas de trancher, et les documents à ouvrir pour confirmer.
-
-## À ouvrir
-Les chemins exacts des documents utilisés, un par ligne, entre backticks.`
+Mise en forme markdown : des titres « ## » adaptés (par exemple Réponse, Structure de l’examen, Notions à réviser, Documents à ouvrir), des listes numérotées ou à puces. Termine par les chemins des documents utiles, entre backticks.`
 
 func documentPrompt(question, contextPath string, hits []chat.Hit, profile chat.Profile) string {
 	var b strings.Builder
@@ -827,7 +850,7 @@ func documentPrompt(question, contextPath string, hits []chat.Hit, profile chat.
 		b.WriteByte('\n')
 	}
 	if profile.Synthesis {
-		b.WriteString("Consigne : question de synthèse. Compare les documents entre eux avant de répondre. Ce qui n’apparaît que dans un seul document doit être signalé comme tel.\n")
+		b.WriteString("Consigne : question de synthèse. Compare les documents entre eux avant de répondre.\n")
 	}
 	if len(hits) == 0 {
 		b.WriteString("Aucun document vérifié.\n")
@@ -850,7 +873,7 @@ func documentPrompt(question, contextPath string, hits []chat.Hit, profile chat.
 			b.WriteByte('\n')
 			continue
 		}
-		b.WriteString("   extrait : aucun texte lisible (fichier image, PDF scanné, format fermé ou lecture interrompue). Ne résume pas son contenu.\n")
+		b.WriteString("   extrait : aucun texte lisible (image, PDF scanné ou format fermé) : appuie-toi sur le nom et le chemin, sans inventer son contenu.\n")
 	}
 	b.WriteString("Question : ")
 	b.WriteString(question)
@@ -1007,6 +1030,53 @@ func chatFailureNote(err error) string {
 	return "La rédaction automatique n’a pas abouti. Les documents ci-dessus viennent quand même de la bibliothèque."
 }
 
+// chatFailuresNote résume l’échec de CHAQUE moteur essayé. Ne montrer que le
+// dernier (« La clé OpenCode a été refusée ») cachait la vraie cause quand
+// Cloudflare ou OpenRouter avaient échoué avant, pour une autre raison.
+func chatFailuresNote(failures []error) string {
+	parts := make([]string, 0, len(failures))
+	for _, err := range failures {
+		parts = append(parts, chatFailureReason(err))
+	}
+	return "Aucun moteur n’a pu rédiger la réponse — " + strings.Join(parts, " ; ") + ". Les documents ci-dessus viennent quand même de la bibliothèque."
+}
+
+func chatFailureReason(err error) string {
+	var completionErr *chatCompletionError
+	if !errors.As(err, &completionErr) || completionErr == nil {
+		return "erreur inattendue"
+	}
+	label := completionErr.provider
+	if label == "" {
+		label = "moteur"
+	}
+	reason := ""
+	switch {
+	case completionErr.kind == "truncated":
+		reason = "budget de jetons épuisé en réflexion"
+	case completionErr.kind == "timeout":
+		reason = "délai dépassé"
+	case completionErr.kind == "empty":
+		reason = "réponse vide"
+	case completionErr.kind == "network":
+		reason = "injoignable"
+	case completionErr.status == http.StatusUnauthorized, completionErr.status == http.StatusForbidden:
+		reason = fmt.Sprintf("clé refusée (%d)", completionErr.status)
+	case completionErr.status == http.StatusTooManyRequests:
+		reason = "quota ou débit dépassé (429)"
+	case completionErr.status == http.StatusNotFound:
+		reason = "modèle introuvable (404)"
+	case completionErr.status != 0:
+		reason = fmt.Sprintf("erreur %d", completionErr.status)
+	default:
+		reason = "erreur du fournisseur"
+	}
+	if detail := strings.TrimSpace(completionErr.message); detail != "" && completionErr.kind != "timeout" {
+		reason += " : " + chat.Clip(detail, 120)
+	}
+	return label + " : " + reason
+}
+
 func readLLMError(body io.Reader) string {
 	payload, err := io.ReadAll(io.LimitReader(body, 4<<10))
 	if err != nil {
@@ -1017,12 +1087,19 @@ func readLLMError(body io.Reader) string {
 			Message string `json:"message"`
 		} `json:"error"`
 		Message string `json:"message"`
+		// Cloudflare : {"success":false,"errors":[{"code":…,"message":…}]}
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
 	}
 	if err := json.Unmarshal(payload, &decoded); err != nil {
 		return chat.Clip(strings.TrimSpace(string(payload)), 160)
 	}
 	if decoded.Error.Message != "" {
 		return chat.Clip(decoded.Error.Message, 200)
+	}
+	if len(decoded.Errors) > 0 && decoded.Errors[0].Message != "" {
+		return chat.Clip(decoded.Errors[0].Message, 200)
 	}
 	if decoded.Message != "" {
 		return chat.Clip(decoded.Message, 200)

@@ -76,3 +76,29 @@ func TestExtractRefusesGlyphNoise(t *testing.T) {
 		t.Fatal("un texte court ne doit pas être écarté")
 	}
 }
+
+// Seul le texte des pages compte : les noms de polices des flux d’objets
+// sont écartés, les morceaux d’un tableau TJ sont recollés, et l’apostrophe
+// WinAnsi (0x92) est conservée.
+func TestExtractPDFReadsOnlyPageText(t *testing.T) {
+	var content bytes.Buffer
+	writer := zlib.NewWriter(&content)
+	if _, err := writer.Write([]byte("BT /F1 12 Tf 72 700 Td [(L)3(\x92)-2(\xe9conom)4(ie \xe9tudie com)5(ment des)] TJ 0 -14 Td [(ressources)-333(rares)] TJ ET")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	pdf := []byte("%PDF-1.5\n1 0 obj\n<< /Type /ObjStm /N 1 /Length 40 >>\nstream\nBT (Wingdings 3 Identity Adobe) Tj ET\nendstream\nendobj\n2 0 obj\n<< /Filter /FlateDecode /Length 1 >>\nstream\n")
+	pdf = append(pdf, content.Bytes()...)
+	pdf = append(pdf, []byte("\nendstream\nendobj\n")...)
+	text := Extract("cours.pdf", pdf, 400)
+	if !strings.Contains(text, "L’économie étudie comment des ressources rares") {
+		t.Fatalf("texte = %q", text)
+	}
+	for _, noise := range []string{"Wingdings", "Identity", "Adobe"} {
+		if strings.Contains(text, noise) {
+			t.Fatalf("nom de police conservé (%s) : %q", noise, text)
+		}
+	}
+}
