@@ -270,3 +270,106 @@ func eventDocuments(t *testing.T, events map[string][]map[string]any, name strin
 	}
 	return docs
 }
+
+// Un modèle qui raisonne écrit d’abord dans « reasoning_content » : la
+// réponse n’arrive qu’ensuite. Le serveur doit attendre le contenu utile et
+// annoncer la réflexion au lieu de déclarer un échec.
+func TestChatReadsReasoningBeforeTheAnswer(t *testing.T) {
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"je relis les annales\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"## Résumé\\nOuvre `GM/3A GM/S5/Mecanique/poly.pdf`.\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"finish_reason\":\"stop\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer llm.Close()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer upstream.Close()
+
+	server := New(config.Config{
+		BucketID:      "ktongue/ENISE-SITE",
+		HFOrigin:      upstream.URL,
+		NvidiaAPIKey:  "test-key",
+		NvidiaAPIBase: llm.URL + "/v1",
+		NvidiaModel:   "meta/llama-3.1-8b-instruct",
+	})
+	size := int64(8)
+	server.cache.SetIndex(&catalog.IndexDocument{
+		BucketID: "ktongue/ENISE-SITE",
+		Complete: true,
+		Items: []catalog.BucketItem{
+			{Type: "file", Path: "GM/3A GM/S5/Mecanique/poly.pdf", Size: &size},
+		},
+	}, time.Hour, time.Hour)
+
+	response := postChat(t, server, `{"message":"poly de mécanique"}`)
+	events := parseSSE(t, response.Body.String())
+	if _, ok := events["thinking"]; !ok {
+		t.Fatalf("réflexion non annoncée: %#v", events)
+	}
+	done := eventObject(t, events, "done")
+	if done["engine"] != "nvidia" {
+		t.Fatalf("moteur = %#v", done["engine"])
+	}
+	answer, _ := done["answer"].(string)
+	if !strings.Contains(answer, "Résumé") {
+		t.Fatalf("réponse = %q", answer)
+	}
+}
+
+// Quand le modèle épuise son budget en réfléchissant (finish_reason
+// « length », aucun contenu), la question ne doit pas rester sans réponse :
+// repli local, avec une note qui explique la vraie raison.
+func TestChatFallsBackWhenReasoningEatsTheBudget(t *testing.T) {
+	calls := 0
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"encore un peu de réflexion\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"finish_reason\":\"length\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer llm.Close()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer upstream.Close()
+
+	server := New(config.Config{
+		BucketID:      "ktongue/ENISE-SITE",
+		HFOrigin:      upstream.URL,
+		NvidiaAPIKey:  "test-key",
+		NvidiaAPIBase: llm.URL + "/v1",
+		NvidiaModel:   "meta/llama-3.1-8b-instruct",
+	})
+	size := int64(8)
+	server.cache.SetIndex(&catalog.IndexDocument{
+		BucketID: "ktongue/ENISE-SITE",
+		Complete: true,
+		Items: []catalog.BucketItem{
+			{Type: "file", Path: "GM/3A GM/S5/Mecanique/poly.pdf", Size: &size},
+		},
+	}, time.Hour, time.Hour)
+
+	response := postChat(t, server, `{"message":"poly de mécanique"}`)
+	events := parseSSE(t, response.Body.String())
+	done := eventObject(t, events, "done")
+	if done["engine"] != "local" {
+		t.Fatalf("moteur = %#v", done["engine"])
+	}
+	notice, _ := done["notice"].(string)
+	if !strings.Contains(notice, "budget") {
+		t.Fatalf("note = %q", notice)
+	}
+	if calls < 2 {
+		t.Fatalf("une seconde tentative était attendue, appels = %d", calls)
+	}
+	answer, _ := done["answer"].(string)
+	if !strings.Contains(answer, "GM/3A GM/S5/Mecanique/poly.pdf") {
+		t.Fatalf("réponse de repli = %q", answer)
+	}
+}

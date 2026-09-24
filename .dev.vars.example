@@ -50,6 +50,14 @@ APS_CLIENT_SECRET="your_aps_client_secret"
 # OPENCODE_API_KEY="..."
 # OPENCODE_API_BASE="https://opencode.ai/zen/v1"
 # OPENCODE_MODEL="nemotron-3-ultra-free"
+# Réglages de la rédaction (optionnels, les défauts conviennent).
+# Les modèles qui raisonnent consomment leur budget de jetons AVANT d’écrire :
+# 4096 jetons laissent largement la place à la réponse, 8192 pour les
+# questions de synthèse qui croisent plusieurs documents.
+# CHAT_MAX_TOKENS="4096"
+# CHAT_DEEP_MAX_TOKENS="8192"
+# Délai total accordé à la rédaction, tous moteurs confondus (secondes).
+# CHAT_ANSWER_TIMEOUT="150"
 # À activer seulement si Go n’est joignable que par le Worker.
 # CHAT_TRUST_PROXY="1"
 # Clé serveur Appwrite, uniquement pour `npm run appwrite:setup`.

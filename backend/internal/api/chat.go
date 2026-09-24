@@ -21,18 +21,28 @@ import (
 	"enise-docs/backend/internal/chat"
 )
 
+// Les modèles qui raisonnent écrivent d’abord leur réflexion, puis la
+// réponse : le budget doit couvrir les deux, sinon il ne reste plus rien à
+// afficher (finish_reason « length », contenu vide).
 const (
-	chatReadLimit     = 8 << 20
-	chatReadableMax   = 25 << 20
-	chatBodyLimit     = 384 << 10
-	chatRateLimit     = 30
-	chatExcerptWait   = 15 * time.Second
-	chatAnswerWait    = 45 * time.Second
-	chatExcerptRunes  = 7000
-	chatCardRunes     = 280
-	chatPromptRunes   = 3500
-	defaultChatModel  = "meta/llama-3.1-8b-instruct"
-	nvidiaMissingNote = "L’analyse rédigée par l’IA n’est pas activée sur ce serveur. Tu peux déjà ouvrir les documents proposés."
+	chatReadLimit      = 8 << 20
+	chatReadableMax    = 25 << 20
+	chatBodyLimit      = 384 << 10
+	chatRateLimit      = 30
+	chatExcerptWait    = 30 * time.Second
+	chatAnswerWait     = 150 * time.Second
+	chatAttemptWait    = 90 * time.Second
+	chatExcerptRunes   = 9000
+	chatCardRunes      = 280
+	chatPromptRunes    = 3500
+	chatSynthesisRunes = 2600
+	chatPairRunes      = 1400
+	chatAnswerRunes    = 9000
+	chatFallbackTokens = 4096
+	chatDeepTokens     = 8192
+	chatMaxTokens      = 16384
+	defaultChatModel   = "meta/llama-3.1-8b-instruct"
+	nvidiaMissingNote  = "L’analyse rédigée par l’IA n’est pas activée sur ce serveur. Tu peux déjà ouvrir les documents proposés."
 )
 
 type chatRequest struct {
@@ -120,51 +130,84 @@ func (s *Server) handleChatStatus(w http.ResponseWriter, r *http.Request) error 
 	return nil
 }
 
+type chatModel struct {
+	ID        string
+	Label     string
+	Reasoning bool
+}
+
+// chatModelCatalog liste les modèles du sélecteur. Reasoning marque les
+// modèles qui réfléchissent avant d’écrire : le serveur leur donne un budget
+// de jetons plus large et encadre leur réflexion pour qu’il reste de la
+// place pour la réponse visible.
+var chatModelCatalog = map[string][]chatModel{
+	"openrouter": {
+		{ID: "openai/gpt-oss-120b:free", Label: "GPT-OSS 120B", Reasoning: true},
+		{ID: "nvidia/nemotron-3-ultra-550b-a55b:free", Label: "Nemotron 3 Ultra", Reasoning: true},
+		{ID: "nvidia/nemotron-3-super-120b-a12b:free", Label: "Nemotron 3 Super", Reasoning: true},
+		{ID: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", Label: "Nemotron Nano Omni", Reasoning: true},
+		{ID: "poolside/laguna-m.1:free", Label: "Laguna M.1", Reasoning: true},
+		{ID: "cohere/north-mini-code:free", Label: "North Mini Code", Reasoning: true},
+	},
+	"nvidia": {
+		{ID: "nvidia/nemotron-3-ultra-550b-a55b", Label: "Nemotron 3 Ultra", Reasoning: true},
+		{ID: "nvidia/nemotron-3-super-120b-a12b", Label: "Nemotron 3 Super", Reasoning: true},
+		{ID: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", Label: "Nemotron Nano Omni", Reasoning: true},
+		{ID: "openai/gpt-oss-120b", Label: "GPT-OSS 120B", Reasoning: true},
+		{ID: "deepseek-ai/deepseek-v4-pro", Label: "DeepSeek V4 Pro", Reasoning: true},
+		{ID: "z-ai/glm-5.1", Label: "GLM-5.1", Reasoning: true},
+	},
+	"opencode": {
+		{ID: "nemotron-3-ultra-free", Label: "Nemotron 3 Ultra", Reasoning: true},
+		{ID: "nemotron-3.5-lightning-free", Label: "Nemotron 3.5 Lightning", Reasoning: true},
+		{ID: "deepseek-v4-flash-free", Label: "DeepSeek V4 Flash", Reasoning: true},
+		{ID: "mimo-v2.5-free", Label: "MiMo-V2.5", Reasoning: true},
+		{ID: "minimax-m2.5-free", Label: "MiniMax M2.5", Reasoning: true},
+		{ID: "big-pickle", Label: "Big Pickle", Reasoning: true},
+	},
+}
+
 func (s *Server) chatProviders() []map[string]any {
-	return []map[string]any{
-		{
-			"id":      "openrouter",
-			"label":   "OpenRouter",
-			"model":   s.cfg.OpenRouterModel,
-			"enabled": strings.TrimSpace(s.cfg.OpenRouterAPIKey) != "",
-			"models": []map[string]any{
-				{"id": "openai/gpt-oss-120b:free", "label": "GPT-OSS 120B", "free": true, "reasoning": true},
-				{"id": "nvidia/nemotron-3-ultra-550b-a55b:free", "label": "Nemotron 3 Ultra", "free": true, "reasoning": true},
-				{"id": "nvidia/nemotron-3-super-120b-a12b:free", "label": "Nemotron 3 Super", "free": true, "reasoning": true},
-				{"id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "label": "Nemotron Nano Omni", "free": true, "reasoning": true},
-				{"id": "poolside/laguna-m.1:free", "label": "Laguna M.1", "free": true, "reasoning": true},
-				{"id": "cohere/north-mini-code:free", "label": "North Mini Code", "free": true, "reasoning": true},
-			},
-		},
-		{
-			"id":      "nvidia",
-			"label":   "NVIDIA",
-			"model":   s.cfg.NvidiaModel,
-			"enabled": strings.TrimSpace(s.cfg.NvidiaAPIKey) != "",
-			"models": []map[string]any{
-				{"id": "nvidia/nemotron-3-ultra-550b-a55b", "label": "Nemotron 3 Ultra", "free": true, "reasoning": true},
-				{"id": "nvidia/nemotron-3-super-120b-a12b", "label": "Nemotron 3 Super", "free": true, "reasoning": true},
-				{"id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "label": "Nemotron Nano Omni", "free": true, "reasoning": true},
-				{"id": "openai/gpt-oss-120b", "label": "GPT-OSS 120B", "free": true, "reasoning": true},
-				{"id": "deepseek-ai/deepseek-v4-pro", "label": "DeepSeek V4 Pro", "free": true, "reasoning": true},
-				{"id": "z-ai/glm-5.1", "label": "GLM-5.1", "free": true, "reasoning": true},
-			},
-		},
-		{
-			"id":      "opencode",
-			"label":   "OpenCode",
-			"model":   s.cfg.OpenCodeModel,
-			"enabled": strings.TrimSpace(s.cfg.OpenCodeAPIKey) != "",
-			"models": []map[string]any{
-				{"id": "nemotron-3-ultra-free", "label": "Nemotron 3 Ultra", "free": true, "reasoning": true},
-				{"id": "nemotron-3.5-lightning-free", "label": "Nemotron 3.5 Lightning", "free": true, "reasoning": true},
-				{"id": "deepseek-v4-flash-free", "label": "DeepSeek V4 Flash", "free": true, "reasoning": true},
-				{"id": "mimo-v2.5-free", "label": "MiMo-V2.5", "free": true, "reasoning": true},
-				{"id": "minimax-m2.5-free", "label": "MiniMax M2.5", "free": true, "reasoning": true},
-				{"id": "big-pickle", "label": "Big Pickle", "free": true, "reasoning": true},
-			},
-		},
+	definitions := []struct {
+		id    string
+		label string
+		model string
+		key   string
+	}{
+		{"openrouter", "OpenRouter", s.cfg.OpenRouterModel, s.cfg.OpenRouterAPIKey},
+		{"nvidia", "NVIDIA", s.cfg.NvidiaModel, s.cfg.NvidiaAPIKey},
+		{"opencode", "OpenCode", s.cfg.OpenCodeModel, s.cfg.OpenCodeAPIKey},
 	}
+	out := make([]map[string]any, 0, len(definitions))
+	for _, definition := range definitions {
+		models := make([]map[string]any, 0, len(chatModelCatalog[definition.id]))
+		for _, model := range chatModelCatalog[definition.id] {
+			models = append(models, map[string]any{
+				"id":        model.ID,
+				"label":     model.Label,
+				"free":      true,
+				"reasoning": model.Reasoning,
+			})
+		}
+		out = append(out, map[string]any{
+			"id":      definition.id,
+			"label":   definition.label,
+			"model":   definition.model,
+			"enabled": strings.TrimSpace(definition.key) != "",
+			"models":  models,
+		})
+	}
+	return out
+}
+
+// modelIsReasoning dit si le modèle choisi réfléchit avant de répondre.
+func modelIsReasoning(providerID, model string) bool {
+	for _, entry := range chatModelCatalog[providerID] {
+		if entry.ID == model {
+			return entry.Reasoning
+		}
+	}
+	return false
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) error {
@@ -197,36 +240,51 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) error {
 	if len(chat.Tokens(message)) == 0 {
 		answer := "Formule une question avec une matière, une année (3A, 4A, 5A) ou TOEIC."
 		_ = writeSSE(w, "delta", map[string]string{"text": answer})
-		s.finishChat(w, r, body.ConversationID, message, answer, contextPath, "local", nil)
+		s.finishChat(w, r, body.ConversationID, message, chatDraft{answer: answer, engine: "local"}, contextPath, nil)
 		return nil
 	}
 	if len(items) == 0 {
 		answer := "La bibliothèque n’est pas encore indexée. Réessaie dans un instant."
 		_ = writeSSE(w, "delta", map[string]string{"text": answer})
-		s.finishChat(w, r, body.ConversationID, message, answer, contextPath, "local", nil)
+		s.finishChat(w, r, body.ConversationID, message, chatDraft{answer: answer, engine: "local"}, contextPath, nil)
 		return nil
 	}
 
-	hits := chat.ExpandForReading(items, chat.Rank(items, message, contextPath, 6), 6)
+	profile := chat.QuestionProfile(message)
+	rankLimit := 6
+	if profile.Synthesis {
+		rankLimit = profile.MaxDocs
+	}
+	hits := chat.ExpandForReading(items, chat.Rank(items, message, contextPath, rankLimit), rankLimit)
+	// « comment se structure l’examen » demande plusieurs annales : on ajoute
+	// les voisins du meilleur dossier avant de lire les extraits.
+	if profile.Synthesis {
+		if neighbours := chat.RelatedDocuments(items, hits, profile.MaxDocs-len(hits)); len(neighbours) > 0 {
+			hits = append(hits, neighbours...)
+		}
+	}
 	if err := writeSSE(w, "sources", map[string]any{"documents": publicHits(hits)}); err != nil {
 		return nil
 	}
-	s.enrichHits(r.Context(), hits)
+	s.enrichHits(r.Context(), hits, profile.MaxRead)
 	if anyRead(hits) {
 		_ = writeSSE(w, "sources", map[string]any{"documents": publicHits(hits)})
 	}
 
-	answer, engine := s.composeAnswer(r.Context(), w, message, contextPath, sanitizeHistory(body.History, message), hits, body.Provider, body.Model)
-	s.finishChat(w, r, body.ConversationID, message, answer, contextPath, engine, hits)
+	draft := s.composeAnswer(r.Context(), w, message, contextPath, sanitizeHistory(body.History, message), hits, body.Provider, body.Model, profile)
+	s.finishChat(w, r, body.ConversationID, message, draft, contextPath, hits)
 	return nil
 }
 
-func (s *Server) finishChat(w http.ResponseWriter, r *http.Request, conversationID, question, answer, contextPath, engine string, hits []chat.Hit) {
-	hits = promoteMentioned(answer, hits)
-	saved := s.rememberChat(r, conversationID, question, answer, contextPath, hits)
+func (s *Server) finishChat(w http.ResponseWriter, r *http.Request, conversationID, question string, draft chatDraft, contextPath string, hits []chat.Hit) {
+	hits = promoteMentioned(draft.answer, hits)
+	saved := s.rememberChat(r, conversationID, question, draft.answer, contextPath, hits)
 	_ = writeSSE(w, "done", map[string]any{
-		"answer":         answer,
-		"engine":         engine,
+		"answer":         draft.answer,
+		"engine":         draft.engine,
+		"model":          draft.model,
+		"notice":         draft.note,
+		"degraded":       draft.degraded,
 		"documents":      publicHits(hits),
 		"conversationId": saved.ID,
 		"title":          saved.Title,
@@ -374,15 +432,26 @@ func (s *Server) chatCorpus(body chatRequest) ([]catalog.BucketItem, string) {
 	return items, "client"
 }
 
-func (s *Server) enrichHits(ctx context.Context, hits []chat.Hit) {
+// enrichHits lit les extraits de plusieurs documents. Une question de
+// synthèse en lit cinq : un seul extrait ne permet pas de comparer des
+// annales entre elles.
+func (s *Server) enrichHits(ctx context.Context, hits []chat.Hit, maxRead int) {
+	if maxRead <= 0 {
+		maxRead = 2
+	}
 	ctx, cancel := context.WithTimeout(ctx, chatExcerptWait)
 	defer cancel()
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 3)
+	reading := 0
 	for i := range hits {
-		if i >= 2 || !chat.Readable(hits[i].Path, hits[i].Type, hits[i].Size, chatReadableMax) {
+		if reading >= maxRead {
+			break
+		}
+		if !chat.Readable(hits[i].Path, hits[i].Type, hits[i].Size, chatReadableMax) {
 			continue
 		}
+		reading++
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -450,35 +519,142 @@ func excerptKey(item catalog.BucketItem) string {
 	return "chat-excerpt:" + item.Path + ":" + size + ":" + item.Mtime
 }
 
-func (s *Server) composeAnswer(ctx context.Context, w http.ResponseWriter, message, contextPath string, history []chatTurn, hits []chat.Hit, providerID, modelOverride string) (string, string) {
-	provider := s.resolveChatProvider(providerID, modelOverride)
-	if len(hits) == 0 || provider == nil {
-		note := ""
-		if len(hits) > 0 {
-			note = nvidiaMissingNote
-		}
+// chatDraft est la réponse rédigée par un moteur, ou le repli local quand
+// aucun moteur n’aboutit.
+type chatDraft struct {
+	answer   string
+	engine   string
+	model    string
+	note     string
+	degraded bool // vrai quand un moteur a échoué : relancer peut réussir
+}
+
+func (s *Server) composeAnswer(ctx context.Context, w http.ResponseWriter, message, contextPath string, history []chatTurn, hits []chat.Hit, providerID, modelOverride string, profile chat.Profile) chatDraft {
+	providers := s.chatCandidates(providerID, modelOverride)
+	if len(hits) == 0 {
+		answer := "Je n’ai pas trouvé de document qui corresponde. Essaie avec le nom d’un cours, une année (3A, 4A, 5A) ou TOEIC."
+		_ = writeSSE(w, "delta", map[string]string{"text": answer})
+		return chatDraft{answer: answer, engine: "local"}
+	}
+	if len(providers) == 0 {
+		answer := localAnswer(hits, nvidiaMissingNote)
+		_ = writeSSE(w, "delta", map[string]string{"text": answer})
+		return chatDraft{answer: answer, engine: "local", note: nvidiaMissingNote}
+	}
+	if profile.Synthesis && !anyRead(hits) {
+		note := "Je n’ai pas pu lire le texte de ces documents (PDF scannés, images ou formats fermés) : sans texte, je ne peux pas décrire leur structure sans inventer. Ouvre-les plutôt ci-dessus."
 		answer := localAnswer(hits, note)
 		_ = writeSSE(w, "delta", map[string]string{"text": answer})
-		return answer, "local"
+		return chatDraft{answer: answer, engine: "local", note: note}
 	}
 
-	answerCtx, cancel := context.WithTimeout(ctx, chatAnswerWait)
-	defer cancel()
-	var streamed strings.Builder
-	err := s.streamChatCompletion(answerCtx, provider, s.nvidiaMessages(message, contextPath, history, hits), func(delta string) error {
-		streamed.WriteString(delta)
-		return writeSSE(w, "delta", map[string]string{"text": delta})
-	})
-	if err != nil || streamed.Len() == 0 {
-		if streamed.Len() > 0 {
-			return ensureStructure(streamed.String(), hits), provider.id
+	deadline := time.Now().Add(s.chatAnswerBudget())
+	var lastErr error
+	for _, provider := range providers {
+		remaining := time.Until(deadline)
+		if remaining < 20*time.Second {
+			if lastErr == nil {
+				lastErr = &chatCompletionError{kind: "timeout", provider: "Le modèle"}
+			}
+			break
 		}
-		note := nvidiaFailureNote(err, provider.label)
-		answer := localAnswer(hits, note)
-		_ = writeSSE(w, "delta", map[string]string{"text": answer})
-		return answer, "local"
+		draft, err := s.draftWithProvider(ctx, w, message, contextPath, history, hits, provider, profile, remaining)
+		if err == nil {
+			return draft
+		}
+		log.Printf("chat %s/%s: %v", provider.id, provider.model, err)
+		lastErr = err
 	}
-	return ensureStructure(streamed.String(), hits), provider.id
+	note := chatFailureNote(lastErr)
+	answer := localAnswer(hits, note)
+	_ = writeSSE(w, "delta", map[string]string{"text": answer})
+	return chatDraft{answer: answer, engine: "local", note: note, degraded: true}
+}
+
+// draftWithProvider interroge un moteur. Si le modèle a épuisé son budget de
+// jetons en réfléchissant, une seconde tentative lui en laisse davantage
+// avant de passer au moteur suivant.
+func (s *Server) draftWithProvider(ctx context.Context, w http.ResponseWriter, message, contextPath string, history []chatTurn, hits []chat.Hit, provider *chatProvider, profile chat.Profile, budget time.Duration) (chatDraft, error) {
+	reasoning := modelIsReasoning(provider.id, provider.model)
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		tokens := s.chatTokens(profile)
+		if attempt > 0 {
+			// Le modèle a réfléchi au lieu d’écrire : on double la place.
+			tokens *= 2
+		}
+		effort := ""
+		if reasoning || (attempt > 0 && provider.id == "openrouter") {
+			switch {
+			case attempt > 0:
+				effort = "low"
+			case profile.Synthesis:
+				effort = "medium"
+			default:
+				effort = "low"
+			}
+		}
+		if tokens > chatMaxTokens {
+			tokens = chatMaxTokens
+		}
+		attemptBudget := budget
+		if attemptBudget > chatAttemptWait {
+			attemptBudget = chatAttemptWait
+		}
+		attemptCtx, cancel := context.WithTimeout(ctx, attemptBudget)
+		var streamed strings.Builder
+		stats := &completionStats{}
+		announced := false
+		err := s.streamChatCompletion(attemptCtx, provider, s.nvidiaMessages(message, contextPath, history, hits, profile), completionOptions{
+			maxTokens: tokens,
+			effort:    effort,
+		}, func(delta string) error {
+			streamed.WriteString(delta)
+			return writeSSE(w, "delta", map[string]string{"text": delta})
+		}, func() {
+			if announced {
+				return
+			}
+			announced = true
+			_ = writeSSE(w, "thinking", map[string]string{"text": "Le modèle réfléchit…"})
+		}, stats)
+		cancel()
+		log.Printf("chat %s/%s tentative %d: %d caractères, %d segments de réflexion, finish=%q, err=%v",
+			provider.id, provider.model, attempt+1, streamed.Len(), stats.thinking, stats.finish, err)
+		if err == nil && strings.TrimSpace(streamed.String()) == "" {
+			err = &chatCompletionError{kind: "empty", provider: provider.label, finish: stats.finish}
+		}
+		if err == nil {
+			return chatDraft{answer: ensureStructure(streamed.String(), hits), engine: provider.id, model: provider.model}, nil
+		}
+		lastErr = err
+		var completionErr *chatCompletionError
+		if errors.As(err, &completionErr) && completionErr != nil && completionErr.kind == "truncated" {
+			continue
+		}
+		break
+	}
+	return chatDraft{}, lastErr
+}
+
+func (s *Server) chatAnswerBudget() time.Duration {
+	if s.cfg.ChatAnswerTimeout > 0 {
+		return s.cfg.ChatAnswerTimeout
+	}
+	return chatAnswerWait
+}
+
+func (s *Server) chatTokens(profile chat.Profile) int {
+	if profile.Synthesis {
+		if s.cfg.ChatDeepTokens > 0 {
+			return s.cfg.ChatDeepTokens
+		}
+		return chatDeepTokens
+	}
+	if s.cfg.ChatMaxTokens > 0 {
+		return s.cfg.ChatMaxTokens
+	}
+	return chatFallbackTokens
 }
 
 type chatProvider struct {
@@ -489,10 +665,13 @@ type chatProvider struct {
 	model   string
 }
 
-func (s *Server) resolveChatProvider(providerID, modelOverride string) *chatProvider {
+// chatCandidates renvoie les moteurs prêts, le moteur demandé d’abord. Si le
+// premier échoue (clé refusée, quota, modèle injoignable), le suivant prend
+// le relais au lieu d’abandonner la question.
+func (s *Server) chatCandidates(providerID, modelOverride string) []*chatProvider {
 	providerID = strings.ToLower(strings.TrimSpace(providerID))
 	modelOverride = sanitizeModel(modelOverride)
-	candidates := []*chatProvider{
+	all := []*chatProvider{
 		{
 			id: "openrouter", label: "OpenRouter",
 			baseURL: s.cfg.OpenRouterAPIBase, apiKey: s.cfg.OpenRouterAPIKey,
@@ -509,33 +688,41 @@ func (s *Server) resolveChatProvider(providerID, modelOverride string) *chatProv
 			model: firstNonEmpty(modelOverride, s.cfg.OpenCodeModel),
 		},
 	}
-	var firstReady *chatProvider
-	for _, candidate := range candidates {
+	ready := make([]*chatProvider, 0, len(all))
+	var requested *chatProvider
+	for _, candidate := range all {
 		if strings.TrimSpace(candidate.apiKey) == "" || candidate.model == "" {
 			continue
 		}
-		if firstReady == nil {
-			firstReady = candidate
+		if providerID != "" && providerID == candidate.id {
+			requested = candidate
+			continue
 		}
-		if providerID == "" || providerID == candidate.id {
-			return candidate
-		}
+		ready = append(ready, candidate)
 	}
-	return firstReady
+	if requested != nil {
+		return append([]*chatProvider{requested}, ready...)
+	}
+	return ready
 }
 
-func (s *Server) nvidiaMessages(message, contextPath string, history []chatTurn, hits []chat.Hit) []nvidiaMessage {
+func (s *Server) nvidiaMessages(message, contextPath string, history []chatTurn, hits []chat.Hit, profile chat.Profile) []nvidiaMessage {
 	messages := make([]nvidiaMessage, 0, len(history)+2)
-	messages = append(messages, nvidiaMessage{Role: "system", Content: chatSystemPrompt})
+	if profile.Synthesis {
+		messages = append(messages, nvidiaMessage{Role: "system", Content: chatSynthesisPrompt})
+	} else {
+		messages = append(messages, nvidiaMessage{Role: "system", Content: chatSystemPrompt})
+	}
 	for _, turn := range history {
 		messages = append(messages, nvidiaMessage{Role: turn.Role, Content: turn.Content})
 	}
-	messages = append(messages, nvidiaMessage{Role: "user", Content: documentPrompt(message, contextPath, hits)})
+	messages = append(messages, nvidiaMessage{Role: "user", Content: documentPrompt(message, contextPath, hits, profile)})
 	return messages
 }
 
 const chatSystemPrompt = `Tu es l’assistant de la bibliothèque ENISE Docs (Centrale Lyon ENISE).
-Tu résumes uniquement les extraits fournis. Tu n’inventes aucun chemin, cours, date ou chiffre.
+Tu réponds uniquement à partir des extraits fournis. Tu n’inventes aucun chemin, cours, date, durée ou chiffre.
+Si un extrait manque, dis-le : ne décris jamais un document que tu n’as pas lu.
 
 Réponds en français, avec exactement cette structure markdown :
 
@@ -543,16 +730,41 @@ Réponds en français, avec exactement cette structure markdown :
 Une ou deux phrases : quel document ouvrir, et pourquoi il répond à la question.
 
 ## Résumé
-Un paragraphe de 5 à 8 lignes qui reformule l’extrait du document principal. S’il n’y a pas d’extrait, dis que le texte n’a pas pu être lu et n’invente pas le contenu.
+Un paragraphe de 5 à 8 lignes qui reformule l’extrait du document principal. S’il n’y a pas d’extrait, écris « Texte non extractible » et n’invente rien.
 
 ## Points clés
-- trois à six puces concrètes tirées de l’extrait
+- trois à six puces concrètes, prises dans l’extrait
 - si l’extrait manque : une seule puce « Texte non extractible »
 
 ## À ouvrir
 Le chemin exact du document principal, seul, entre backticks.`
 
-func documentPrompt(question, contextPath string, hits []chat.Hit) string {
+const chatSynthesisPrompt = `Tu es l’assistant de la bibliothèque ENISE Docs (Centrale Lyon ENISE).
+La question porte sur une structure, un format ou un déroulement : tu dois croiser PLUSIEURS documents fournis, pas en résumer un seul.
+Tu n’inventes rien : aucun chemin, cours, date, durée, coefficient ni barème qui ne figure pas dans les extraits.
+Un extrait peut être partiel, tronqué ou absent : dis-le. Ne comble jamais un trou par une supposition, même vraisemblable.
+
+Réponds en français, avec exactement cette structure markdown :
+
+## Recommandation
+Une ou deux phrases : le document à ouvrir en premier, et pourquoi il est le plus représentatif.
+
+## Ce que montrent les documents
+Un paragraphe de 5 à 8 lignes : ce qui revient dans tous les documents, et ce qui change de l’un à l’autre (année, format, durée, type de questions).
+
+## Structure observée
+Une liste numérotée des grandes parties ou étapes, déduite des extraits. Cite entre crochets le nom du document qui illustre chaque partie.
+
+## Points clés
+- trois à six puces concrètes, chacune appuyée sur un extrait
+
+## Ce qui reste à vérifier
+Une ou deux phrases : ce que les extraits ne permettent pas de trancher, et les documents à ouvrir pour confirmer.
+
+## À ouvrir
+Les chemins exacts des documents utilisés, un par ligne, entre backticks.`
+
+func documentPrompt(question, contextPath string, hits []chat.Hit, profile chat.Profile) string {
 	var b strings.Builder
 	if contextPath == "" {
 		b.WriteString("Dossier ouvert : bibliothèque entière\n")
@@ -561,16 +773,23 @@ func documentPrompt(question, contextPath string, hits []chat.Hit) string {
 		b.WriteString(contextPath)
 		b.WriteByte('\n')
 	}
+	if profile.Synthesis {
+		b.WriteString("Consigne : question de synthèse. Compare les documents entre eux avant de répondre. Ce qui n’apparaît que dans un seul document doit être signalé comme tel.\n")
+	}
 	if len(hits) == 0 {
 		b.WriteString("Aucun document vérifié.\n")
 	} else {
 		b.WriteString("Documents vérifiés :\n")
 	}
+	budget := chatPromptRunes
+	if profile.Synthesis && len(hits) > 2 {
+		budget = chatSynthesisRunes
+	}
 	for i, hit := range hits {
 		fmt.Fprintf(&b, "%d. %s\n   chemin : `%s`\n   pourquoi : %s\n", i+1, hit.Name, hit.Path, hit.Reason)
-		limit := 1200
-		if i == 0 {
-			limit = chatPromptRunes
+		limit := budget
+		if !profile.Synthesis && i > 0 {
+			limit = chatPairRunes
 		}
 		if hit.Excerpt != "" {
 			b.WriteString("   extrait : ")
@@ -578,34 +797,64 @@ func documentPrompt(question, contextPath string, hits []chat.Hit) string {
 			b.WriteByte('\n')
 			continue
 		}
-		b.WriteString("   extrait : aucun texte lisible (fichier image, format fermé ou lecture interrompue). Ne résume pas son contenu.\n")
+		b.WriteString("   extrait : aucun texte lisible (fichier image, PDF scanné, format fermé ou lecture interrompue). Ne résume pas son contenu.\n")
 	}
 	b.WriteString("Question : ")
 	b.WriteString(question)
 	return b.String()
 }
 
-func (s *Server) streamChatCompletion(ctx context.Context, provider *chatProvider, messages []nvidiaMessage, onDelta func(string) error) error {
+type completionOptions struct {
+	maxTokens int
+	effort    string
+}
+
+// completionStats garde de quoi diagnostiquer un silence : combien de
+// segments de réflexion, quelle raison d’arrêt, combien de caractères utiles.
+type completionStats struct {
+	thinking int
+	chunks   int
+	finish   string
+}
+
+type completionChunkData struct {
+	content  string
+	thinking string
+	finish   string
+}
+
+func (s *Server) streamChatCompletion(ctx context.Context, provider *chatProvider, messages []nvidiaMessage, options completionOptions, onDelta func(string) error, onThinking func(), stats *completionStats) error {
 	if provider == nil {
-		return fmt.Errorf("provider LLM absent")
+		return &chatCompletionError{kind: "empty", provider: "aucun moteur"}
+	}
+	if stats == nil {
+		stats = &completionStats{}
 	}
 	endpoint, err := chatEndpoint(provider.baseURL, provider.label)
 	if err != nil {
-		return err
+		return &chatCompletionError{kind: "network", provider: provider.label, message: err.Error()}
 	}
-	payload, err := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"model":       provider.model,
 		"messages":    messages,
 		"temperature": 0.2,
-		"max_tokens":  1100,
 		"stream":      true,
-	})
-	if err != nil {
-		return err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if options.maxTokens > 0 {
+		payload["max_tokens"] = options.maxTokens
+	}
+	// Encadrer la réflexion : sans ça, un modèle qui raisonne peut consommer
+	// tout le budget en jetons de réflexion et ne renvoyer aucun contenu.
+	if options.effort != "" {
+		payload["reasoning"] = map[string]any{"effort": options.effort}
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return &chatCompletionError{kind: "network", provider: provider.label, message: err.Error()}
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return &chatCompletionError{kind: "network", provider: provider.label, message: err.Error()}
 	}
 	request.Header.Set("Authorization", "Bearer "+provider.apiKey)
 	request.Header.Set("Content-Type", "application/json")
@@ -615,128 +864,270 @@ func (s *Server) streamChatCompletion(ctx context.Context, provider *chatProvide
 		request.Header.Set("HTTP-Referer", "https://enise-docs.local")
 		request.Header.Set("X-Title", "ENISE Docs")
 	}
-	response, err := s.client.Do(request)
+	response, err := s.llmClient.Do(request)
 	if err != nil {
-		log.Printf("%s chat injoignable", provider.id)
-		return err
+		if ctx.Err() != nil {
+			return &chatCompletionError{kind: "timeout", provider: provider.label, message: ctx.Err().Error()}
+		}
+		log.Printf("%s chat injoignable: %v", provider.id, err)
+		return &chatCompletionError{kind: "network", provider: provider.label, message: err.Error()}
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		log.Printf("%s chat status %d", provider.id, response.StatusCode)
-		return &nvidiaStatusError{status: response.StatusCode}
+		detail := readLLMError(response.Body)
+		log.Printf("%s chat status %d %s", provider.id, response.StatusCode, detail)
+		return &chatCompletionError{kind: "status", provider: provider.label, status: response.StatusCode, message: detail}
 	}
 	contentType := response.Header.Get("Content-Type")
 	if strings.Contains(contentType, "application/json") && !strings.Contains(contentType, "text/event-stream") {
-		return readNVIDIAJSON(response.Body, onDelta)
+		return readCompletionJSON(response.Body, onDelta, stats)
 	}
-	return readNVIDIAStream(response.Body, onDelta)
+	return readCompletionStream(response.Body, onDelta, onThinking, stats)
 }
 
-type nvidiaStatusError struct {
-	status int
+// chatCompletionError décrit un échec de rédaction. Le message affiché en
+// dépend : budget épuisé, délai dépassé, clé refusée ou panne réseau ne se
+// réparent pas de la même façon.
+type chatCompletionError struct {
+	kind     string // "timeout", "truncated", "status", "network", "upstream", "empty"
+	provider string
+	status   int
+	message  string
+	finish   string
 }
 
-func (e *nvidiaStatusError) Error() string {
+func (e *chatCompletionError) Error() string {
 	if e == nil {
 		return ""
 	}
-	return fmt.Sprintf("llm status %d", e.status)
+	var b strings.Builder
+	b.WriteString("llm ")
+	b.WriteString(e.kind)
+	if e.provider != "" {
+		b.WriteByte(' ')
+		b.WriteString(e.provider)
+	}
+	if e.status != 0 {
+		fmt.Fprintf(&b, " status %d", e.status)
+	}
+	if e.finish != "" {
+		b.WriteString(" finish ")
+		b.WriteString(e.finish)
+	}
+	if e.message != "" {
+		b.WriteString(": ")
+		b.WriteString(e.message)
+	}
+	return b.String()
 }
 
-func nvidiaFailureNote(err error, providerLabel string) string {
-	if providerLabel == "" {
-		providerLabel = "NVIDIA"
-	}
-	var statusErr *nvidiaStatusError
-	if errors.As(err, &statusErr) {
-		switch statusErr.status {
-		case http.StatusUnauthorized, http.StatusForbidden:
-			return "La clé " + providerLabel + " a été refusée. Les documents ci-dessus viennent quand même de la bibliothèque."
-		case http.StatusTooManyRequests:
-			return providerLabel + " limite le débit pour le moment. Les documents ci-dessus viennent quand même de la bibliothèque."
+func chatFailureNote(err error) string {
+	var completionErr *chatCompletionError
+	if errors.As(err, &completionErr) && completionErr != nil {
+		label := completionErr.provider
+		if label == "" {
+			label = "Le modèle"
+		}
+		switch {
+		case completionErr.kind == "truncated":
+			return label + " a réfléchi jusqu’à épuiser son budget de jetons, sans écrire la moindre réponse. Essaie un autre modèle du menu, ou une question plus courte. Les documents ci-dessus viennent quand même de la bibliothèque."
+		case completionErr.kind == "timeout":
+			return label + " n’a pas répondu à temps : la rédaction a été interrompue. Réessaie, ou choisis un modèle plus rapide. Les documents ci-dessus viennent quand même de la bibliothèque."
+		case completionErr.status == http.StatusUnauthorized, completionErr.status == http.StatusForbidden:
+			return "La clé " + label + " a été refusée. Les documents ci-dessus viennent quand même de la bibliothèque."
+		case completionErr.status == http.StatusTooManyRequests:
+			return label + " limite le débit pour le moment. Réessaie dans un instant. Les documents ci-dessus viennent quand même de la bibliothèque."
+		case completionErr.status == http.StatusNotFound:
+			return "Ce modèle est introuvable chez " + label + ". Choisis-en un autre dans le menu. Les documents ci-dessus viennent quand même de la bibliothèque."
+		case completionErr.kind == "upstream" && completionErr.message != "":
+			return label + " a renvoyé une erreur : " + completionErr.message + " Les documents ci-dessus viennent quand même de la bibliothèque."
 		}
 	}
-	return "La rédaction automatique n’a pas répondu. Les documents ci-dessus viennent quand même de la bibliothèque."
+	return "La rédaction automatique n’a pas abouti. Les documents ci-dessus viennent quand même de la bibliothèque."
 }
 
-func readNVIDIAJSON(body io.Reader, onDelta func(string) error) error {
+func readLLMError(body io.Reader) string {
+	payload, err := io.ReadAll(io.LimitReader(body, 4<<10))
+	if err != nil {
+		return ""
+	}
+	var decoded struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return chat.Clip(strings.TrimSpace(string(payload)), 160)
+	}
+	if decoded.Error.Message != "" {
+		return chat.Clip(decoded.Error.Message, 200)
+	}
+	if decoded.Message != "" {
+		return chat.Clip(decoded.Message, 200)
+	}
+	return chat.Clip(strings.TrimSpace(string(payload)), 160)
+}
+
+func readCompletionJSON(body io.Reader, onDelta func(string) error, stats *completionStats) error {
 	payload, err := io.ReadAll(io.LimitReader(body, 1<<20))
 	if err != nil {
-		return err
+		return &chatCompletionError{kind: "network", message: err.Error()}
 	}
-	text := completionText(payload)
-	if text == "" {
-		return io.EOF
+	chunk := completionChunk(payload)
+	stats.finish = chunk.finish
+	stats.chunks++
+	if chunk.thinking != "" {
+		stats.thinking++
 	}
-	return onDelta(chat.Clip(text, 8000))
+	if chunk.content == "" {
+		return &chatCompletionError{kind: "empty", finish: chunk.finish}
+	}
+	return onDelta(chat.Clip(chunk.content, chatAnswerRunes))
 }
 
-func readNVIDIAStream(body io.Reader, onDelta func(string) error) error {
+func readCompletionStream(body io.Reader, onDelta func(string) error, onThinking func(), stats *completionStats) error {
+	if stats == nil {
+		stats = &completionStats{}
+	}
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	written := 0
+	announced := false
 	for scanner.Scan() {
 		line := strings.TrimRight(scanner.Text(), "\r")
 		if line == "" || strings.HasPrefix(line, ":") || !strings.HasPrefix(line, "data:") {
 			continue
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "" || data == "[DONE]" {
-			if data == "[DONE]" {
-				return nil
-			}
+		if data == "" {
 			continue
+		}
+		if data == "[DONE]" {
+			return finishStream(stats, written)
 		}
 		if strings.HasPrefix(data, "{") && strings.Contains(data, "\"error\"") && !strings.Contains(data, "\"choices\"") {
-			return io.ErrUnexpectedEOF
+			return &chatCompletionError{kind: "upstream", message: readLLMError(strings.NewReader(data))}
 		}
-		text := completionText([]byte(data))
+		chunk := completionChunk([]byte(data))
+		stats.chunks++
+		if chunk.finish != "" {
+			stats.finish = chunk.finish
+		}
+		if chunk.thinking != "" {
+			stats.thinking++
+			if !announced && onThinking != nil {
+				announced = true
+				onThinking()
+			}
+		}
+		text := chunk.content
 		if text == "" {
 			continue
 		}
-		if written+len([]rune(text)) > 8000 {
-			text = chat.Clip(text, 8000-written)
+		if written+len([]rune(text)) > chatAnswerRunes {
+			text = chat.Clip(text, chatAnswerRunes-written)
 		}
 		if text == "" {
-			return nil
+			return finishStream(stats, written)
 		}
 		if err := onDelta(text); err != nil {
 			return err
 		}
 		written += len([]rune(text))
-		if written >= 8000 {
-			return nil
+		if written >= chatAnswerRunes {
+			return finishStream(stats, written)
 		}
 	}
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return &chatCompletionError{kind: "network", message: err.Error()}
+	}
+	return finishStream(stats, written)
 }
 
-func completionText(payload []byte) string {
+// finishStream transforme un silence en erreur exploitable : un flux qui
+// s’arrête sur « length » sans contenu a été tronqué par le budget de jetons,
+// il ne s’agit pas d’une réponse vide.
+func finishStream(stats *completionStats, written int) error {
+	if written > 0 {
+		return nil
+	}
+	finish := ""
+	if stats != nil {
+		finish = stats.finish
+	}
+	if finish == "length" {
+		return &chatCompletionError{kind: "truncated", finish: finish}
+	}
+	return &chatCompletionError{kind: "empty", finish: finish}
+}
+
+// completionChunk lit un morceau de réponse. Les modèles qui raisonnent
+// écrivent leur réflexion dans « reasoning_content » ou « reasoning » : ne
+// pas les lire faisait croire à un flux vide alors que le modèle travaillait.
+func completionChunk(payload []byte) completionChunkData {
 	var chunk struct {
 		Choices []struct {
 			Delta struct {
-				Content string `json:"content"`
+				Content          json.RawMessage `json:"content"`
+				ReasoningContent json.RawMessage `json:"reasoning_content"`
+				Reasoning        json.RawMessage `json:"reasoning"`
 			} `json:"delta"`
 			Message struct {
-				Content string `json:"content"`
+				Content          json.RawMessage `json:"content"`
+				ReasoningContent json.RawMessage `json:"reasoning_content"`
+				Reasoning        json.RawMessage `json:"reasoning"`
 			} `json:"message"`
-			Text string `json:"text"`
+			Text   string `json:"text"`
+			Finish string `json:"finish_reason"`
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(payload, &chunk); err != nil || len(chunk.Choices) == 0 {
-		return ""
+		return completionChunkData{}
 	}
 	choice := chunk.Choices[0]
-	switch {
-	case choice.Delta.Content != "":
-		return choice.Delta.Content
-	case choice.Message.Content != "":
-		return choice.Message.Content
-	default:
-		return choice.Text
+	out := completionChunkData{finish: choice.Finish, content: choice.Text}
+	if value := decodeContent(choice.Delta.Content); value != "" {
+		out.content = value
 	}
+	if value := decodeContent(choice.Message.Content); value != "" {
+		out.content = value
+	}
+	for _, raw := range []json.RawMessage{choice.Delta.ReasoningContent, choice.Delta.Reasoning, choice.Message.ReasoningContent, choice.Message.Reasoning} {
+		if value := decodeContent(raw); value != "" {
+			out.thinking = value
+			break
+		}
+	}
+	return out
 }
 
+// decodeContent accepte une chaîne simple, ou une liste de blocs : certains
+// fournisseurs renvoient « content » sous forme de tableau.
+func decodeContent(raw json.RawMessage) string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(trimmed, &text); err == nil {
+		return text
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(trimmed, &blocks); err != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, block := range blocks {
+		if block.Text != "" {
+			b.WriteString(block.Text)
+		}
+	}
+	return b.String()
+}
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {

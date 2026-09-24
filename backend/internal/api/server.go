@@ -23,6 +23,7 @@ type Server struct {
 	cfg           config.Config
 	cache         *cache.Store
 	client        *http.Client
+	llmClient     *http.Client
 	convertClient *http.Client
 	linkClient    *http.Client
 	tokens        *tokenCache
@@ -39,6 +40,13 @@ func New(cfg config.Config) *Server {
 		cache: cache.New(cfg.CacheDir),
 		client: &http.Client{
 			Transport:     transport,
+			CheckRedirect: redirectPolicy,
+		},
+		// Les modèles qui raisonnent peuvent réfléchir longtemps avant le
+		// premier jeton : aucune limite d’en-tête, seul le contexte de la
+		// requête arrête l’attente.
+		llmClient: &http.Client{
+			Transport:     newTransport(0),
 			CheckRedirect: redirectPolicy,
 		},
 		convertClient: &http.Client{

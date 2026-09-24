@@ -12,7 +12,7 @@ Bibliothèque étudiante moderne pour les ressources de **Centrale Lyon ENISE**,
 - raccourcis **Microsoft OneNote** (`.url`) affichés avec leur cible ouvrable, blocs-notes `.one` disponibles au téléchargement ;
 - aperçu 3D hybride : conversion **GLB gratuite** (FreeCAD) pour `.step`, `.iges`, `.stl`, `.obj` avec rotation, zoom et déplacement, **Autodesk APS** (Model Derivative) pour les autres formats (`.dwg`, `.rvt`, `.sldprt`, `.ifc`, `.catpart`, … — FreeCAD ne lit pas les formats propriétaires), et plugin iframe **ShareCAD** en roue de secours gratuite sans conversion ;
 - téléchargement, partage et favoris enregistrés dans le navigateur ;
-- assistant bibliothèque : il retrouve un document, l’ouvre et peut le résumer. La rédaction NVIDIA reste côté serveur Go ; sans clé, les cartes de documents sont quand même proposées ;
+- assistant bibliothèque : il retrouve un document, l’ouvre, le résume, et sait croiser plusieurs annales pour répondre à « comment se structure l’examen d’économie ? ». La rédaction reste côté serveur Go ; sans clé, les cartes de documents sont quand même proposées ;
 - effectifs par dossier calculés **une seule fois à l’indexation** et stockés dans le JSON d’index ;
 - Worker Cloudflare servant à la fois les assets statiques et l’API proxy ;
 - Cache API configuré pour les arbres, l’index et les fichiers raisonnablement petits ;
@@ -407,7 +407,15 @@ Le Worker Cloudflare et le backend Go exposent les mêmes routes. L’en-tête `
 | `GET /api/office/pdf?path=...` | PDF converti via LibreOffice (mis en cache) |
 | `GET /api/link/preview?url=...` | aperçu enrichi d’un lien `.url` (Open Graph, mis en cache) |
 | `GET /api/chat/status` | assistant prêt, local, ou non configuré. Jamais de clé dans la réponse |
-| `POST /api/chat` | question en JSON, réponse en flux (`text/event-stream`) : documents, puis texte |
+| `POST /api/chat` | question en JSON, réponse en flux (`text/event-stream`) : documents, réflexion éventuelle, puis texte |
+
+### Assistant : ce qui se passe derrière une question
+
+1. **Classement local** de l’index en mémoire (aucun appel réseau). Les mots-outils (« se », « sa ») sont ignorés et un mot-clé doit correspondre à un mot entier : « ex » ne remonte plus « examen ».
+2. **Profil de la question** : une recherche ouvre deux documents, une synthèse (« structure », « annales », « déroulement », « compare »…) en ouvre jusqu’à huit du meilleur dossier et en lit cinq.
+3. **Lecture des extraits** (texte, PDF, docx, pptx, xlsx) puis rédaction par le moteur choisi (OpenRouter, NVIDIA ou OpenCode).
+4. **Réflexion des modèles** : leur raisonnement arrive dans `reasoning_content`. Il est lu (et annoncé au navigateur par un événement `thinking`) au lieu d’être pris pour un flux vide.
+5. **Robustesse** : budget de jetons élargi (`CHAT_MAX_TOKENS`, `CHAT_DEEP_MAX_TOKENS`), délai porté à `CHAT_ANSWER_TIMEOUT`, une seconde tentative si le budget a été épuisé par la réflexion, puis le moteur suivant s’il existe. En dernier recours : les documents trouvés, avec la raison réelle de l’échec.
 
 L’en-tête `X-Cache-Status` permet de diagnostiquer le comportement : `HIT`, `KV-HIT`, `MISS`, `BYPASS-RANGE` ou `BYPASS-SIZE`. L’en-tête `X-Data-Source: index-json` confirme qu’une réponse d’effectifs provient bien du JSON d’index et non d’un nouveau parcours Hugging Face.
 

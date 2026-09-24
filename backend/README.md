@@ -82,6 +82,9 @@ Mêmes noms que `wrangler.jsonc` / `.dev.vars` :
 | `NVIDIA_API_KEY` | rédaction de l’assistant, jamais envoyée au navigateur. Vide = recherche locale seulement |
 | `NVIDIA_API_BASE` | défaut `https://integrate.api.nvidia.com/v1` |
 | `NVIDIA_MODEL` | défaut `meta/llama-3.1-8b-instruct` |
+| `CHAT_MAX_TOKENS` | jetons accordés à la rédaction, défaut `4096`. Un modèle qui raisonne partage ce budget entre sa réflexion et sa réponse : trop bas, il ne reste plus rien à afficher |
+| `CHAT_DEEP_MAX_TOKENS` | idem pour les questions de synthèse (structure d’un examen, comparaison d’annales), défaut `8192` |
+| `CHAT_ANSWER_TIMEOUT` | délai total de rédaction en secondes, défaut `150` |
 | `CHAT_TRUST_PROXY` | `1` seulement si Go n’est joignable que par le Worker, pour limiter le débit par étudiant et faire confiance à `X-Forwarded-Host` sur les emails de compte |
 | `APPWRITE_ENDPOINT` | défaut `https://fra.cloud.appwrite.io/v1` |
 | `APPWRITE_PROJECT_ID` | défaut `69cedb12002acdd498e0` |
@@ -107,7 +110,16 @@ Ne pas publier `HF_TOKEN`, la clé NVIDIA ni les secrets APS dans l’image. Les
 
 ## Assistant
 
-Le bouton **Assistant** interroge Go, pas NVIDIA directement. Go classe l’index déjà en mémoire, renvoie tout de suite les cartes, lit au plus trois extraits (texte, PDF, docx, pptx, xlsx), puis demande une rédaction courte si `NVIDIA_API_KEY` est définie. Chaque chemin proposé est un chemin de l’index : un chemin inventé par le modèle n’ouvre pas un fichier.
+Le bouton **Assistant** interroge Go, pas le fournisseur directement. Go classe l’index déjà en mémoire, renvoie tout de suite les cartes, lit les extraits (texte, PDF, docx, pptx, xlsx) puis demande une rédaction si une clé est définie. Chaque chemin proposé est un chemin de l’index : un chemin inventé par le modèle n’ouvre pas un fichier.
+
+Deux profils de question :
+
+- **recherche** (« où sont les polys de mécanique ») : deux documents lus, résumé du meilleur ;
+- **synthèse** (« comment se structure l’examen d’économie », « compare les annales ») : jusqu’à huit documents du meilleur dossier et cinq extraits lus, avec une consigne qui demande de croiser les sources au lieu d’en résumer une seule.
+
+Les modèles du sélecteur **réfléchissent avant d’écrire**. Leur réflexion arrive dans `reasoning_content`, pas dans `content` : Go la lit, annonce « Le modèle réfléchit… » au navigateur et n’attend que le contenu utile. Le budget de jetons couvre la réflexion **et** la réponse, sinon le modèle s’arrête sur `finish_reason: length` sans rien écrire.
+
+Si un moteur échoue (quota, clé refusée, délai, budget épuisé), Go réessaie une fois avec un budget plus large, puis passe au moteur suivant s’il en reste un. En dernier recours, il répond avec les cartes de documents et une note qui dit la vraie raison : plus jamais un simple « la rédaction automatique a échoué ».
 
 En production Cloudflare, le Worker ne fait pas lui-même l’appel NVIDIA. Sans `GO_API_ORIGIN`, `/api/chat` répond 501. Avec cette variable, il relaie seulement vers le processus Go.
 

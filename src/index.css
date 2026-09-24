@@ -1206,6 +1206,20 @@
 .library-chat-form button { align-self: end; width: 42px; height: 42px; border-radius: 14px; background: var(--green); color: white; cursor: pointer; }
 .library-chat-form button:disabled, .library-chat-suggestions button:disabled { opacity: 0.45; cursor: default; }
 .library-chat-trust, .library-chat-engine { color: var(--ink-faint); font-size: 0.6rem; }
+.library-chat-retry {
+  margin-top: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: white;
+  color: var(--green-deep);
+  font: inherit;
+  font-size: 0.66rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.library-chat-retry:hover:not(:disabled) { border-color: var(--green); background: var(--green-pale); }
+.library-chat-retry:disabled { opacity: 0.5; cursor: progress; }
 .library-chat-trust { padding: 8px 14px 12px; }
 .library-chat-engine { margin-top: 8px; }
 .library-chat-note { padding: 8px 10px; border-radius: 12px; background: var(--yellow-pale); color: var(--ink); font-size: 0.68rem; }

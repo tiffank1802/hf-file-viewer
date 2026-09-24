@@ -184,7 +184,7 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
     setMessages((current) => [
       ...current,
       { id: userId, role: 'user', text: question },
-      { id: assistantId, role: 'assistant', text: '', documents: [], pending: true },
+      { id: assistantId, role: 'assistant', text: '', documents: [], pending: true, question },
     ]);
     setInput('');
     setBusy(true);
@@ -206,6 +206,7 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
         signal: controller.signal,
         onEvent: ({ event, data }) => {
           if (event === 'sources') patch((item) => ({ ...item, documents: data.documents || [] }));
+          if (event === 'thinking') patch((item) => ({ ...item, thinking: true }));
           if (event === 'delta') patch((item) => ({ ...item, text: `${item.text}${data.text || ''}` }));
           if (event === 'done') {
             if (data.conversationId) {
@@ -227,6 +228,10 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
               text: data.answer || item.text,
               documents: data.documents || item.documents,
               engine: data.engine,
+              model: data.model || '',
+              notice: data.notice || '',
+              degraded: Boolean(data.degraded),
+              thinking: false,
               pending: false,
             }));
           }
@@ -275,6 +280,8 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
   const currentModel = modelOptions.find((item) => item.id === currentModelId && item.providerId === activeOption?.id)
     || modelOptions.find((item) => item.id === currentModelId)
     || null;
+  const engineName = (id) => providers.find((item) => item.id === id)?.label || id || 'le moteur';
+  const modelName = (id) => modelOptions.find((item) => item.id === id)?.label || id;
   const engineLabel = statusError
     ? 'Hors ligne'
     : activeOption
@@ -420,7 +427,10 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
                 {message.role === 'assistant' && message.pending && !message.text && (
                   <span className="library-chat-pending" aria-label="Recherche en cours"><i /><i /><i /></span>
                 )}
-                {message.role === 'assistant' && message.pending && !message.text && message.documents?.length > 0 && (
+                {message.role === 'assistant' && message.pending && !message.text && message.thinking && (
+                  <p className="library-chat-engine">Le modèle réfléchit…</p>
+                )}
+                {message.role === 'assistant' && message.pending && !message.text && !message.thinking && message.documents?.length > 0 && (
                   <p className="library-chat-engine">Lecture des documents…</p>
                 )}
                 {message.text && (
@@ -437,12 +447,19 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
                   <p className="library-chat-engine">
                     {message.engine === 'local'
                       ? 'Recherche dans la bibliothèque.'
-                      : message.engine === 'openrouter'
-                        ? 'Rédigé avec OpenRouter, à partir des documents de la bibliothèque.'
-                        : message.engine === 'opencode'
-                          ? 'Rédigé avec OpenCode, à partir des documents de la bibliothèque.'
-                          : 'Rédigé avec NVIDIA, à partir des documents de la bibliothèque.'}
+                      : `Rédigé avec ${engineName(message.engine)}, à partir des documents de la bibliothèque.`}
+                    {message.model ? ` Modèle : ${modelName(message.model)}.` : ''}
                   </p>
+                )}
+                {!message.pending && (message.error || message.degraded) && message.question && (
+                  <button
+                    type="button"
+                    className="library-chat-retry"
+                    disabled={busy}
+                    onClick={() => ask(message.question)}
+                  >
+                    Relancer la rédaction
+                  </button>
                 )}
               </article>
             ))}

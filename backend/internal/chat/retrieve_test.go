@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"strings"
 	"testing"
 
 	"enise-docs/backend/internal/catalog"
@@ -59,5 +60,53 @@ func TestTokensFoldApostrophe(t *testing.T) {
 	tokens := Tokens("l'épreuve d'anglais")
 	if len(tokens) != 2 || tokens[0] != "epreuve" || tokens[1] != "anglais" {
 		t.Fatalf("tokens = %#v", tokens)
+	}
+}
+
+func TestQuestionProfileDetectsStructureQuestions(t *testing.T) {
+	structure := QuestionProfile("comment se structure l’examen d’économie ?")
+	if !structure.Synthesis {
+		t.Fatalf("profil synthèse attendu: %+v", structure)
+	}
+	if structure.MaxRead < 3 {
+		t.Fatalf("une synthèse doit lire plusieurs documents: %+v", structure)
+	}
+	simple := QuestionProfile("où sont les polys de mécanique ?")
+	if simple.Synthesis {
+		t.Fatalf("profil synthèse inattendu: %+v", simple)
+	}
+}
+
+func TestRelatedDocumentsGathersTheSameFolder(t *testing.T) {
+	items := []catalog.BucketItem{
+		{Type: "file", Path: "GM/Economie/DS 2022.pdf"},
+		{Type: "file", Path: "GM/Economie/DS 2023.pdf"},
+		{Type: "file", Path: "GM/Economie/DS 2024.pdf"},
+		{Type: "file", Path: "TOEIC/listening.mp3"},
+	}
+	hits := Rank(items, "examen économie", "", 4)
+	if len(hits) == 0 {
+		t.Fatal("aucun document classé")
+	}
+	related := RelatedDocuments(items, hits, 3)
+	if len(related) == 0 {
+		t.Fatal("aucun voisin proposé")
+	}
+	for _, hit := range related {
+		if !strings.HasPrefix(hit.Path, "GM/Economie/") {
+			t.Fatalf("voisin hors du dossier: %s", hit.Path)
+		}
+	}
+}
+
+func TestTokenScorePrefersWholeWords(t *testing.T) {
+	if tokenScore("seance", "se") != 0 {
+		t.Fatal("« se » ne doit plus correspondre à l’intérieur d’un mot")
+	}
+	if tokenScore("ds economie 2023", "economie") == 0 {
+		t.Fatal("mot entier non reconnu")
+	}
+	if tokenScore("gm/3agm/s5", "3a") == 0 {
+		t.Fatal("préfixe court non reconnu")
 	}
 }

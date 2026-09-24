@@ -34,6 +34,13 @@ const (
 	defaultNvidiaModel    = "meta/llama-3.1-8b-instruct"
 	defaultAppwriteURL    = "https://fra.cloud.appwrite.io/v1"
 	defaultAppwriteProj   = "69cedb12002acdd498e0"
+
+	// Les modèles qui raisonnent consomment leur budget de jetons avant
+	// d’écrire la réponse : 1100 jetons ne laissaient rien pour la réponse
+	// visible (finish_reason "length", contenu vide).
+	defaultChatAnswerTimeout = 150 * time.Second
+	defaultChatMaxTokens     = 4096
+	defaultChatDeepTokens    = 8192
 )
 
 // Config rassemble les mêmes variables que le Worker Cloudflare.
@@ -75,6 +82,9 @@ type Config struct {
 	NvidiaAPIKey      string
 	NvidiaAPIBase     string
 	NvidiaModel       string
+	ChatAnswerTimeout time.Duration
+	ChatMaxTokens     int
+	ChatDeepTokens    int
 	OpenRouterAPIKey  string
 	OpenRouterAPIBase string
 	OpenRouterModel   string
@@ -163,6 +173,9 @@ func Load(root string) Config {
 	cfg.OpenCodeAPIKey = unsetPlaceholder(firstNonEmpty(get("OPENCODE_API_KEY"), get("OPENCODE_ZEN_API_KEY")))
 	cfg.OpenCodeAPIBase = catalog.TrimTrailingSlashes(firstNonEmpty(get("OPENCODE_API_BASE"), "https://opencode.ai/zen/v1"))
 	cfg.OpenCodeModel = firstNonEmpty(sanitizeModel(get("OPENCODE_MODEL")), "nemotron-3-ultra-free")
+	cfg.ChatAnswerTimeout = durationSeconds(get("CHAT_ANSWER_TIMEOUT"), defaultChatAnswerTimeout)
+	cfg.ChatMaxTokens = catalog.PositiveInt(get("CHAT_MAX_TOKENS"), defaultChatMaxTokens)
+	cfg.ChatDeepTokens = catalog.PositiveInt(get("CHAT_DEEP_MAX_TOKENS"), defaultChatDeepTokens)
 	cfg.ChatTrustProxy = truthy(get("CHAT_TRUST_PROXY"))
 	cfg.AppwriteEndpoint = catalog.TrimTrailingSlashes(firstNonEmpty(get("APPWRITE_ENDPOINT"), get("VITE_APPWRITE_ENDPOINT"), defaultAppwriteURL))
 	cfg.AppwriteProjectID = firstNonEmpty(get("APPWRITE_PROJECT_ID"), get("VITE_APPWRITE_PROJECT_ID"), defaultAppwriteProj)
