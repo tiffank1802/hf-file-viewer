@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -285,6 +286,7 @@ func (s *Server) finishChat(w http.ResponseWriter, r *http.Request, conversation
 		"model":          draft.model,
 		"notice":         draft.note,
 		"degraded":       draft.degraded,
+		"attempted":      draft.attempted,
 		"documents":      publicHits(hits),
 		"conversationId": saved.ID,
 		"title":          saved.Title,
@@ -522,11 +524,12 @@ func excerptKey(item catalog.BucketItem) string {
 // chatDraft est la réponse rédigée par un moteur, ou le repli local quand
 // aucun moteur n’aboutit.
 type chatDraft struct {
-	answer   string
-	engine   string
-	model    string
-	note     string
-	degraded bool // vrai quand un moteur a échoué : relancer peut réussir
+	answer    string
+	engine    string
+	model     string
+	attempted string // moteur essayé quand la rédaction est retombée en local
+	note      string
+	degraded  bool // vrai quand un moteur a échoué : relancer peut réussir
 }
 
 func (s *Server) composeAnswer(ctx context.Context, w http.ResponseWriter, message, contextPath string, history []chatTurn, hits []chat.Hit, providerID, modelOverride string, profile chat.Profile) chatDraft {
@@ -550,6 +553,8 @@ func (s *Server) composeAnswer(ctx context.Context, w http.ResponseWriter, messa
 
 	deadline := time.Now().Add(s.chatAnswerBudget())
 	var lastErr error
+	attemptedID := ""
+	attemptedModel := ""
 	for _, provider := range providers {
 		remaining := time.Until(deadline)
 		if remaining < 20*time.Second {
@@ -558,6 +563,8 @@ func (s *Server) composeAnswer(ctx context.Context, w http.ResponseWriter, messa
 			}
 			break
 		}
+		attemptedID = provider.id
+		attemptedModel = provider.model
 		draft, err := s.draftWithProvider(ctx, w, message, contextPath, history, hits, provider, profile, remaining)
 		if err == nil {
 			return draft
@@ -568,23 +575,32 @@ func (s *Server) composeAnswer(ctx context.Context, w http.ResponseWriter, messa
 	note := chatFailureNote(lastErr)
 	answer := localAnswer(hits, note)
 	_ = writeSSE(w, "delta", map[string]string{"text": answer})
-	return chatDraft{answer: answer, engine: "local", note: note, degraded: true}
+	return chatDraft{
+		answer:    answer,
+		engine:    "local",
+		model:     attemptedModel,
+		attempted: attemptedID,
+		note:      note,
+		degraded:  true,
+	}
 }
 
 // draftWithProvider interroge un moteur. Si le modèle a épuisé son budget de
 // jetons en réfléchissant, une seconde tentative lui en laisse davantage
 // avant de passer au moteur suivant.
 func (s *Server) draftWithProvider(ctx context.Context, w http.ResponseWriter, message, contextPath string, history []chatTurn, hits []chat.Hit, provider *chatProvider, profile chat.Profile, budget time.Duration) (chatDraft, error) {
-	reasoning := modelIsReasoning(provider.id, provider.model)
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
+		reasoning := modelIsReasoning(provider.id, provider.model)
 		tokens := s.chatTokens(profile)
 		if attempt > 0 {
 			// Le modèle a réfléchi au lieu d’écrire : on double la place.
 			tokens *= 2
 		}
+		// « reasoning » est un paramètre OpenRouter : ailleurs, un fournisseur
+		// qui ne le connaît pas pourrait répondre 400.
 		effort := ""
-		if reasoning || (attempt > 0 && provider.id == "openrouter") {
+		if (reasoning || attempt > 0) && provider.id == "openrouter" {
 			switch {
 			case attempt > 0:
 				effort = "low"
@@ -629,8 +645,16 @@ func (s *Server) draftWithProvider(ctx context.Context, w http.ResponseWriter, m
 		}
 		lastErr = err
 		var completionErr *chatCompletionError
-		if errors.As(err, &completionErr) && completionErr != nil && completionErr.kind == "truncated" {
-			continue
+		if errors.As(err, &completionErr) && completionErr != nil {
+			if completionErr.kind == "truncated" {
+				continue
+			}
+			// Modèle inconnu du fournisseur : on retombe sur son modèle par défaut.
+			if completionErr.status == http.StatusNotFound && provider.fallbackModel != "" && provider.fallbackModel != provider.model {
+				log.Printf("chat %s: modèle %s introuvable, repli sur %s", provider.id, provider.model, provider.fallbackModel)
+				provider.model = provider.fallbackModel
+				continue
+			}
 		}
 		break
 	}
@@ -658,11 +682,12 @@ func (s *Server) chatTokens(profile chat.Profile) int {
 }
 
 type chatProvider struct {
-	id      string
-	label   string
-	baseURL string
-	apiKey  string
-	model   string
+	id            string
+	label         string
+	baseURL       string
+	apiKey        string
+	model         string
+	fallbackModel string // modèle du .dev.vars, utilisé si le modèle choisi est introuvable
 }
 
 // chatCandidates renvoie les moteurs prêts, le moteur demandé d’abord. Si le
@@ -675,17 +700,20 @@ func (s *Server) chatCandidates(providerID, modelOverride string) []*chatProvide
 		{
 			id: "openrouter", label: "OpenRouter",
 			baseURL: s.cfg.OpenRouterAPIBase, apiKey: s.cfg.OpenRouterAPIKey,
-			model: firstNonEmpty(modelOverride, s.cfg.OpenRouterModel),
+			model:         firstNonEmpty(modelOverride, s.cfg.OpenRouterModel),
+			fallbackModel: s.cfg.OpenRouterModel,
 		},
 		{
 			id: "nvidia", label: "NVIDIA",
 			baseURL: s.cfg.NvidiaAPIBase, apiKey: s.cfg.NvidiaAPIKey,
-			model: firstNonEmpty(modelOverride, s.cfg.NvidiaModel),
+			model:         firstNonEmpty(modelOverride, s.cfg.NvidiaModel),
+			fallbackModel: s.cfg.NvidiaModel,
 		},
 		{
 			id: "opencode", label: "OpenCode",
 			baseURL: s.cfg.OpenCodeAPIBase, apiKey: s.cfg.OpenCodeAPIKey,
-			model: firstNonEmpty(modelOverride, s.cfg.OpenCodeModel),
+			model:         firstNonEmpty(modelOverride, s.cfg.OpenCodeModel),
+			fallbackModel: s.cfg.OpenCodeModel,
 		},
 	}
 	ready := make([]*chatProvider, 0, len(all))
@@ -1308,8 +1336,29 @@ func localAnswer(hits []chat.Hit, note string) string {
 	return b.String()
 }
 
+var boldHeading = regexp.MustCompile(`^\s*\*\*([^*]{2,48})\*\*\s*:?\s*$`)
+
+// normalizeHeadings transforme les titres en gras (« **Résumé** ») en titres
+// markdown. Beaucoup de modèles n’écrivent jamais les dièses : sans ça, la
+// réponse arrive d’un seul bloc, sans structure exploitable.
+func normalizeHeadings(answer string) string {
+	lines := strings.Split(answer, "\n")
+	for i, line := range lines {
+		match := boldHeading.FindStringSubmatch(line)
+		if match == nil {
+			continue
+		}
+		title := strings.TrimSpace(match[1])
+		if title == "" {
+			continue
+		}
+		lines[i] = "## " + title
+	}
+	return strings.Join(lines, "\n")
+}
+
 func ensureStructure(answer string, hits []chat.Hit) string {
-	answer = strings.TrimSpace(answer)
+	answer = normalizeHeadings(strings.TrimSpace(answer))
 	if answer == "" {
 		return localAnswer(hits, "")
 	}

@@ -229,6 +229,7 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
               documents: data.documents || item.documents,
               engine: data.engine,
               model: data.model || '',
+              attempted: data.attempted || '',
               notice: data.notice || '',
               degraded: Boolean(data.degraded),
               thinking: false,
@@ -446,9 +447,11 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
                 {message.engine && !message.pending && (
                   <p className="library-chat-engine">
                     {message.engine === 'local'
-                      ? 'Recherche dans la bibliothèque.'
+                      ? (message.degraded && message.attempted
+                        ? `Rédaction automatique indisponible avec ${engineName(message.attempted)} · ${modelName(message.model)}.`
+                        : 'Recherche dans la bibliothèque.')
                       : `Rédigé avec ${engineName(message.engine)}, à partir des documents de la bibliothèque.`}
-                    {message.model ? ` Modèle : ${modelName(message.model)}.` : ''}
+                    {!message.degraded && message.model ? ` Modèle : ${modelName(message.model)}.` : ''}
                   </p>
                 )}
                 {!message.pending && (message.error || message.degraded) && message.question && (

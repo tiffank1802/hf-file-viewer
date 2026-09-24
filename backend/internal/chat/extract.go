@@ -55,7 +55,68 @@ func Extract(filename string, data []byte, limit int) string {
 	default:
 		return ""
 	}
-	return Clip(cleanText(text), limit)
+	text = Clip(cleanText(text), limit)
+	if !readableText(text) {
+		// Polices PDF encodées par glyphes : le texte extrait est du bruit.
+		// Mieux vaut ne rien renvoyer que nourrir le modèle avec « ÿÿ A B D… ».
+		return ""
+	}
+	return text
+}
+
+// readableText écarte les extractions qui ne sont pas du langage : une
+// table de glyphes (« A B D I E N W P s V a à b d… »), des caractères de
+// remplacement, ou un fatras de symboles. Un texte court mais propre est
+// conservé.
+func readableText(text string) bool {
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+	if strings.Contains(text, "\u00ff\u00ff") || strings.ContainsRune(text, '\ufffd') {
+		return false
+	}
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return false
+	}
+	total := 0
+	letters := 0
+	single := 0
+	long := 0
+	run := 0
+	longestRun := 0
+	for _, word := range words {
+		runes := []rune(word)
+		total += len(runes)
+		for _, r := range runes {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) {
+				letters++
+			}
+		}
+		if len(runes) == 1 {
+			single++
+			run++
+			if run > longestRun {
+				longestRun = run
+			}
+			continue
+		}
+		run = 0
+		if len(runes) >= 4 {
+			long++
+		}
+	}
+	if total == 0 || letters*4 < total*3 {
+		return false
+	}
+	// Une enfilade de lettres isolées est une table de glyphes, pas une phrase.
+	if longestRun >= 8 {
+		return false
+	}
+	if len(words) >= 10 && single*2 > len(words) && long*3 < len(words) {
+		return false
+	}
+	return true
 }
 
 // Clip coupe un texte sur une limite de runes.

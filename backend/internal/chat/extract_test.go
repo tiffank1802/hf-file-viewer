@@ -61,3 +61,18 @@ func zipWith(t *testing.T, name, content string) []byte {
 	}
 	return buf.Bytes()
 }
+
+// Un PDF dont les polices sont encodées par glyphes donne une table de
+// caractères, pas du texte : mieux vaut ne rien renvoyer que du bruit.
+func TestExtractRefusesGlyphNoise(t *testing.T) {
+	noise := "E:\\LEAP ENGLISH CENTRE *Asus lap\\Mẫu thiết kế\\LEAP-Header. png Adobe UCS ÿÿ A B D I E N W P s V a à b d e è f g h i í j k l m o p r s t u ù v y 1 +1:? AHLTVY` ­´àèíóùăđ"
+	if text := Extract("lesson.pdf", []byte(noise), 400); text != "" {
+		t.Fatalf("bruit conservé: %q", text)
+	}
+	if text := Extract("lesson.txt", []byte("Le DS d’économie comporte trois parties et une étude de document."), 400); text == "" {
+		t.Fatal("un texte propre ne doit pas être écarté")
+	}
+	if text := Extract("note.txt", []byte("Bilan de conception du banc d’essai."), 400); text == "" {
+		t.Fatal("un texte court ne doit pas être écarté")
+	}
+}
