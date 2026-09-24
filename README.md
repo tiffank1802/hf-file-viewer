@@ -12,7 +12,7 @@ Bibliothèque étudiante moderne pour les ressources de **Centrale Lyon ENISE**,
 - raccourcis **Microsoft OneNote** (`.url`) affichés avec leur cible ouvrable, blocs-notes `.one` disponibles au téléchargement ;
 - aperçu 3D hybride : conversion **GLB gratuite** (FreeCAD) pour `.step`, `.iges`, `.stl`, `.obj` avec rotation, zoom et déplacement, **Autodesk APS** (Model Derivative) pour les autres formats (`.dwg`, `.rvt`, `.sldprt`, `.ifc`, `.catpart`, … — FreeCAD ne lit pas les formats propriétaires), et plugin iframe **ShareCAD** en roue de secours gratuite sans conversion ;
 - téléchargement, partage et favoris enregistrés dans le navigateur ;
-- recherche globale à partir d’un index Hugging Face mis en cache ;
+- assistant bibliothèque : il retrouve un document, l’ouvre et peut le résumer. La rédaction NVIDIA reste côté serveur Go ; sans clé, les cartes de documents sont quand même proposées ;
 - effectifs par dossier calculés **une seule fois à l’indexation** et stockés dans le JSON d’index ;
 - Worker Cloudflare servant à la fois les assets statiques et l’API proxy ;
 - Cache API configuré pour les arbres, l’index et les fichiers raisonnablement petits ;
@@ -59,16 +59,18 @@ Les fichiers ne sont ajoutés au Cache API que si une réponse complète possèd
 
 ## Démarrage local
 
-Prérequis : Node.js 20.19 ou plus récent.
+Prérequis : Node.js 20.19 ou plus récent, et Go 1.22+ si l’on veut le backend rapide décrit ci-dessous.
 
 ```bash
 npm install
 npm run dev
 ```
 
-`npm run dev` lance Vite sur `http://localhost:3000`. Sans Worker local, l’interface utilise automatiquement les données d’aperçu si `/api` est indisponible.
+`npm run dev` lance le **backend Go** (`127.0.0.1:8788`) et Vite sur `http://localhost:3000`. Vite proxifie `/api` vers Go : le navigateur reste sur la même origine. Si Go n’est pas installé, le script le signale et le frontend retombe sur les données d’aperçu.
 
-Pour tester le frontend **et** le Worker **avec les fonctions 3D**, créer d’abord les secrets locaux (jamais versionnés) :
+Le détail (cache mémoire, dossiers servis depuis l’index, déploiement d’un seul binaire) est dans [`backend/README.md`](./backend/README.md).
+
+Pour tester le frontend **et** le Worker Cloudflare **avec les fonctions 3D**, créer d’abord les secrets locaux (jamais versionnés) :
 
 ```bash
 cp .dev.vars.example .dev.vars
@@ -252,6 +254,12 @@ MAX_SOLIDWORKS_BUNDLE_BYTES="262144000"
 npx wrangler secret put SOLIDWORKS_CONVERTER_TOKEN
 ```
 
+C62144000"
+
+# secret partagé uniquement avec le service HOOPS
+npx wrangler secret put SOLIDWORKS_CONVERTER_TOKEN
+```
+
 Configuration du service (voir [`space-huggingface/README.md`](space-huggingface/README.md)) :
 `HOOPS_CONVERTER_PATH`, `HOOPS_LICENSE_FILE` ou `HOOPS_LICENSE_KEY`,
 `HF_BUCKET_ID`, `HF_TOKEN` avec permission d’écriture et
@@ -360,7 +368,9 @@ Règles importantes :
 
 Pour un déploiement CI GitHub, stocker `CLOUDFLARE_API_TOKEN` et `CLOUDFLARE_ACCOUNT_ID` dans les **GitHub Actions Secrets**, jamais dans le dépôt.
 
-## API du Worker
+## API
+
+Le Worker Cloudflare et le backend Go exposent les mêmes routes. L’en-tête `X-Backend: go` indique que la réponse vient du processus Go ; son absence indique le Worker.
 
 | Route | Rôle |
 |---|---|
@@ -381,6 +391,8 @@ Pour un déploiement CI GitHub, stocker `CLOUDFLARE_API_TOKEN` et `CLOUDFLARE_AC
 | `GET /api/office/status` | conversion PDF Office configurée ou non |
 | `GET /api/office/pdf?path=...` | PDF converti via LibreOffice (mis en cache) |
 | `GET /api/link/preview?url=...` | aperçu enrichi d’un lien `.url` (Open Graph, mis en cache) |
+| `GET /api/chat/status` | assistant prêt, local, ou non configuré. Jamais de clé dans la réponse |
+| `POST /api/chat` | question en JSON, réponse en flux (`text/event-stream`) : documents, puis texte |
 
 L’en-tête `X-Cache-Status` permet de diagnostiquer le comportement : `HIT`, `KV-HIT`, `MISS`, `BYPASS-RANGE` ou `BYPASS-SIZE`. L’en-tête `X-Data-Source: index-json` confirme qu’une réponse d’effectifs provient bien du JSON d’index et non d’un nouveau parcours Hugging Face.
 
@@ -444,3 +456,4 @@ tests/               tests unitaires
 Le logo Centrale Lyon ENISE provient de la [charte des marques Centrale Lyon](https://www.ec-lyon.fr/centrale-lyon/le-fil-dinformation/charte-graphique-et-marques-centrale-lyon). Le logo ENSPY provient de l’écosystème officiel de l’Université de Yaoundé I. Le drapeau est un SVG local respectant les couleurs nationales.
 
 Ce frontend est présenté comme un **projet étudiant indépendant et non officiel**. Les marques et documents restent la propriété de leurs ayants droit.
+e leurs ayants droit.

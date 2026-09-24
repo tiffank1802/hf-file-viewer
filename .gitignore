@@ -83,3 +83,7 @@ coverage/
 # Python bytecode
 __pycache__/
 *.py[cod]
+
+# Backend Go
+backend/enise-api
+backend/bin/

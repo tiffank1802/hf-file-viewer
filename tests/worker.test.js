@@ -371,6 +371,17 @@ test('la lecture plafonnée tronque les gros corps de réponse', async () => {
   assert.equal(await readCappedText(null, 100), '');
 });
 
+test('le chat sans origine Go répond 501 et n’appelle pas NVIDIA', async () => {
+  const response = await worker.fetch(new Request('https://enise.test/api/chat/status'), {}, {});
+  assert.equal(response.status, 501);
+  const payload = await response.json();
+  assert.equal(payload.status, 'not-configured');
+  assert.match(payload.error, /backend Go/);
+
+  const missing = await worker.fetch(new Request('https://enise.test/api/chat', { method: 'POST' }), { GO_API_ORIGIN: '' }, {});
+  assert.equal(missing.status, 501);
+});
+
 test('les redirections vers le login Microsoft sont détectées', () => {
   assert.equal(isAuthWallUrl('https://login.microsoftonline.com/tenant/oauth2/authorize?x=1'), true);
   assert.equal(isAuthWallUrl('https://login.live.com/login.srf?wa=wsignin'), true);

@@ -148,6 +148,11 @@ export default {
         return await handleSolidworksStep(request, env);
       }
 
+      if (url.pathname === '/api/chat/status' || url.pathname === '/api/chat') {
+        assertMethod(request, url.pathname === '/api/chat' ? ['POST'] : ['GET']);
+        return await proxyGoChat(request, env);
+      }
+
       return jsonResponse(
         { error: 'Route API introuvable.' },
         { status: 404, cacheControl: 'no-store' },
@@ -2133,6 +2138,66 @@ function responseFromCache(cached, cacheStatus, cacheControl) {
   response.headers.set('Server-Timing', 'edge;desc="cache hit";dur=0');
   applySecurityHeaders(response.headers);
   return response;
+}
+
+async function proxyGoChat(request, env) {
+  const origin = String(env?.GO_API_ORIGIN || '').trim().replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(origin)) {
+    return jsonResponse(
+      {
+        status: 'not-configured',
+        engine: 'unavailable',
+        error: 'L’assistant documentaire est servi par le backend Go. Définissez GO_API_ORIGIN pour le joindre.',
+      },
+      { status: 501, cacheControl: 'no-store' },
+    );
+  }
+  let target;
+  try {
+    const incoming = new URL(request.url);
+    target = new URL(incoming.pathname + incoming.search, origin);
+    if (target.origin === incoming.origin) {
+      return jsonResponse(
+        { error: 'GO_API_ORIGIN ne doit pas pointer vers le Worker lui-même.' },
+        { status: 501, cacheControl: 'no-store' },
+      );
+    }
+  } catch {
+    return jsonResponse({ error: 'Origine Go invalide.' }, { status: 501, cacheControl: 'no-store' });
+  }
+  const declared = Number(request.headers.get('Content-Length') || 0);
+  if (declared > 384 * 1024) {
+    return jsonResponse({ error: 'Question trop volumineuse.' }, { status: 413, cacheControl: 'no-store' });
+  }
+  const headers = new Headers();
+  headers.set('Accept', request.headers.get('Accept') || 'application/json');
+  const contentType = request.headers.get('Content-Type');
+  if (contentType) headers.set('Content-Type', contentType);
+  const client = String(request.headers.get('CF-Connecting-IP') || '').trim();
+  if (client && !/[\s,]/.test(client)) headers.set('X-Enise-Client', client);
+  const init = { method: request.method, headers };
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    init.body = request.body;
+    init.duplex = 'half';
+  }
+  let upstream;
+  try {
+    upstream = await fetch(target, init);
+  } catch {
+    return jsonResponse(
+      { error: 'Le backend Go de l’assistant est injoignable.' },
+      { status: 502, cacheControl: 'no-store' },
+    );
+  }
+  const responseHeaders = new Headers();
+  for (const name of ['content-type', 'cache-control']) {
+    const value = upstream.headers.get(name);
+    if (value) responseHeaders.set(name, value);
+  }
+  responseHeaders.set('Cache-Control', responseHeaders.get('Cache-Control') || 'no-store');
+  responseHeaders.set('X-Backend', 'go');
+  applySecurityHeaders(responseHeaders);
+  return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
 }
 
 function jsonResponse(value, options = {}) {

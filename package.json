@@ -5,7 +5,10 @@
   "type": "module",
   "description": "Bibliothèque documentaire Centrale Lyon ENISE, déployable sur Cloudflare Workers.",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev-go.mjs",
+    "dev:vite": "vite",
+    "dev:api": "node scripts/dev-go.mjs --api-only",
+    "start:go": "npm run build && node scripts/dev-go.mjs --api-only --static",
     "predev:worker": "node scripts/check-dev-vars.mjs",
     "dev:worker": "npm run build && wrangler dev --local --ip 0.0.0.0",
     "build": "vite build",

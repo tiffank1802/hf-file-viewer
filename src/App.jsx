@@ -5,6 +5,7 @@ import Explorer from './components/Explorer';
 import Footer from './components/Footer';
 import Header from './components/Header';
 import Hero from './components/Hero';
+import LibraryChat from './components/LibraryChat';
 import PreviewModal from './components/PreviewModal';
 import SearchPalette from './components/SearchPalette';
 import SideNav from './components/SideNav';
@@ -138,6 +139,12 @@ export default function App() {
         catalog={catalog}
       />
 
+      <LibraryChat
+        path={library.path}
+        catalog={catalog}
+        onNavigate={library.navigate}
+        onOpenFile={setSelectedFile}
+      />
       <CloudflareAnalytics />
       <PreviewModal
         file={selectedFile}
