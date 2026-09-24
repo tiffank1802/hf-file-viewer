@@ -1,14 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
+import http from 'node:http';
+import worker, {
   buildApsObjectKey,
   buildHfFileUrl,
   buildHfTreeUrl,
+  buildSolidworksManifestPath,
+  buildSolidworksOriginalManifestPath,
+  buildSolidworksOriginalStepPath,
+  buildSolidworksStepPath,
   countFilesByDirectory,
+  describeApsFailure,
+  describeApsManifest,
+  extractLinkMeta,
   getNextLink,
+  getSolidworksConvertUrl,
+  isAuthWallUrl,
+  isBlockedLinkHost,
+  isSolidworksExtension,
+  readCappedText,
+  sha256Hex,
   isApsConfigured,
   makeApsSourceKey,
   makeKvKey,
+  makeSolidworksSourceKey,
   normalizeFilePath,
   normalizePrefix,
   selectCountsForPrefix,
@@ -40,6 +55,180 @@ test('getNextLink lit le lien de pagination relatif', () => {
     'https://huggingface.co/api/buckets/u/b/tree',
   );
   assert.equal(next, 'https://huggingface.co/api/buckets/u/b/tree?cursor=abc');
+});
+
+test('les chemins SolidWorks dérivés restent stables et hors du dossier source', () => {
+  assert.equal(
+    buildSolidworksStepPath('GM/Tutos SolidWorks/piece.sldprt'),
+    'derived/step/GM/Tutos SolidWorks/piece.step',
+  );
+  assert.equal(
+    buildSolidworksManifestPath('GM/Tutos SolidWorks/piece.sldprt'),
+    'derived/step/GM/Tutos SolidWorks/piece.step.json',
+  );
+  assert.equal(
+    buildSolidworksOriginalStepPath('GM/Tutos SolidWorks/piece.sldprt'),
+    'GM/Tutos SolidWorks/piece.step',
+  );
+  assert.equal(
+    buildSolidworksOriginalManifestPath('GM/Tutos SolidWorks/piece.sldprt'),
+    'GM/Tutos SolidWorks/piece.step.json',
+  );
+  assert.equal(isSolidworksExtension('SLDASM'), true);
+  assert.equal(isSolidworksExtension('step'), false);
+  assert.equal(
+    makeSolidworksSourceKey('GM/piece.sldprt', '123', '2026-09-09'),
+    makeSolidworksSourceKey('GM/piece.sldprt', '123', '2026-09-09'),
+  );
+  assert.notEqual(
+    makeSolidworksSourceKey('GM/piece.sldprt', '123', '2026-09-09'),
+    makeSolidworksSourceKey('GM/other.sldprt', '123', '2026-09-09'),
+  );
+});
+
+test('le convertisseur SolidWorks est désactivé par défaut et normalise son URL', () => {
+  assert.equal(getSolidworksConvertUrl({}), '');
+  assert.equal(
+    getSolidworksConvertUrl({ SOLIDWORKS_CONVERT_URL: 'https://hoops.example///' }),
+    'https://hoops.example',
+  );
+});
+
+test('POST /api/solidworks/step transmet le fichier et le chemin de sortie au service HOOPS', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  let converterForm = null;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input instanceof Request ? input.url : input);
+    calls.push(url);
+    if (url.endsWith('.step.json?download=false')) return new Response('missing', { status: 404 });
+    if (url.includes('/api/convert-solidworks-step')) {
+      converterForm = init.body;
+      assert.equal(init.headers.Authorization, 'Bearer internal-secret');
+      return new Response(JSON.stringify({
+        status: 'success',
+        stepPath: 'derived/step/GM/piece.step',
+        manifestPath: 'derived/step/GM/piece.step.json',
+        size: 321,
+      }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Response(new TextEncoder().encode('solidworks-source').buffer);
+  };
+
+  try {
+    const response = await worker.fetch(
+      new Request('https://docs.example/api/solidworks/step?path=GM%2Fpiece.sldprt', { method: 'POST' }),
+      {
+        HF_BUCKET_ID: 'ktongue/ENISE-SITE',
+        SOLIDWORKS_CONVERT_URL: 'https://hoops.example/',
+        SOLIDWORKS_CONVERTER_TOKEN: 'internal-secret',
+        MAX_SOLIDWORKS_BYTES: '1000000',
+        ASSETS: { fetch: () => new Response('asset') },
+      },
+      { waitUntil() {} },
+    );
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.status, 'success');
+    assert.equal(payload.stepPath, 'derived/step/GM/piece.step');
+    assert.equal(payload.downloadUrl, '/api/file?path=derived%2Fstep%2FGM%2Fpiece.step&download=1');
+    assert.ok(converterForm instanceof FormData);
+    assert.equal(converterForm.get('source_path'), 'GM/piece.sldprt');
+    assert.equal(converterForm.get('output_path'), 'derived/step/GM/piece.step');
+    assert.match(String(converterForm.get('source_sha256')), /^[a-f0-9]{64}$/);
+    assert.equal(calls.some((url) => url.includes('/api/convert-solidworks-step')), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('un STEP local déjà présent à côté du source est servi sans service HOOPS', async () => {
+  const originalFetch = globalThis.fetch;
+  const source = new TextEncoder().encode('local-solidworks-source');
+  const sourceSha256 = await sha256Hex(source);
+  globalThis.fetch = async (input) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.includes('/GM/piece.sldprt')) return new Response(source);
+    if (url.includes('/derived/step/')) return new Response('missing', { status: 404 });
+    if (url.includes('/GM/piece.step.json')) {
+      return new Response(JSON.stringify({
+        sourceSha256,
+        dependencies: [],
+        size: 456,
+      }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    throw new Error(`Le service HOOPS ne devrait pas être appelé : ${url}`);
+  };
+
+  try {
+    const response = await worker.fetch(
+      new Request('https://docs.example/api/solidworks/step?path=GM%2Fpiece.sldprt', { method: 'POST' }),
+      {
+        HF_BUCKET_ID: 'ktongue/ENISE-SITE',
+        ASSETS: { fetch: () => new Response('asset') },
+      },
+      { waitUntil() {} },
+    );
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.cached, true);
+    assert.equal(payload.stepPath, 'GM/piece.step');
+    assert.equal(payload.downloadUrl, '/api/file?path=GM%2Fpiece.step&download=1');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('un assemblage transmet ses dépendances SolidWorks et leurs empreintes', async () => {
+  const originalFetch = globalThis.fetch;
+  let converterForm = null;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.includes('/tree/GM')) {
+      return new Response(JSON.stringify([
+        { type: 'file', path: 'GM/assembly.sldasm' },
+        { type: 'file', path: 'GM/parts/base.sldprt' },
+        { type: 'file', path: 'GM/sub/plate.sldprt' },
+      ]), { headers: { 'Content-Type': 'application/json' } });
+    }
+    if (url.endsWith('.step.json?download=false')) return new Response('missing', { status: 404 });
+    if (url.includes('/api/convert-solidworks-step')) {
+      converterForm = init.body;
+      return new Response(JSON.stringify({
+        status: 'success',
+        stepPath: 'derived/step/GM/assembly.step',
+      }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    if (url.includes('/GM/parts/base.sldprt')) return new Response(new TextEncoder().encode('base-part'));
+    if (url.includes('/GM/sub/plate.sldprt')) return new Response(new TextEncoder().encode('plate-part'));
+    return new Response(new TextEncoder().encode('assembly-source'));
+  };
+
+  try {
+    const response = await worker.fetch(
+      new Request('https://docs.example/api/solidworks/step?path=GM%2Fassembly.sldasm', { method: 'POST' }),
+      {
+        HF_BUCKET_ID: 'ktongue/ENISE-SITE',
+        SOLIDWORKS_CONVERT_URL: 'https://hoops.example',
+        MAX_SOLIDWORKS_BYTES: '1000000',
+        MAX_SOLIDWORKS_BUNDLE_BYTES: '1000000',
+        ASSETS: { fetch: () => new Response('asset') },
+      },
+      { waitUntil() {} },
+    );
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.dependencies.length, 2);
+    assert.deepEqual(payload.dependencies.map(({ path }) => path), ['parts/base.sldprt', 'sub/plate.sldprt']);
+    assert.ok(converterForm instanceof FormData);
+    assert.equal(converterForm.getAll('dependencies').length, 2);
+    assert.deepEqual(
+      JSON.parse(converterForm.get('dependency_manifest')),
+      payload.dependencies,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('les clés Workers KV sont courtes, stables et spécifiques au chemin', () => {
@@ -110,4 +299,137 @@ test('les clés APS sont stables, courtes et sensibles au contenu', () => {
 test('les objets OSS APS gardent une partie lisible du nom', () => {
   const key = buildApsObjectKey('GM/3D/maquette_du$batiment.rvt', 'abc123');
   assert.equal(key, 'abc123-maquette_du_batiment.rvt');
+});
+
+test('les erreurs Autodesk de version non prise en charge sont explicites', () => {
+  const raw = 'The Version of the file: 2024 is not supported.';
+  const failure = describeApsFailure([raw], 'GM/3D/_1700mm_plank.SLDPRT');
+  assert.match(failure, /n’est pas prise en charge/i);
+  assert.match(failure, /SLDPRT/i);
+  assert.match(failure, /STEP\/IGES\/OBJ\/STL/i);
+  assert.match(failure, /Autodesk/i);
+
+  const manifest = {
+    status: 'failed',
+    derivatives: [
+      {
+        status: 'failed',
+        messages: [{ type: 'error', message: 'The Version of the file: {0} is not supported.' }],
+      },
+    ],
+  };
+  const fromManifest = describeApsManifest(manifest, 'GM/3D/piece.x_t');
+  assert.equal(fromManifest, describeApsFailure(['The Version of the file: {0} is not supported.'], 'GM/3D/piece.x_t'));
+
+  const success = describeApsManifest({ status: 'success', derivatives: [] }, 'GM/3D/piece.stl');
+  assert.equal(success, 'Modèle 3D prêt.');
+});
+
+test('les hôtes internes sont interdits pour l’aperçu de lien', () => {
+  for (const host of ['localhost', 'LOCALHOST.', '127.0.0.1', '10.4.2.1', '172.16.0.9', '172.31.255.1', '192.168.1.1', '169.254.169.254', '0.0.0.0', '::1', '[::1]', 'intranet', 'srv.local', 'app.internal', 'x.test', '']) {
+    assert.equal(isBlockedLinkHost(host), true, host || '(vide)');
+  }
+  for (const host of ['exemple.fr', 'www.univ-lyon.fr', 'ecole.sharepoint.com', '8.8.8.8', '172.15.0.1', '172.32.0.1', '192.167.1.1']) {
+    assert.equal(isBlockedLinkHost(host), false, host);
+  }
+});
+
+test('les métas Open Graph sont extraites (og prioritaire, URL résolues)', () => {
+  const meta = extractLinkMeta(
+    '<html><head><title>Titre brut &amp; co</title>'
+    + '<meta name="description" content="Desc classique">'
+    + '<meta property="og:title" content="Titre &lt;OG&gt;">'
+    + '<meta property="og:description" content="Desc OG">'
+    + '<meta property="og:image" content="/img/cover.png">'
+    + '<meta property="og:site_name" content="Site démo">'
+    + '<link rel="icon" href="https://cdn.exemple.fr/f.ico">'
+    + '</head></html>',
+    'https://exemple.fr/page/a',
+  );
+  assert.equal(meta.title, 'Titre <OG>');
+  assert.equal(meta.description, 'Desc OG');
+  assert.equal(meta.image, 'https://exemple.fr/img/cover.png');
+  assert.equal(meta.siteName, 'Site démo');
+  assert.equal(meta.icon, 'https://cdn.exemple.fr/f.ico');
+
+  const fallback = extractLinkMeta('<title>Seul titre</title>', 'https://exemple.fr/');
+  assert.equal(fallback.title, 'Seul titre');
+  assert.equal(fallback.description, '');
+  assert.equal(fallback.image, '');
+
+  const unsafe = extractLinkMeta(
+    '<meta property="og:image" content="javascript:alert(1)">',
+    'https://exemple.fr/',
+  );
+  assert.equal(unsafe.image, '');
+});
+
+test('la lecture plafonnée tronque les gros corps de réponse', async () => {
+  const short = await readCappedText(new Response('<title>Court</title>').body, 1024);
+  assert.equal(short, '<title>Court</title>');
+  const long = await readCappedText(new Response(`${'a'.repeat(500)}<title>Tard</title>`).body, 100);
+  assert.equal(long.length, 100);
+  assert.equal(await readCappedText(null, 100), '');
+});
+
+test('le chat sans origine Go répond 501 et n’appelle pas NVIDIA', async () => {
+  const response = await worker.fetch(new Request('https://enise.test/api/chat/status'), {}, {});
+  assert.equal(response.status, 501);
+  const payload = await response.json();
+  assert.equal(payload.status, 'not-configured');
+  assert.match(payload.error, /backend Go/);
+
+  const missing = await worker.fetch(new Request('https://enise.test/api/chat', { method: 'POST' }), { GO_API_ORIGIN: '' }, {});
+  assert.equal(missing.status, 501);
+});
+
+test('le compte sans origine Go répond 501', async () => {
+  const response = await worker.fetch(new Request('https://enise.test/api/auth/session'), {}, {});
+  assert.equal(response.status, 501);
+  const payload = await response.json();
+  assert.equal(payload.configured, false);
+  assert.match(payload.error, /backend Go/);
+});
+
+test('le relais compte transmet le cookie et le renvoie au navigateur', async () => {
+  const seen = {};
+  const server = http.createServer((req, res) => {
+    seen.cookie = req.headers.cookie || '';
+    seen.host = req.headers['x-forwarded-host'] || '';
+    seen.proto = req.headers['x-forwarded-proto'] || '';
+    res.writeHead(200, {
+      'content-type': 'application/json',
+      'set-cookie': 'enise_session=abcsecret; HttpOnly; Path=/',
+    });
+    res.end('{"configured":true}');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const response = await worker.fetch(new Request('https://enise.test/api/auth/login', {
+      method: 'POST',
+      headers: {
+        cookie: 'enise_session=abcsecret',
+        'content-type': 'application/json',
+      },
+      body: '{}',
+    }), { GO_API_ORIGIN: `http://127.0.0.1:${port}` }, {});
+    assert.equal(response.status, 200);
+    assert.equal(seen.cookie, 'enise_session=abcsecret');
+    assert.equal(seen.host, 'enise.test');
+    assert.equal(seen.proto, 'https');
+    assert.match(response.headers.get('set-cookie') || '', /enise_session=abcsecret/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('les redirections vers le login Microsoft sont détectées', () => {
+  assert.equal(isAuthWallUrl('https://login.microsoftonline.com/tenant/oauth2/authorize?x=1'), true);
+  assert.equal(isAuthWallUrl('https://login.live.com/login.srf?wa=wsignin'), true);
+  assert.equal(isAuthWallUrl('https://account.microsoft.com/account'), true);
+  assert.equal(isAuthWallUrl('https://onedrive.live.com/?id=root'), false);
+  assert.equal(isAuthWallUrl('https://exemple.fr/'), false);
+  assert.equal(isAuthWallUrl(''), false);
+  assert.equal(isAuthWallUrl('pas une url'), false);
 });

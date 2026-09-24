@@ -8,11 +8,11 @@ Bibliothèque étudiante moderne pour les ressources de **Centrale Lyon ENISE**,
 - identité blanche « liquid glass », verte, rouge et jaune ;
 - icônes React (`react-icons`) et logos locaux optimisés ;
 - navigation par dossier, fil d’Ariane, tri, grille/liste ;
-- aperçu PDF, image, audio, vidéo, texte et **Viewer Office Web** pour les documents Office (`.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`) ;
+- aperçu PDF, image, audio, vidéo, texte et **visionneuse Office hybride** : rendu local (`.docx`, `.xlsx`/`.xls`, texte `.pptx`), conversion PDF serveur (LibreOffice) et **Viewer Office Web** (`.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`, `.odt`, `.ods`, `.odp`, ≤ 10 Mo) ;
 - raccourcis **Microsoft OneNote** (`.url`) affichés avec leur cible ouvrable, blocs-notes `.one` disponibles au téléchargement ;
-- visionneuse **Autodesk APS** (Model Derivative) pour les fichiers 3D (`.dwg`, `.rvt`, `.ifc`, `.ipt`, `.sldprt`, `.stp`, `.stl`, `.obj`, …) avec rotation, zoom et déplacement ;
+- aperçu 3D hybride : conversion **GLB gratuite** (FreeCAD) pour `.step`, `.iges`, `.stl`, `.obj` avec rotation, zoom et déplacement, **Autodesk APS** (Model Derivative) pour les autres formats (`.dwg`, `.rvt`, `.sldprt`, `.ifc`, `.catpart`, … — FreeCAD ne lit pas les formats propriétaires), et plugin iframe **ShareCAD** en roue de secours gratuite sans conversion ;
 - téléchargement, partage et favoris enregistrés dans le navigateur ;
-- recherche globale à partir d’un index Hugging Face mis en cache ;
+- assistant bibliothèque : il retrouve un document, l’ouvre, le résume, et sait croiser plusieurs annales pour répondre à « comment se structure l’examen d’économie ? ». La rédaction reste côté serveur Go ; sans clé, les cartes de documents sont quand même proposées ;
 - effectifs par dossier calculés **une seule fois à l’indexation** et stockés dans le JSON d’index ;
 - Worker Cloudflare servant à la fois les assets statiques et l’API proxy ;
 - Cache API configuré pour les arbres, l’index et les fichiers raisonnablement petits ;
@@ -49,6 +49,9 @@ Le frontend et le Worker sont sur **le même domaine**. Le navigateur n’appell
 | Index `/api/index` | 30 min | Cache API, 12 h | API Hugging Face |
 | Comptage `/api/counts` | 30 min | Cache API, 12 h | JSON d’index (aucun appel HF) |
 | Fichier `/api/file` | 1 h | Cache API, 7 j | bucket Hugging Face |
+| PDF Office `/api/office/pdf` | 1 h | Cache API, 7 j | Space LibreOffice |
+| GLB 3D `/api/model3d/glb` | 1 h | Cache API, 7 j | Space FreeCAD |
+| Aperçu lien `/api/link/preview` | 1 h | Cache API, 24 h | page cible |
 
 Les fichiers ne sont ajoutés au Cache API que si une réponse complète possède une taille connue inférieure ou égale à **25 Mio**. Les requêtes `Range` et les fichiers plus grands sont transmis sans mise en cache par le Worker (`BYPASS-RANGE` ou `BYPASS-SIZE`) ; le CDN de Hugging Face peut néanmoins les optimiser.
 
@@ -56,16 +59,18 @@ Les fichiers ne sont ajoutés au Cache API que si une réponse complète possèd
 
 ## Démarrage local
 
-Prérequis : Node.js 20.19 ou plus récent.
+Prérequis : Node.js 20.19 ou plus récent, et Go 1.22+ si l’on veut le backend rapide décrit ci-dessous.
 
 ```bash
 npm install
 npm run dev
 ```
 
-`npm run dev` lance Vite sur `http://localhost:3000`. Sans Worker local, l’interface utilise automatiquement les données d’aperçu si `/api` est indisponible.
+`npm run dev` lance le **backend Go** (`127.0.0.1:8788`) et Vite sur `http://localhost:3000`. Vite proxifie `/api` vers Go : le navigateur reste sur la même origine. Si Go n’est pas installé, le script le signale et le frontend retombe sur les données d’aperçu.
 
-Pour tester le frontend **et** le Worker **avec les fonctions 3D**, créer d’abord les secrets locaux (jamais versionnés) :
+Le détail (cache mémoire, dossiers servis depuis l’index, déploiement d’un seul binaire) est dans [`backend/README.md`](./backend/README.md).
+
+Pour tester le frontend **et** le Worker Cloudflare **avec les fonctions 3D**, créer d’abord les secrets locaux (jamais versionnés) :
 
 ```bash
 cp .dev.vars.example .dev.vars
@@ -115,6 +120,95 @@ Les réglages de production sont dans [`wrangler.jsonc`](./wrangler.jsonc) :
 
 Un changement de TTL s’applique aux nouvelles entrées de cache. Les anciennes expirent naturellement ou peuvent être purgées depuis le tableau de bord Cloudflare.
 
+### Héberger l’API Go sur Firebase (Cloud Run)
+
+Le site reste sur Cloudflare Workers ; seule l’API Go (assistant, compte étudiant) tourne sur **Cloud Run**, dans le projet Firebase. Le Worker appelle directement l’URL `*.run.app` (`GO_API_ORIGIN`) : passer par Firebase Hosting couperait les réponses de l’assistant à 60 secondes.
+
+**Prérequis, une seule fois :**
+
+1. Console Firebase → **Mettre à niveau** vers le plan **Blaze** (Cloud Run exige un compte de facturation ; le quota gratuit mensuel couvre largement ce trafic). Conseillé : une alerte de budget à 1 € dans Google Cloud → Facturation → Budgets.
+2. Installer le [Google Cloud SDK](https://cloud.google.com/sdk/docs/install), puis `gcloud auth login`.
+3. Renseigner au moins un moteur dans `.dev.vars` (`CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN`, ou une clé OpenRouter / NVIDIA / OpenCode).
+
+**Déploiement :**
+
+```bash
+npm run deploy:api:firebase -- --project <id-du-projet-firebase>
+npm run deploy
+```
+
+Le script active les API Cloud Run / Cloud Build / Artifact Registry, construit l’image depuis [`backend/Dockerfile`](./backend/Dockerfile), déploie le service `enise-docs-api` (région `europe-west1`, public, délai 300 s, 0 à 3 instances), vérifie `/api/health` puis écrit `GO_API_ORIGIN` dans `wrangler.jsonc`. `npm run deploy` republie ensuite le Worker.
+
+Seules les clés utiles de `.dev.vars` sont transmises au service (moteurs de rédaction, modèles, Appwrite) ; `CHAT_TRUST_PROXY=1` est fixé d’office. `HF_TOKEN` n’est envoyé qu’avec `--with-hf-token` (bucket privé). Autres options : `--region`, `--service`, `--no-origin`, `--dry-run` (affiche la commande `gcloud` sans rien déployer). Le projet peut aussi venir de `GOOGLE_CLOUD_PROJECT` ou du `.firebaserc` (`firebase use --add`).
+
+> Cloud Run s’arrête quand personne ne l’utilise ; une instance Go redémarre en une à deux secondes, et le cache repart à vide (l’index se recharge depuis Hugging Face).
+>
+> Alternatives : [`render.yaml`](./render.yaml) (Render, gratuit, mais réveil de 30 à 60 s) ; `npm run deploy:api` (Space Docker Hugging Face, réservé aux comptes PRO). Pour une URL déjà en ligne : `npm run api:origin -- https://…` écrit seulement `GO_API_ORIGIN`.
+
+### Le Worker sert le site, Go ne sert que l’API
+
+C’est la configuration à privilégier dès qu’un moteur d’assistant est configuré : le Worker (assets + proxy `/api/*`) reste chez Cloudflare, le binaire Go tourne où tu veux. Le navigateur ne voit qu’une seule origine.
+
+1. **Construire et lancer l’API** sur la machine qui l’héberge :
+
+   ```bash
+   npm ci
+   cd backend && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../enise-api ./cmd/enise-api && cd ..
+   ./enise-api                 # écoute 0.0.0.0:8788
+   ```
+
+   Ou, sans compiler, avec Node :
+
+   ```bash
+   npm run start:api           # API seule, écoute 0.0.0.0:8788
+   ```
+
+   Ne **pas** définir `STATIC_DIR` ici : les assets sont servis par le Worker.
+
+2. **Exposer l’API en HTTPS**. Derrière un domaine, avec Caddy :
+
+   ```caddyfile
+   api.exemple.fr {
+     reverse_proxy 127.0.0.1:8788
+   }
+   ```
+
+   Sans serveur, depuis ta machine (pratique pour tester) :
+
+   ```bash
+   cloudflared tunnel --url http://localhost:8788
+   # → https://xxxx.trycloudflare.com
+   ```
+
+3. **Brancher le Worker** sur cette origine :
+
+   ```jsonc
+   // wrangler.jsonc
+   "vars": { "GO_API_ORIGIN": "https://api.exemple.fr" }
+   ```
+
+   puis :
+
+   ```bash
+   npm run deploy
+   ```
+
+4. **Faire confiance à Cloudflare côté Go** — sans ça, toutes les questions semblent venir de la même IP et la limite de 30 questions/minute s’applique au site entier au lieu de chaque étudiant :
+
+   ```bash
+   CHAT_TRUST_PROXY=1          # dans le .dev.vars du serveur Go
+   ```
+
+5. **Vérifier** :
+
+   ```bash
+   curl -s https://api.exemple.fr/api/health
+   curl -sI https://TON-SITE/api/chat/status | grep -i x-backend   # X-Backend: go
+   curl -s https://TON-SITE/api/chat/status | python3 -m json.tool
+   ```
+
+   Sans `GO_API_ORIGIN`, `/api/chat` répond 501 et le bouton Assistant reste inerte. L’URL ne doit jamais pointer vers le Worker lui-même.
+
 ### Couche Workers KV facultative
 
 Le déploiement par défaut n’exige aucune ressource KV. Pour éviter qu’un nouveau datacenter Cloudflare rappelle Hugging Face lors de son premier MISS, il est possible d’activer un cache global de **métadonnées uniquement** :
@@ -133,24 +227,152 @@ Reporter l’identifiant renvoyé dans `wrangler.jsonc` :
 
 Puis redéployer avec `npm run deploy`. Le Worker détecte automatiquement `env.METADATA_KV` et utilise la hiérarchie **Cache API → Workers KV → Hugging Face**. Les entrées KV expirent après 24 h (`KV_CACHE_TTL`) afin de rester cohérentes avec le bucket. Cette option consomme les quotas de lectures/écritures KV ; elle n’est utile que si le trafic provient de nombreuses régions.
 
-## Aperçu des documents Office avec le Viewer Office Web
+## Aperçu des documents Office (visionneuse hybride)
 
-Les fichiers `doc`, `docx`, `xls`, `xlsx`, `ppt`, `pptx` sont affichés dans la modale d’aperçu via le **Viewer Office Web** de Microsoft (`https://view.officeapps.live.com/op/embed.aspx`). Le fichier est servi par l’URL absolue `/api/file?path=...` du site, si bien qu’aucune configuration n’est requise.
+La modale d’aperçu propose jusqu’à **3 modes** (sélecteur en haut, préférence mémorisée dans le navigateur), tous gratuits et open source côté rendu :
 
-- **Production** : le site doit être accessible publiquement (Cloudflare Workers), car le service Microsoft télécharge le fichier depuis cette URL.
-- **Développement local** : Microsoft ne peut pas joindre `localhost`. Pour tester, utiliser l’URL publique exposée par l’environnement (`npm run dev:worker`) plutôt que `localhost`.
-- **CSP** : `public/_headers` autorise déjà `https://view.officeapps.live.com` dans `frame-src`.
+| Mode | Formats | Technologie | Fidélité | Contrainte |
+|---|---|---|---|---|
+| **Aperçu local** | `.docx`/`.docm`, `.xlsx`/`.xls`/`.xlsm` | `docx-preview`, `xlsx` (SheetJS CE) + grille maison | bonne | ≤ 15 Mo, ≤ 50 000 cellules |
+| **Texte local** | `.pptx`/`.pptm` | `jszip` (extraction du texte par diapo) | texte seul | ≤ 15 Mo |
+| **PDF** | `.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`, `.odt`, `.ods`, `.odp` | conversion LibreOffice côté serveur | très bonne | Space configuré (voir ci-dessous) |
+| **Microsoft** | `doc`, `docx`, `xls`, `xlsx`, `ppt`, `pptx`, `odt`, `ods`, `odp`, … | Viewer Office Web (`view.officeapps.live.com`) | maximale | site public, ≤ 10 Mo |
 
-### Raccourcis et blocs-notes Microsoft OneNote
+- Les librairies locales sont chargées en `import()` dynamique : le bundle initial n’augmente pas, aucun CDN externe n’est utilisé (aucune modification CSP requise).
+- Le classeur local offre onglets de feuilles, pagination et **export CSV** de la feuille active.
+- Le mode Microsoft nécessite toujours une URL publique : en développement `localhost`, utiliser l’**Aperçu local** ou l’URL publique exposée par l’environnement (`npm run dev:worker`).
+- Les bases `.odb` (LibreOffice Base) affichent leur **structure lue localement** (tables, requêtes, formulaires, états + moteur source) : aucun service web ne sait afficher une base de données, les données restent consultables après téléchargement dans LibreOffice Base.
 
-- Les fichiers `.url` (raccourcis OneNote) sont lus et la cible est affichée avec un bouton **Ouvrir la ressource**.
+### Conversion PDF via LibreOffice (mode « PDF »)
+
+Le Worker ne peut pas convertir lui-même (binaire natif, CPU limité) : il délègue au Space Docker [`space-huggingface/`](./space-huggingface/) (LibreOffice headless), puis met le PDF en cache (Cache API, 7 j) :
+
+```text
+Navigateur
+   ├── GET /api/office/status   -> conversion configurée ou non
+   └── GET /api/office/pdf      -> Worker : HF (source) → Space → PDF caché
+```
+
+1. Déployer le Space Docker (`space-huggingface/`, SDK `docker`, port `7860`).
+2. Renseigner son URL publique :
+   ```bash
+   # production (variable publique, affichée dans wrangler.jsonc)
+   # OFFICE_CONVERT_URL="https://<votre-space>.hf.space"
+   # développement local dans .dev.vars :
+   # OFFICE_CONVERT_URL="https://<votre-space>.hf.space"
+   ```
+3. Redéployer (`npm run deploy`). Sans cette variable, le mode « PDF » est masqué et les autres modes restent disponibles.
+
+Premier appel à froid : compter jusqu’à une minute si le Space gratuit dormait ; les appels suivants sont cachés côté Cloudflare.
+
+### Raccourcis `.url` (dont liens OneNote)
+
+Les raccourcis Windows `.url` s’ouvrent dans une **carte de lien enrichie** : le fichier est parsé localement (URL, icône, section `[InternetShortcut]`), la cible est qualifiée par un badge (**OneNote en ligne**, **Lien OneNote**, **Page web**, **Fichier local**…), puis les cibles http(s) sont enrichies via `GET /api/link/preview?url=...` (titre, description, image Open Graph, mise en cache 24 h). Boutons **Ouvrir la ressource**, **Copier** et téléchargement du `.url`. Tout échec d’enrichissement dégrade vers une carte simple : l’accès au lien n’est jamais bloqué. Les hôtes internes (localhost, IP privées…) sont refusés côté Worker ; la CSP autorise les images `https:` distantes pour les visuels Open Graph.
+
+> **Liens OneNote privés** : un lien exigeant une connexion Microsoft ne peut être visualisé que par son propriétaire — aucun aperçu n’est possible pour les autres visiteurs. Quand l’aperçu détecte une redirection vers le login Microsoft, la carte affiche un encadré « Contenu privé » avec la marche à suivre : partage « Toute personne disposant du lien peut afficher » depuis OneDrive/OneNote, ou export des pages en PDF/Word (OneNote → Fichier → Exporter) déposé dans le bucket — formats déjà visualisables comme les autres documents MS. Le partage « Anyone » peut être automatisé en masse via Microsoft Graph : voir `scripts/share-onenote-links.py` et `scripts/README_SHARE_ONENOTE.md`.
+
+### Blocs-notes Microsoft OneNote
+
 - Les blocs-notes `.one` / `.onenote` ne disposent pas de visionneuse embarquée dans le navigateur : la modale propose leur téléchargement pour les ouvrir dans Microsoft OneNote.
 
 Ce viewer remplace l’ancienne intégration ONLYOFFICE : aucun document server externe n’est plus nécessaire et aucun secret n’est exposé.
 
-## Visualisation 3D avec Autodesk APS (Forge)
+## Visualisation 3D (Aperçu Web + Autodesk APS + ShareCAD)
 
-Les fichiers modèles (`.dwg`, `.dxf`, `.rvt`, `.rfa`, `.ifc`, `.ipt`, `.iam`, `.sldprt`, `.sldasm`, `.stp`, `.step`, `.igs`, `.iges`, `.obj`, `.stl`, `.3ds`, `.fbx`, `.dae`, `.skp`, …) sont ouverts dans la modale d’aperçu avec le **Viewer Autodesk** (rotation, zoom, panoramique à la souris). Si Autodesk APS n’est pas configuré, la modale conserve l’écran de téléchargement actuel.
+Les fichiers modèles (`.dwg`, `.dxf`, `.dwf`, `.rvt`, `.rfa`, `.ifc`, `.ipt`, `.iam`, `.sldprt`, `.sldasm`, `.stp`, `.step`, `.igs`, `.iges`, `.obj`, `.stl`, `.sat`, `.x_t`, `.x_b`, `.3ds`, `.fbx`, `.dae`, `.skp`, …) sont ouverts dans la modale d’aperçu avec rotation, zoom et panoramique à la souris. Les modes disponibles (onglets, préférence mémorisée) sont :
+
+- **Aperçu Web** (défaut, gratuit) : les formats `.step`, `.stp`, `.iges`, `.igs`, `.stl` et `.obj` sont convertis en GLB par le Space FreeCAD puis affichés en WebGL (three.js), avec choix de la qualité du maillage (brouillon/standard/fin), rotation automatique et statistiques (triangles, dimensions, volume). FreeCAD ne lit pas les formats propriétaires : `.sldprt`, `.dwg`, assemblages… restent sur Autodesk ou ShareCAD.
+- **Export SolidWorks → STEP** (nouveau, configuration HOOPS requise) : pour `.sldprt` et `.sldasm`, le bouton « Exporter STEP » appelle le service HOOPS Converter, écrit le résultat sous `derived/step/` dans le bucket et conserve un manifest SHA-256. Le fichier source original n’est jamais écrasé.
+- **Autodesk** (fidélité maximale, configuration requise) : tous les formats via APS / Model Derivative.
+- **ShareCAD** (tiers gratuit, sans conversion) : `.dwg`, `.dxf`, `.dwf`, `.step`, `.iges`, `.stl`, `.sldprt`, `.sat`, `.x_t`, `.x_b` affichés via le plugin iframe `iframe.sharecad.org`, sans compte ni conversion. Le fichier est téléchargé et stocké sur les serveurs ShareCAD (limite 50 Mo) : chargement sur clic explicite uniquement, à réserver aux documents non confidentiels.
+
+Les formats sans conversion GLB ni support ShareCAD (`.rvt`, `.ifc`, `.catpart`, assemblages, …) n’affichent que l’onglet Autodesk ; si Autodesk APS n’est pas configuré, la modale conserve l’écran de téléchargement actuel.
+
+### Aperçu Web via FreeCAD (mode « Web »)
+
+Le Worker exécute le pipeline **FreeCAD → GLB** (style 3Dfindit) :
+
+```text
+Navigateur
+   ├── GET /api/model3d/status        -> conversion configurée ou non
+   ├── GET /api/model3d/glb?path=...  -> Worker : HF (source) → Space → GLB caché
+   └── three.js -> modèle 3D interactif (+ X-Model3D-Meta : triangles, bbox…)
+```
+
+Le Space par défaut est `ktongue/Rupture` (public, aucun token côté Worker). Pour utiliser un autre Space, définir `MODEL3D_CONVERT_URL` (vide = mode Web désactivé) :
+
+```bash
+# wrangler.jsonc (vars) ou .dev.vars en local :
+MODEL3D_CONVERT_URL="https://<votre-space>.hf.space"
+```
+
+Déployer le Space depuis ce dépôt (sauvegarder l’éventuelle application existante du Space, l’upload écrase son contenu) :
+
+```bash
+HF_TOKEN="hf_..." npm run deploy:space -- --space-id <utilisateur>/<space>
+```
+
+Par défaut, les fichiers de plus de 25 Mo sont refusés (`MAX_MODEL3D_BYTES`) et les GLB sont mis en cache 7 jours (`MODEL3D_CACHE_TTL`). Le premier appel après une mise en veille du Space peut prendre jusqu’à une minute (réveil + conversion).
+
+### Export SolidWorks vers STEP et enregistrement dans le bucket
+
+Le Worker expose un déclenchement explicite :
+
+```text
+GET  /api/solidworks/status
+POST /api/solidworks/step?path=GM/piece.sldprt
+```
+
+Le Worker télécharge le source depuis Hugging Face, calcule son SHA-256, puis
+appelle le service privé configuré par `SOLIDWORKS_CONVERT_URL`. Ce service
+exécute **HOOPS Converter** et écrit le `.step` ainsi qu’un manifest sous
+`derived/step/`. Un résultat dont l’empreinte source et les empreintes des
+références d’assemblage sont identiques est réutilisé sans nouvelle conversion ;
+`force=1` régénère le fichier.
+
+Configuration Worker :
+
+```bash
+# wrangler.jsonc / .dev.vars
+SOLIDWORKS_CONVERT_URL="https://<service-hoops>.hf.space"
+MAX_SOLIDWORKS_BYTES="104857600"
+MAX_SOLIDWORKS_DEPENDENCY_FILES="64"
+MAX_SOLIDWORKS_BUNDLE_BYTES="262144000"
+
+# secret partagé uniquement avec le service HOOPS
+npx wrangler secret put SOLIDWORKS_CONVERTER_TOKEN
+```
+
+C62144000"
+
+# secret partagé uniquement avec le service HOOPS
+npx wrangler secret put SOLIDWORKS_CONVERTER_TOKEN
+```
+
+Configuration du service (voir [`space-huggingface/README.md`](space-huggingface/README.md)) :
+`HOOPS_CONVERTER_PATH`, `HOOPS_LICENSE_FILE` ou `HOOPS_LICENSE_KEY`,
+`HF_BUCKET_ID`, `HF_TOKEN` avec permission d’écriture et
+`SOLIDWORKS_CONVERTER_TOKEN`. Le package propriétaire HOOPS n’est pas inclus
+dans Git et doit être ajouté à une image privée autorisée.
+
+L’interface conserve Autodesk comme fallback. Pour un `.sldasm`, le Worker
+transfère automatiquement les `.sldprt` et sous-assemblages présents dans le
+même dossier ou ses sous-dossiers, avec leurs chemins relatifs. Le transfert
+est limité à 64 dépendances et 250 Mo par défaut (`MAX_SOLIDWORKS_*`) ; les
+références externes à ce périmètre doivent être regroupées dans le bucket ou
+l’assemblage peut rester incomplet. Le STEP ne conserve pas l’historique
+paramétrique SolidWorks.
+
+### Conversion locale avant déploiement
+
+Pour convertir avec HOOPS sur une machine locale puis envoyer les résultats au
+bucket, utiliser [`scripts/convert-solidworks-local.py`](scripts/convert-solidworks-local.py)
+et sa documentation ([`scripts/README_SOLIDWORKS_LOCAL.md`](scripts/README_SOLIDWORKS_LOCAL.md)).
+Le mode `--output-mode original` écrit `GM/piece.step` à côté de
+`GM/piece.sldprt`; le Worker sait réutiliser ce STEP pré-calculé grâce à son
+manifest. Le mode `derived` conserve la convention `derived/step/` du Worker.
+
+### Visualisation 3D avec Autodesk APS (Forge)
 
 Le Worker exécute le pipeline **APS / Model Derivative** :
 
@@ -180,15 +402,36 @@ Navigateur
    APS_BUCKET_KEY=""            # optionnel : panier OSS préexistant
    ```
 
-3. **Autoriser le domaine Autodesk dans la CSP statique** de `public/_headers` : le domaine `https://developer.api.autodesk.com` est déjà inclus dans `script-src`, `style-src`, `img-src`, `media-src`, `frame-src`, `connect-src`, `font-src` et `worker-src`. Si `public/_headers` est modifié, conserver ces domaines.
+3. **Autoriser le domaine Autodesk dans la CSP statique** de `public/_headers` : le domaine `https://developer.api.autodesk.com` est déjà inclus dans `script-src`, `style-src`, `img-src`, `media-src`, `frame-src`, `connect-src`, `font-src` et `worker-src`. Si `public/_headers` est modifié, conserver ces domaines (ainsi que `https://iframe.sharecad.org` en `frame-src` pour l’onglet ShareCAD).
 
 Le Worker crée automatiquement un panier OSS temporaire (`*.transient`) s’il n’en existe pas, téléverse le fichier depuis Hugging Face, puis lance une conversion vers **SVF2**. Les conversions sont mises en cache (Cache API + Workers KV éventuel) par fichier : un fichier déjà converti est réutilisé sans nouvel appel. Les paniers `transient` d’Autodesk peuvent expirer ; les conversions sont alors relancées automatiquement. Par défaut, les fichiers de plus de 100 Mo sont refusés (`MAX_APS_UPLOAD_BYTES`).
 
-> Le Viewer Autodesk télécharge ses assets depuis `https://developer.api.autodesk.com` ; le token n’est jamais partagé avec le navigateur, seul le jeton public renvoyé par `/api/aps/token` lui est transmis.
+### Limites du convertisseur Autodesk et formats fiables
+
+Autodesk **Model Derivative** ne prend pas en charge toutes les versions des formats natifs. Par exemple, un `.SLDPRT` créé avec une version de SolidWorks plus récente que celle supportée par le service produit l’erreur `The Version of the file ... is not supported`. Le site affiche alors un message explicite proposant le téléchargement.
+
+Pour un aperçu 3D fiable, privilégier les formats d’échange largement supportés :
+
+| Format | Recommandation |
+|---|---|
+| `.step` / `.stp` | ✅ très fiable |
+| `.iges` / `.igs` | ✅ très fiable |
+| `.obj` | ✅ très fiable |
+| `.stl` | ✅ très fiable (sans couleurs) |
+| `.dwg` / `.dxf` | ✅ généralement fiable |
+| `.rvt` / `.ifc` | ✅ pour le BIM |
+| `.ipt` / `.sldprt` / `.sldasm` | ⚠️ version du logiciel à compatibilité limitée |
+
+S’il s’agit d’un fichier SolidWorks récent non supporté, l’exporter en **STEP** (ou OBJ/STL) puis le ré-ajouter au bucket permet de le visualiser.
+
+> Le Viewer Autodesk télécharge ses assets depuis `https://developer.api.autodesk.com` ; le token complet n’est jamais partagé avec le navigateur, seul un jeton public limité au scope `viewables:read` (renvoyé par `/api/aps/token`) lui est transmis. Les succès en cache sont revérifiés via le manifeste avant réutilisation : si l’objet a expiré du panier `transient` (24 h), la traduction est relancée automatiquement.
 
 ## Clés et secrets
 
-Le bucket actuel est public : **aucune clé Hugging Face n’est requise**.
+Le bucket actuel est public pour la lecture : **aucune clé Hugging Face n’est
+requise dans le navigateur**. Le service HOOPS garde séparément un token HF
+avec droit d’écriture (`HF_TOKEN`) pour publier les STEP ; il ne doit jamais
+être placé dans le Worker ou le frontend.
 
 Si le bucket devient privé, créer un token Hugging Face en lecture seule puis l’enregistrer comme secret Worker :
 
@@ -214,7 +457,24 @@ Règles importantes :
 
 Pour un déploiement CI GitHub, stocker `CLOUDFLARE_API_TOKEN` et `CLOUDFLARE_ACCOUNT_ID` dans les **GitHub Actions Secrets**, jamais dans le dépôt.
 
-## API du Worker
+## Compte et favoris
+
+La connexion et les favoris passent par le backend Go, pas par le SDK Appwrite dans le navigateur. Le projet est **Django objects** (`https://fra.cloud.appwrite.io/v1`, `69cedb12002acdd498e0`).
+
+Le compte (email, mot de passe, nom) vit dans Appwrite Auth. La promotion, la filière, les favoris et les conversations de l’assistant vivent dans la base `enise_docs`, tables `profiles`, `favorites`, `conversations` et `messages`. Cette base se crée une fois, depuis ta machine, avec une clé serveur :
+
+```bash
+# Console Appwrite → API Keys → databases.write, puis dans .dev.vars :
+# APPWRITE_API_KEY="…"
+npm run appwrite:setup
+npm run appwrite:status
+```
+
+Sans cette clé, la connexion marche déjà. Les cœurs et le profil ne s’enregistrent qu’après le script. Les anciens favoris laissés dans le navigateur sont repris au premier compte connecté, puis la copie locale est effacée.
+
+## API
+
+Le Worker Cloudflare et le backend Go exposent les mêmes routes. L’en-tête `X-Backend: go` indique que la réponse vient du processus Go ; son absence indique le Worker.
 
 | Route | Rôle |
 |---|---|
@@ -224,9 +484,27 @@ Pour un déploiement CI GitHub, stocker `CLOUDFLARE_API_TOKEN` et `CLOUDFLARE_AC
 | `GET /api/counts?prefix=GM` | effectifs extraits du JSON d’index (`X-Data-Source: index-json`) |
 | `GET /api/file?path=...` | aperçu/stream d’un document |
 | `GET /api/file?path=...&download=1` | téléchargement avec `Content-Disposition: attachment` |
+| `GET /api/file/<chemin>` | même document via une URL « propre » sans query string (iframe ShareCAD) |
 | `GET /api/aps/token` | jeton public Autodesk pour la visionneuse 3D |
 | `POST /api/aps/view?path=...` | prépare le fichier 3D : OSS + conversion SVF2 |
 | `GET /api/aps/status?path=...` | état et progression de la conversion 3D |
+| `GET /api/model3d/status` | conversion GLB FreeCAD configurée ou non |
+| `GET /api/model3d/glb?path=...&quality=...` | GLB converti via FreeCAD (mis en cache, métadonnées `X-Model3D-Meta`) |
+| `GET /api/solidworks/status` | export SolidWorks → STEP configuré ou non |
+| `POST /api/solidworks/step?path=...&force=1` | convertit `.sldprt`/`.sldasm` avec HOOPS et enregistre le STEP dans le bucket |
+| `GET /api/office/status` | conversion PDF Office configurée ou non |
+| `GET /api/office/pdf?path=...` | PDF converti via LibreOffice (mis en cache) |
+| `GET /api/link/preview?url=...` | aperçu enrichi d’un lien `.url` (Open Graph, mis en cache) |
+| `GET /api/chat/status` | assistant prêt, local, ou non configuré. Jamais de clé dans la réponse |
+| `POST /api/chat` | question en JSON, réponse en flux (`text/event-stream`) : documents, réflexion éventuelle, puis texte |
+
+### Assistant : ce qui se passe derrière une question
+
+1. **Classement local** de l’index en mémoire (aucun appel réseau). Les mots-outils (« se », « sa ») sont ignorés et un mot-clé doit correspondre à un mot entier : « ex » ne remonte plus « examen ».
+2. **Profil de la question** : une recherche ouvre deux documents, une synthèse (« structure », « annales », « déroulement », « compare »…) en ouvre jusqu’à huit du meilleur dossier et en lit cinq.
+3. **Lecture des extraits** (texte, PDF, docx, pptx, xlsx) puis rédaction par le moteur choisi (Cloudflare Workers AI, OpenRouter, NVIDIA ou OpenCode). Pour les PDF, seul le texte des pages (entre `BT` et `ET`) est lu : les noms de polices et les métadonnées sont ignorés, les morceaux d’un même mot sont recollés. Un PDF à polices encodées par glyphes donne du bruit (« ÿÿ A B D… ») : l’extrait est écarté et le modèle s’appuie alors sur le nom et le chemin du document. Le modèle choisi dans le menu ne s’applique qu’à son moteur ; si tous échouent, la note indique la raison de chacun (clé refusée, quota, délai…).
+4. **Réflexion des modèles** : leur raisonnement arrive dans `reasoning_content`. Il est lu (et annoncé au navigateur par un événement `thinking`) au lieu d’être pris pour un flux vide.
+5. **Robustesse** : budget de jetons élargi (`CHAT_MAX_TOKENS`, `CHAT_DEEP_MAX_TOKENS`), délai porté à `CHAT_ANSWER_TIMEOUT`, une seconde tentative si le budget a été épuisé par la réflexion, repli sur le modèle par défaut si le modèle choisi est introuvable, puis le moteur suivant s’il existe. En dernier recours : les documents trouvés, avec la raison réelle de l’échec, le moteur et le modèle essayés.
 
 L’en-tête `X-Cache-Status` permet de diagnostiquer le comportement : `HIT`, `KV-HIT`, `MISS`, `BYPASS-RANGE` ou `BYPASS-SIZE`. L’en-tête `X-Data-Source: index-json` confirme qu’une réponse d’effectifs provient bien du JSON d’index et non d’un nouveau parcours Hugging Face.
 
@@ -290,3 +568,4 @@ tests/               tests unitaires
 Le logo Centrale Lyon ENISE provient de la [charte des marques Centrale Lyon](https://www.ec-lyon.fr/centrale-lyon/le-fil-dinformation/charte-graphique-et-marques-centrale-lyon). Le logo ENSPY provient de l’écosystème officiel de l’Université de Yaoundé I. Le drapeau est un SVG local respectant les couleurs nationales.
 
 Ce frontend est présenté comme un **projet étudiant indépendant et non officiel**. Les marques et documents restent la propriété de leurs ayants droit.
+e leurs ayants droit.

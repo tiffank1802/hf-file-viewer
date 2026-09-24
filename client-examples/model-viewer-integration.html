@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SolidWorks 3D Viewer - model-viewer Example</title>
+    
+    <!-- Include model-viewer script from Google CDN -->
+    <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js"></script>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem;
+        }
+        
+        .container {
+            max-width: 1200px;
+            width: 100%;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+        
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem;
+            text-align: center;
+        }
+        
+        header h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        header p {
+            opacity: 0.9;
+            font-size: 1rem;
+        }
+        
+        .viewer-section {
+            padding: 2rem;
+        }
+        
+        .model-container {
+            width: 100%;
+            height: 600px;
+            background: #f5f5f5;
+            border-radius: 12px;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        model-viewer {
+            width: 100%;
+            height: 100%;
+            --poster-color: #f5f5f5;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+            flex-wrap: wrap;
+        }
+        
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        label {
+            font-weight: 500;
+            color: #333;
+        }
+        
+        input[type="range"] {
+            width: 150px;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        .info-section {
+            padding: 2rem;
+            background: #f9f9f9;
+            border-top: 1px solid #e0e0e0;
+        }
+        
+        .info-section h2 {
+            color: #333;
+            margin-bottom: 1rem;
+            font-size: 1.25rem;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+        }
+        
+        .info-card {
+            background: white;
+            padding: 1rem;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .info-card h3 {
+            color: #667eea;
+            font-size: 0.9rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .info-card p {
+            color: #666;
+            font-size: 0.85rem;
+            line-height: 1.5;
+        }
+        
+        /* Loading state */
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #666;
+        }
+        
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            body {
+                padding: 1rem;
+            }
+            
+            header h1 {
+                font-size: 1.5rem;
+            }
+            
+            .model-container {
+                height: 400px;
+            }
+            
+            .controls {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔧 SolidWorks 3D Viewer</h1>
+            <p>Interactive WebGL visualization using model-viewer</p>
+        </header>
+        
+        <section class="viewer-section">
+            <div class="model-container">
+                <!-- 
+                    model-viewer component
+                    - src: URL to your converted .glb file
+                    - camera-controls: Enable rotation and zoom
+                    - auto-rotate: Automatic rotation when idle
+                    - shadow-intensity: Realistic shadows
+                    - ar: Enable augmented reality (mobile)
+                -->
+                <model-viewer
+                    id="modelViewer"
+                    src="path/to/your/converted-model.glb"
+                    alt="3D model of the part"
+                    camera-controls
+                    auto-rotate
+                    shadow-intensity="1"
+                    exposure="1"
+                    environment-image="neutral"
+                    ar
+                    ar-modes="webxr scene-viewer quick-look"
+                >
+                    <!-- Loading indicator -->
+                    <div class="loading" slot="progress-bar">
+                        <div class="spinner"></div>
+                        <p>Loading 3D model...</p>
+                    </div>
+                    
+                    <!-- AR button for mobile -->
+                    <button slot="ar-button" style="position: absolute; bottom: 16px; right: 16px; background: white; color: #667eea; border: none; padding: 12px 20px; border-radius: 8px; font-weight: bold;">
+                        👋 View in AR
+                    </button>
+                </model-viewer>
+            </div>
+            
+            <div class="controls">
+                <div class="control-group">
+                    <label for="rotationSpeed">Auto-rotate speed:</label>
+                    <input type="range" id="rotationSpeed" min="0" max="10" value="2" step="0.5">
+                </div>
+                
+                <div class="control-group">
+                    <label for="shadowIntensity">Shadow intensity:</label>
+                    <input type="range" id="shadowIntensity" min="0" max="2" value="1" step="0.1">
+                </div>
+                
+                <button onclick="resetCamera()">Reset Camera</button>
+                <button onclick="toggleAutoRotate()">Toggle Auto-Rotate</button>
+            </div>
+        </section>
+        
+        <section class="info-section">
+            <h2>ℹ️ About this viewer</h2>
+            <div class="info-grid">
+                <div class="info-card">
+                    <h3>🎯 Controls</h3>
+                    <p>Left-click + drag to rotate. Right-click + drag to pan. Scroll to zoom.</p>
+                </div>
+                <div class="info-card">
+                    <h3>📱 Mobile AR</h3>
+                    <p>On supported devices, tap "View in AR" to place the model in your environment.</p>
+                </div>
+                <div class="info-card">
+                    <h3>🔄 Conversion Pipeline</h3>
+                    <p>.sldprt → FreeCAD → .stl → trimesh → .glb (scaled mm→m)</p>
+                </div>
+                <div class="info-card">
+                    <h3>⚠️ Limitations</h3>
+                    <p>Only geometry is preserved. No colors, materials, or parametric history.</p>
+                </div>
+            </div>
+        </section>
+    </div>
+    
+    <script>
+        const modelViewer = document.getElementById('modelViewer');
+        const rotationSpeedInput = document.getElementById('rotationSpeed');
+        const shadowIntensityInput = document.getElementById('shadowIntensity');
+        
+        // Update auto-rotate speed
+        rotationSpeedInput.addEventListener('input', (e) => {
+            const speed = parseFloat(e.target.value);
+            if (speed > 0) {
+                modelViewer.setAttribute('auto-rotate-delay', `${10 - speed}000`);
+            }
+        });
+        
+        // Update shadow intensity
+        shadowIntensityInput.addEventListener('input', (e) => {
+            modelViewer.setAttribute('shadow-intensity', e.target.value);
+        });
+        
+        // Reset camera to default position
+        function resetCamera() {
+            modelViewer.cameraAndTarget = null;
+            modelViewer.orbit(0, 90 / 180 * Math.PI, 1);
+        }
+        
+        // Toggle auto-rotate
+        let autoRotateEnabled = true;
+        function toggleAutoRotate() {
+            autoRotateEnabled = !autoRotateEnabled;
+            if (autoRotateEnabled) {
+                modelViewer.setAttribute('auto-rotate', '');
+            } else {
+                modelViewer.removeAttribute('auto-rotate');
+            }
+        }
+        
+        // Handle model load events
+        modelViewer.addEventListener('load', (e) => {
+            console.log('Model loaded successfully');
+        });
+        
+        modelViewer.addEventListener('error', (e) => {
+            console.error('Error loading model:', e.detail);
+            alert('Failed to load 3D model. Please check the file path.');
+        });
+        
+        // Example: Dynamically update the model source after conversion
+        // Call this function with the GLB URL returned from your API
+        function updateModelSource(glbUrl) {
+            modelViewer.setAttribute('src', glbUrl);
+        }
+    </script>
+</body>
+</html>

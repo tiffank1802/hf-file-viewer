@@ -10,6 +10,24 @@ export const BUCKET_URL = `https://huggingface.co/buckets/${BUCKET_ID}`;
 export const OFFICE_WEB_VIEWER_BASE_URL = 'https://view.officeapps.live.com/op/embed.aspx';
 
 /**
+ * Limites des aperçus Office rendus localement dans le navigateur.
+ *
+ * Au-delà de ces seuils, la modale propose le Viewer Microsoft ou le
+ * téléchargement plutôt que de figer l’onglet (surtout sur mobile).
+ */
+export const MAX_LOCAL_PREVIEW_BYTES = 15 * 1024 * 1024;
+
+/**
+ * Limite du viewer Office Web de Microsoft (`view.officeapps.live.com`).
+ *
+ * Au-delà de 10 Mo, le service refuse l’aperçu : l’onglet Microsoft affiche
+ * alors un message avec lien de téléchargement au lieu de l’iframe.
+ */
+export const MAX_OFFICE_WEB_VIEWER_BYTES = 10 * 1024 * 1024;
+export const MAX_XLSX_CELLS = 50_000;
+export const XLSX_PAGE_SIZE = 500;
+
+/**
  * Script du Viewer Autodesk (APS / Forge View & Data).
  *
  * La version `7.*` est la version stable maintenue par Autodesk ; le

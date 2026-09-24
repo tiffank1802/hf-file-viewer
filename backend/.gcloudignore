@@ -1,0 +1,6 @@
+# Fichiers envoyés à Cloud Build par `gcloud run deploy --source backend`.
+.gcloudignore
+.git
+bin/
+.cache/
+**/*_test.go

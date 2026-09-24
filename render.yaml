@@ -1,0 +1,49 @@
+# Blueprint Render : API Go d’ENISE Docs (assistant, compte étudiant).
+#
+# Le site reste sur Cloudflare Workers : le Worker sert les assets et relaie
+# /api/chat, /api/auth/* et /api/favorites vers ce service (GO_API_ORIGIN).
+#
+# Mise en place : Render → New → Blueprint → ce dépôt. Render lit ce fichier,
+# crée le service et demande les valeurs marquées « sync: false ».
+# Ensuite : npm run api:origin -- https://<service>.onrender.com && npm run deploy
+services:
+  - type: web
+    name: enise-docs-api
+    runtime: go
+    plan: free
+    # Francfort : la région Render la plus proche de Paris et du Worker.
+    region: frankfurt
+    rootDir: backend
+    buildCommand: go build -trimpath -o bin/enise-api ./cmd/enise-api
+    # Render fournit PORT (10000) : le serveur écoute 0.0.0.0:$PORT.
+    startCommand: ./bin/enise-api
+    healthCheckPath: /api/health
+    # Seules les modifications du backend relancent un déploiement.
+    buildFilter:
+      paths:
+        - backend/**
+      ignoredPaths:
+        - backend/**/*_test.go
+    envVars:
+      # Le service n’est appelé que par le Worker : la limite de débit
+      # s’applique par visiteur (X-Enise-Client), pas au site entier.
+      - key: CHAT_TRUST_PROXY
+        value: "1"
+      - key: HF_BUCKET_ID
+        value: ktongue/ENISE-SITE
+      - key: CACHE_DIR
+        value: /tmp/enise-docs-cache
+      # Moteurs de rédaction : renseigner au moins un moteur.
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: OPENCODE_API_KEY
+        sync: false
+      # Seulement si le bucket devient privé.
+      - key: HF_TOKEN
+        sync: false

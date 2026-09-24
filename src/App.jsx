@@ -1,17 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { FiHeart, FiHome, FiSearch } from 'react-icons/fi';
 import CategoryGrid from './components/CategoryGrid';
 import Explorer from './components/Explorer';
 import Footer from './components/Footer';
 import Header from './components/Header';
 import Hero from './components/Hero';
+import LibraryChat from './components/LibraryChat';
 import PreviewModal from './components/PreviewModal';
 import SearchPalette from './components/SearchPalette';
 import SideNav from './components/SideNav';
+import AuthPanel from './components/AuthPanel';
 import CloudflareAnalytics from './components/CloudflareAnalytics';
 import { useLibrary } from './hooks/useLibrary';
 import { useIndexCatalog } from './hooks/useIndexCatalog';
-import { useLocalStorage } from './hooks/useLocalStorage';
+import { useAuth } from './hooks/useAuth';
+import { useFavorites } from './hooks/useFavorites';
 import './index.css';
 
 export default function App() {
@@ -19,31 +22,33 @@ export default function App() {
   const catalog = useIndexCatalog();
   const [selectedFile, setSelectedFile] = useState(null);
   const [searchState, setSearchState] = useState({ open: false, mode: 'search' });
-  const [storedFavorites, setStoredFavorites] = useLocalStorage('enise-docs:favorites', []);
-
-  const favoriteItems = useMemo(
-    () => (Array.isArray(storedFavorites) ? storedFavorites.filter((item) => item && typeof item === 'object' && item.path) : []),
-    [storedFavorites],
-  );
-  const favoritePaths = useMemo(() => favoriteItems.map((item) => item.path), [favoriteItems]);
+  const [authPanel, setAuthPanel] = useState({ open: false, mode: 'signin' });
+  const [dismissedAlertKey, setDismissedAlertKey] = useState(null);
+  const auth = useAuth();
+  const favorites = useFavorites(auth.user);
+  const favoriteItems = favorites.items;
+  const favoritePaths = favorites.paths;
+  const favoritesAlert = favorites.sync.actionError
+    || (['write-failed', 'read-failed', 'unprovisioned', 'import', 'disabled'].includes(favorites.sync.state) ? favorites.sync.error : null);
+  const favoritesAlertKey = favoritesAlert ? `${favorites.sync.state}::${favoritesAlert}` : null;
 
   const openSearch = useCallback((mode = 'search') => {
     setSearchState({ open: true, mode });
   }, []);
+  const openAuth = useCallback((mode = 'signin') => setAuthPanel({ open: true, mode }), []);
+  const closeAuth = useCallback(() => setAuthPanel((current) => ({ ...current, open: false })), []);
   const closeSearch = useCallback(() => {
     setSearchState((current) => ({ ...current, open: false }));
   }, []);
   const closePreview = useCallback(() => setSelectedFile(null), []);
 
-  const toggleFavorite = useCallback((item) => {
-    setStoredFavorites((current) => {
-      const items = Array.isArray(current) ? current.filter((entry) => entry && typeof entry === 'object') : [];
-      if (items.some((entry) => entry.path === item.path)) {
-        return items.filter((entry) => entry.path !== item.path);
-      }
-      return [...items, item];
-    });
-  }, [setStoredFavorites]);
+  const toggleFavorite = favorites.toggle;
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('recover') === '1') openAuth('recover');
+    else if (params.get('verify') === '1') openAuth('signin');
+  }, [openAuth]);
 
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -74,7 +79,27 @@ export default function App() {
         <span className="aurora-red" />
       </div>
 
-      <Header navigate={library.navigate} onOpenSearch={() => openSearch('search')} />
+      <Header
+        navigate={library.navigate}
+        onOpenSearch={() => openSearch('search')}
+        onOpenAuth={openAuth}
+        onOpenFavorites={() => openSearch('favorites')}
+        favoriteCount={favoriteItems.length}
+      />
+
+      {favoritesAlertKey && favoritesAlertKey !== dismissedAlertKey && (
+        <div className="favorites-alert" role="alert">
+          <p><strong>Favoris :</strong> {favoritesAlert}</p>
+          <span className="favorites-alert-actions">
+            {auth.isAuthenticated ? (
+              <button type="button" onClick={() => void favorites.sync.retry()}>Réessayer</button>
+            ) : (
+              <button type="button" onClick={() => openAuth('signin')}>Se connecter</button>
+            )}
+            <button type="button" onClick={() => { favorites.sync.clearActionError(); setDismissedAlertKey(favoritesAlertKey); }}>Fermer</button>
+          </span>
+        </div>
+      )}
 
       <main id="main-content">
         {library.path === '' && (
@@ -128,6 +153,13 @@ export default function App() {
         </button>
       </nav>
 
+      <AuthPanel
+        open={authPanel.open}
+        mode={authPanel.mode}
+        onModeChange={(mode) => setAuthPanel({ open: true, mode })}
+        onClose={closeAuth}
+      />
+
       <SearchPalette
         open={searchState.open}
         mode={searchState.mode}
@@ -138,6 +170,13 @@ export default function App() {
         catalog={catalog}
       />
 
+      <LibraryChat
+        path={library.path}
+        catalog={catalog}
+        onNavigate={library.navigate}
+        onOpenFile={setSelectedFile}
+        onOpenAuth={openAuth}
+      />
       <CloudflareAnalytics />
       <PreviewModal
         file={selectedFile}

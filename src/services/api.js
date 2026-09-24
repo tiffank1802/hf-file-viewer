@@ -1,5 +1,5 @@
-import { BUCKET_ID, BUCKET_URL } from '../config';
-import { normalizeBucketItem } from '../utils/files';
+import { BUCKET_ID, BUCKET_URL } from '../config.js';
+import { normalizeBucketItem } from '../utils/files.js';
 
 export class LibraryApiError extends Error {
   constructor(message, status = 0) {
@@ -77,6 +77,63 @@ export function fileProxyUrl(path, download = false) {
   const params = new URLSearchParams({ path });
   if (download) params.set('download', '1');
   return `/api/file?${params}`;
+}
+
+/**
+ * URL du PDF généré par le backend LibreOffice pour un document Office.
+ * `size` et `mtime` stabilisent la clé de cache côté Worker.
+ */
+export function officePdfUrl(file) {
+  const params = new URLSearchParams({ path: file.path });
+  if (Number.isFinite(Number(file.size))) params.set('size', String(file.size));
+  if (file.mtime) params.set('mtime', String(file.mtime));
+  return `/api/office/pdf?${params}`;
+}
+
+/**
+ * URL du GLB généré par le backend FreeCAD pour un modèle 3D.
+ * `quality` vaut draft, standard ou fine et fait partie de la clé de cache.
+ */
+export function model3dGlbUrl(file, quality = 'standard') {
+  const params = new URLSearchParams({ path: file.path, quality });
+  if (Number.isFinite(Number(file.size))) params.set('size', String(file.size));
+  if (file.mtime) params.set('mtime', String(file.mtime));
+  return `/api/model3d/glb?${params}`;
+}
+
+/**
+ * Endpoint de génération et d’enregistrement SolidWorks → STEP.
+ * La conversion est déclenchée explicitement pour éviter un coût CPU
+ * inattendu à l’ouverture d’un fichier public.
+ */
+export function solidworksStepUrl(file, force = false) {
+  const params = new URLSearchParams({ path: file.path });
+  if (force) params.set('force', '1');
+  return `/api/solidworks/step?${params}`;
+}
+
+const SHARECAD_FRAME_URL = 'https://iframe.sharecad.org/cadframe/load';
+
+/**
+ * URL proxy « propre » du fichier (`/api/file/<chemin>`, sans query string).
+ * ShareCAD détecte le format CAO depuis l’extension dans l’URL : sans elle
+ * (ou avec une URL à paramètres), son convertisseur ne démarre pas.
+ */
+export function shareCadFileUrl(file) {
+  const suffix = String(file.path || '')
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+  return `/api/file/${suffix}`;
+}
+
+/**
+ * URL de l’iframe ShareCAD pour un fichier (proxy ci-dessus en absolu, encodé).
+ * Les serveurs ShareCAD téléchargent le fichier depuis cette URL publique.
+ */
+export function shareCadFrameUrl(file) {
+  const absoluteUrl = `${window.location.origin}${shareCadFileUrl(file)}`;
+  return `${SHARECAD_FRAME_URL}?url=${encodeURIComponent(absoluteUrl)}`;
 }
 
 export function huggingFaceFileUrl(path) {
