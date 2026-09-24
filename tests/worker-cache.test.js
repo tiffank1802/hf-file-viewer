@@ -1,6 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker from '../worker/index.js';
+import worker, { encodeCacheEntry, makeCacheKey } from '../worker/index.js';
+
+const BUCKET = 'ktongue/ENISE-SITE';
+
+/** Entrée de cache vieillie artificiellement, comme après quelques minutes. */
+function agedEntry(body, ageMs = 0) {
+  return encodeCacheEntry(
+    typeof body === 'string' ? body : JSON.stringify(body),
+    new Date(Date.now() - ageMs).toISOString(),
+  );
+}
+
+async function seedCache(kind, body, { ageMs = 0, params = {} } = {}) {
+  const cache = globalThis.caches.default;
+  await cache.put(
+    makeCacheKey(kind, BUCKET, params),
+    new Response(agedEntry(body, ageMs)),
+  );
+}
 
 function createCache() {
   const entries = new Map();
@@ -26,8 +44,8 @@ function createContext() {
 
 const env = {
   HF_BUCKET_ID: 'ktongue/ENISE-SITE',
-  TREE_CACHE_TTL: '21600',
-  INDEX_CACHE_TTL: '43200',
+  TREE_CACHE_TTL: '300',
+  INDEX_CACHE_TTL: '600',
   FILE_CACHE_TTL: '604800',
   MAX_CACHEABLE_FILE_BYTES: '26214400',
   ASSETS: { fetch: () => new Response('asset') },
@@ -84,7 +102,7 @@ test('Workers KV sert de cache global optionnel après un MISS Edge', async () =
     const context = createContext();
     const response = await worker.fetch(
       new Request('https://docs.example/api/tree'),
-      { ...env, METADATA_KV: { get: async () => payload, put: async () => {} } },
+      { ...env, METADATA_KV: { get: async () => agedEntry(payload), put: async () => {} } },
       context,
     );
     assert.equal(response.status, 200);
@@ -179,7 +197,7 @@ test('/api/counts réutilise le document d’index stocké dans Workers KV', asy
     const context = createContext();
     const response = await worker.fetch(
       new Request('https://docs.example/api/counts?prefix=GM'),
-      { ...env, METADATA_KV: { get: async () => document, put: async () => {} } },
+      { ...env, METADATA_KV: { get: async () => agedEntry(document), put: async () => {} } },
       context,
     );
     assert.equal(response.status, 200);
@@ -355,6 +373,155 @@ test('une requête Range est transmise et n’est pas mise en cache', async () =
     assert.equal(receivedRange, 'bytes=0-3');
     assert.equal(response.headers.get('X-Cache-Status'), 'BYPASS-RANGE');
     assert.equal(response.headers.get('Content-Disposition'), "inline; filename*=UTF-8''poly.pdf");
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.caches = originalCaches;
+  }
+});
+
+
+test('un document périmé est servi aussitôt puis relu en arrière-plan', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCaches = globalThis.caches;
+  let upstreamCalls = 0;
+  globalThis.caches = { default: createCache() };
+  globalThis.fetch = async () => {
+    upstreamCalls += 1;
+    return Response.json([
+      { type: 'file', path: 'GM/3A GM/poly.pdf', size: 10, uploadedAt: '2026-09-24T10:00:00Z' },
+      { type: 'file', path: 'GM/Stages/rapport.pdf', size: 10, uploadedAt: '2026-09-24T11:00:00Z' },
+    ]);
+  };
+
+  try {
+    await seedCache(
+      'index',
+      {
+        bucketId: BUCKET,
+        items: [{ type: 'file', path: 'GM/3A GM/poly.pdf', size: 10, mtime: '2026-09-20T10:00:00Z' }],
+        counts: { 'GM/3A GM': 1 },
+        totalFiles: 1,
+        complete: true,
+        fetchedAt: '2026-09-24T08:00:00Z',
+      },
+      { ageMs: 11 * 60 * 1000 },
+    );
+
+    const staleContext = createContext();
+    const stale = await worker.fetch(new Request('https://docs.example/api/index'), env, staleContext);
+    assert.equal(stale.status, 200);
+    assert.equal(stale.headers.get('X-Cache-Status'), 'STALE');
+    // Le visiteur reçoit tout de suite l’ancien document : la relecture du
+    // bucket ne l’attend pas.
+    assert.equal((await stale.json()).totalFiles, 1);
+    assert.match(stale.headers.get('Cache-Control'), /max-age=120/);
+
+    await staleContext.done();
+    assert.equal(upstreamCalls, 1);
+
+    const freshContext = createContext();
+    const fresh = await worker.fetch(new Request('https://docs.example/api/index'), env, freshContext);
+    assert.equal(fresh.headers.get('X-Cache-Status'), 'HIT');
+    const freshPayload = await fresh.json();
+    assert.equal(freshPayload.totalFiles, 2);
+    assert.equal(freshPayload.counts['GM/Stages'], 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.caches = originalCaches;
+  }
+});
+
+test('Workers KV n’est réécrit que si le contenu du bucket change', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCaches = globalThis.caches;
+  const items = [{ type: 'file', path: 'GM/3A GM/poly.pdf', size: 10, mtime: '2026-09-20T10:00:00Z' }];
+  const document = {
+    bucketId: BUCKET,
+    items,
+    counts: { GM: 1, 'GM/3A GM': 1 },
+    totalFiles: 1,
+    complete: true,
+    fetchedAt: '2026-09-24T08:00:00Z',
+  };
+
+  async function run(upstreamItems) {
+    let writes = 0;
+    globalThis.caches = { default: createCache() };
+    globalThis.fetch = async () => Response.json(upstreamItems);
+    const context = createContext();
+    const response = await worker.fetch(
+      new Request('https://docs.example/api/index'),
+      {
+        ...env,
+        // Deux scénarios joués à la suite : le délai anti-rafale est neutralisé.
+        REFRESH_COOLDOWN_MS: '0',
+        METADATA_KV: {
+          get: async () => agedEntry(document, 11 * 60 * 1000),
+          put: async () => { writes += 1; },
+        },
+      },
+      context,
+    );
+    await context.done();
+    return { status: response.headers.get('X-Cache-Status'), writes };
+  }
+
+  try {
+    // Seule la date de collecte a changé : aucune écriture KV.
+    const unchanged = await run(items);
+    assert.equal(unchanged.status, 'KV-STALE');
+    assert.equal(unchanged.writes, 0);
+
+    // Un fichier ajouté dans le bucket : une écriture, pas deux.
+    const changed = await run([
+      ...items,
+      { type: 'file', path: 'GM/Stages/rapport.pdf', size: 10, mtime: '2026-09-24T11:00:00Z' },
+    ]);
+    assert.equal(changed.status, 'KV-STALE');
+    assert.equal(changed.writes, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.caches = originalCaches;
+  }
+});
+
+test('une entrée KV sans horodatage reste servie et se met à niveau', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCaches = globalThis.caches;
+  const legacy = JSON.stringify({
+    bucketId: BUCKET,
+    prefix: '',
+    items: [{ type: 'directory', path: 'GM' }],
+    complete: true,
+    fetchedAt: '2026-09-24T08:00:00Z',
+  });
+  globalThis.caches = { default: createCache() };
+  globalThis.fetch = async () => {
+    throw new Error('Hugging Face indisponible');
+  };
+
+  try {
+    const context = createContext();
+    const response = await worker.fetch(
+      new Request('https://docs.example/api/tree'),
+      { ...env, METADATA_KV: { get: async () => legacy, put: async () => {} } },
+      context,
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('X-Cache-Status'), 'KV-STALE');
+    assert.equal((await response.json()).items[0].path, 'GM');
+    // La relecture échoue : l’erreur reste en arrière-plan, la requête suivante
+    // retrouve la même entrée.
+    await context.done();
+
+    const retry = createContext();
+    const again = await worker.fetch(
+      new Request('https://docs.example/api/tree'),
+      { ...env, METADATA_KV: { get: async () => legacy, put: async () => {} } },
+      retry,
+    );
+    assert.equal((await again.json()).items[0].path, 'GM');
+    await retry.done();
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.caches = originalCaches;

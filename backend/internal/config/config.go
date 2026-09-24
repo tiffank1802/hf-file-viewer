@@ -11,13 +11,16 @@ import (
 	"enise-docs/backend/internal/catalog"
 )
 
+// Les TTL de l’arborescence et de l’index restent courts : un dossier ajouté
+// au bucket doit apparaître en quelques minutes, côté site comme côté
+// Assistant.
 const (
 	defaultBucketID       = "ktongue/ENISE-SITE"
 	defaultHFOrigin       = "https://huggingface.co"
 	defaultModel3DURL     = "https://ktongue-rupture.hf.space"
 	defaultAddr           = "0.0.0.0:8788"
-	defaultTreeTTL        = 6 * time.Hour
-	defaultIndexTTL       = 12 * time.Hour
+	defaultTreeTTL        = 5 * time.Minute
+	defaultIndexTTL       = 10 * time.Minute
 	defaultFileTTL        = 7 * 24 * time.Hour
 	defaultOfficeTTL      = 7 * 24 * time.Hour
 	defaultModelTTL       = 7 * 24 * time.Hour

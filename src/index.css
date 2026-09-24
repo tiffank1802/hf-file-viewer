@@ -466,6 +466,12 @@
   .category-copy small { overflow: hidden; color: var(--ink-soft); font-size: 0.65rem; text-overflow: ellipsis; white-space: nowrap; }
   .category-meta { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 17px; border-top: 1px solid rgba(25, 66, 53, 0.09); color: var(--ink-faint); font-size: 0.59rem; font-weight: 650; }
   .category-meta > span { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px; background: rgba(255, 255, 255, 0.72); color: var(--ink); font-size: 0.85rem; }
+  /* Carte d’accès à la racine du bucket (teinte « ink »). */
+  .category-ink { background: linear-gradient(145deg, rgba(240, 248, 245, 0.95), rgba(219, 236, 229, 0.85)); }
+  .category-ink::before { background: rgba(7, 62, 52, 0.15); }
+  .category-ink .category-icon { background: var(--green-deep); color: white; }
+  /* Badge des dossiers repérés comme récents dans l’index du bucket. */
+  .category-badge { position: absolute; right: 15px; top: 33px; padding: 3px 7px; border-radius: 8px; background: var(--red); color: white; font-size: 0.51rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
 
   /* Library shell */
   .library-section { padding: 64px 0 100px; scroll-margin-top: 96px; }

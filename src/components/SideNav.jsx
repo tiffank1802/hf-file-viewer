@@ -7,7 +7,18 @@ function isActiveLink(currentPath, linkPath) {
   return currentPath === linkPath || currentPath.startsWith(`${linkPath}/`);
 }
 
-export default function SideNav({ path, navigate, favoriteCount, onOpenSearch, onOpenFavorites }) {
+export default function SideNav({
+  path,
+  navigate,
+  favoriteCount,
+  onOpenSearch,
+  onOpenFavorites,
+  spaces = [],
+}) {
+  // Dossiers présents dans le bucket mais absents des liens fixes : ils
+  // apparaissent ici dès que l’index les découvre.
+  const otherSpaces = spaces.filter((space) => space.dynamic);
+
   return (
     <aside className="library-sidebar glass-panel" aria-label="Navigation de la bibliothèque">
       <div className="sidebar-section">
@@ -26,6 +37,25 @@ export default function SideNav({ path, navigate, favoriteCount, onOpenSearch, o
           ))}
         </nav>
       </div>
+
+      {otherSpaces.length > 0 && (
+        <div className="sidebar-section">
+          <span className="sidebar-label">Autres dossiers</span>
+          <nav className="sidebar-links">
+            {otherSpaces.map((space) => (
+              <button
+                type="button"
+                key={space.path}
+                className={isActiveLink(path, space.path) ? 'active' : ''}
+                onClick={() => navigate(space.path)}
+              >
+                <span><NavigationIcon name={space.icon} /></span>
+                {space.title}
+              </button>
+            ))}
+          </nav>
+        </div>
+      )}
 
       <div className="sidebar-section sidebar-personal">
         <span className="sidebar-label">Mon espace</span>

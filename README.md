@@ -13,6 +13,7 @@ Bibliothèque étudiante moderne pour les ressources de **Centrale Lyon ENISE**,
 - aperçu 3D hybride : conversion **GLB gratuite** (FreeCAD) pour `.step`, `.iges`, `.stl`, `.obj` avec rotation, zoom et déplacement, **Autodesk APS** (Model Derivative) pour les autres formats (`.dwg`, `.rvt`, `.sldprt`, `.ifc`, `.catpart`, … — FreeCAD ne lit pas les formats propriétaires), et plugin iframe **ShareCAD** en roue de secours gratuite sans conversion ;
 - téléchargement, partage et favoris enregistrés dans le navigateur ;
 - assistant bibliothèque : il retrouve un document, l’ouvre, le résume, et sait croiser plusieurs annales pour répondre à « comment se structure l’examen d’économie ? ». La rédaction reste côté serveur Go ; sans clé, les cartes de documents sont quand même proposées ;
+- **cartes d’espaces construites depuis l’index du bucket** : un dossier ajouté dans Hugging Face apparaît sur l’accueil en quelques minutes, sans redéploiement, avec un badge « Nouveau » et une entrée « Autres dossiers » dans la barre latérale ;
 - effectifs par dossier calculés **une seule fois à l’indexation** et stockés dans le JSON d’index ;
 - Worker Cloudflare servant à la fois les assets statiques et l’API proxy ;
 - Cache API configuré pour les arbres, l’index et les fichiers raisonnablement petits ;
@@ -45,9 +46,9 @@ Le frontend et le Worker sont sur **le même domaine**. Le navigateur n’appell
 | Contenu | Cache navigateur | Cache Cloudflare | Origine |
 |---|---:|---:|---|
 | Assets versionnés | 1 an | CDN Cloudflare | bundle Vite |
-| Dossier `/api/tree` | 5 min | Cache API, 6 h | API Hugging Face |
-| Index `/api/index` | 30 min | Cache API, 12 h | API Hugging Face |
-| Comptage `/api/counts` | 30 min | Cache API, 12 h | JSON d’index (aucun appel HF) |
+| Dossier `/api/tree` | 2 min | Cache API, servi aussitôt, relu après 5 min | API Hugging Face |
+| Index `/api/index` | 2 min | Cache API, servi aussitôt, relu après 10 min | API Hugging Face |
+| Comptage `/api/counts` | 2 min | idem index (JSON partagé) | JSON d’index (aucun appel HF) |
 | Fichier `/api/file` | 1 h | Cache API, 7 j | bucket Hugging Face |
 | PDF Office `/api/office/pdf` | 1 h | Cache API, 7 j | Space LibreOffice |
 | GLB 3D `/api/model3d/glb` | 1 h | Cache API, 7 j | Space FreeCAD |
@@ -110,15 +111,15 @@ Les réglages de production sont dans [`wrangler.jsonc`](./wrangler.jsonc) :
 ```jsonc
 "vars": {
   "HF_BUCKET_ID": "ktongue/ENISE-SITE",
-  "TREE_CACHE_TTL": "21600",
-  "INDEX_CACHE_TTL": "43200",
+  "TREE_CACHE_TTL": "300",
+  "INDEX_CACHE_TTL": "600",
   "FILE_CACHE_TTL": "604800",
   "KV_CACHE_TTL": "86400",
   "MAX_CACHEABLE_FILE_BYTES": "26214400"
 }
 ```
 
-Un changement de TTL s’applique aux nouvelles entrées de cache. Les anciennes expirent naturellement ou peuvent être purgées depuis le tableau de bord Cloudflare.
+Ces deux premiers TTL ne sont pas des délais d’expiration mais des **seuils de fraîcheur** : passés 5 min (arborescence) ou 10 min (index), le document est encore servi immédiatement au visiteur et le Worker relit le bucket en arrière-plan. Un dossier ajouté dans Hugging Face apparaît donc en quelques minutes, sans redéploiement.
 
 ### Héberger l’API Go sur Firebase (Cloud Run)
 
@@ -506,7 +507,7 @@ Le Worker Cloudflare et le backend Go exposent les mêmes routes. L’en-tête `
 4. **Réflexion des modèles** : leur raisonnement arrive dans `reasoning_content`. Il est lu (et annoncé au navigateur par un événement `thinking`) au lieu d’être pris pour un flux vide.
 5. **Robustesse** : budget de jetons élargi (`CHAT_MAX_TOKENS`, `CHAT_DEEP_MAX_TOKENS`), délai porté à `CHAT_ANSWER_TIMEOUT`, une seconde tentative si le budget a été épuisé par la réflexion, repli sur le modèle par défaut si le modèle choisi est introuvable, puis le moteur suivant s’il existe. En dernier recours : les documents trouvés, avec la raison réelle de l’échec, le moteur et le modèle essayés.
 
-L’en-tête `X-Cache-Status` permet de diagnostiquer le comportement : `HIT`, `KV-HIT`, `MISS`, `BYPASS-RANGE` ou `BYPASS-SIZE`. L’en-tête `X-Data-Source: index-json` confirme qu’une réponse d’effectifs provient bien du JSON d’index et non d’un nouveau parcours Hugging Face.
+L’en-tête `X-Cache-Status` permet de diagnostiquer le comportement : `HIT`, `STALE` (document servi pendant une relecture en arrière-plan), `KV-HIT`, `KV-STALE`, `MISS`, `BYPASS-RANGE` ou `BYPASS-SIZE`. L’en-tête `X-Data-Source: index-json` confirme qu’une réponse d’effectifs provient bien du JSON d’index et non d’un nouveau parcours Hugging Face.
 
 ### Comptage des documents
 
@@ -517,7 +518,16 @@ Le bucket n’est parcouru récursivement qu’au **premier** `GET /api/index` d
 3. `counts` (chemin → nombre) et `totalFiles` sont écrits **dans le document d’index** ;
 4. ce document part au Cache API, et dans Workers KV si le binding existe.
 
-Le frontend charge ce JSON une fois au démarrage (`useIndexCatalog`). L’accueil, les cartes d’espaces, l’explorateur et la recherche lisent ensuite les mêmes valeurs : **changer de dossier ne déclenche aucun recomptage**, seule la liste du dossier est demandée à `/api/tree` (elle-même cachée). Pendant le tout premier index, l’interface affiche « Indexation… ».
+Le frontend charge ce JSON au démarrage (`useIndexCatalog`) puis le relit toutes les 5 minutes (uniquement quand l’onglet est visible). L’accueil, les cartes d’espaces, l’explorateur et la recherche lisent ensuite les mêmes valeurs : **changer de dossier ne déclenche aucun recomptage**, seule la liste du dossier est demandée à `/api/tree` (elle-même cachée). Pendant le tout premier index, l’interface affiche « Indexation… ».
+
+#### Fraîcheur sans attente
+
+Chaque document d’index ou d’arborescence est stocké avec son horodatage (`storedAt`) :
+
+- **entrée fraîche** → réponse immédiate (`HIT` ou `KV-HIT`) ;
+- **entrée périmée** → la réponse part tout de suite avec l’ancien contenu (`STALE` / `KV-STALE`) et la relecture du bucket se poursuit en arrière-plan (`ctx.waitUntil`). Le visiteur suivant, quelques secondes plus tard, reçoit la nouvelle version.
+
+Deux précautions limitent la charge : une seule relecture à la fois par document, et un délai anti-rafale (30 s, `REFRESH_COOLDOWN_MS`) qui n’a d’effet qu’après un échec. **Workers KV n’est réécrit que si le contenu a réellement changé** (la date `fetchedAt` change à chaque passage et ne compte pas), ce qui protège le quota gratuit de 1000 écritures par jour.
 
 ### Script de comptage de référence
 
@@ -536,7 +546,7 @@ Si le script trouve des fichiers alors que le site en affiche 0, le document d�
 
 1. **Redéployer avec une nouvelle version de clés** (recommandé, fonctionne aussi sur `*.workers.dev`) : incrémenter `CACHE_KEY_VERSION` dans `worker/index.js` puis `npm run deploy`. Le Worker utilise des clés de cache personnalisées que la « purge par URL » du tableau de bord ne peut pas atteindre ; changer la version rend les anciennes entrées orphelines (elles expirent seules).
 2. **Purge Everything** au niveau de la zone Cloudflare (Caching → Purge Cache → Purge Everything), uniquement si le site est rattaché à un domaine personnalisé. C’est la seule purge du tableau de bord qui vide aussi le Cache API des Workers. Inutile si le site est servi depuis `*.workers.dev` (pas de zone).
-3. **Attendre l’expiration naturelle** : 12 h pour l’index (`INDEX_CACHE_TTL`). Aucun namespace KV n’est configuré par défaut, donc rien à purger côté KV.
+3. **Attendre la relecture automatique** : un index périmé est relu en arrière-plan au bout de 10 min (`INDEX_CACHE_TTL`). Le comptage se corrige donc tout seul, sans purge ni redéploiement.
 
 Après purge, vérifier que `/api/index` repart en `X-Cache-Status: MISS` et que `totalFiles` correspond au bucket (voir aussi `npm run count:files -- --compare <url-du-site>`).
 
@@ -555,6 +565,7 @@ npm audit            # audit des dépendances
 
 ```text
 src/                 interface React
+src/utils/spaces.js  cartes d’accueil et barre latérale dérivées de l’index du bucket
 worker/index.js      proxy, sécurité et stratégie Cache API
 scripts/             comptage de référence des fichiers du bucket (diagnostic)
 public/              logos, drapeau, favicon et en-têtes Cloudflare
