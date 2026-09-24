@@ -327,6 +327,7 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
           )}
 
           {pane === 'chat' && (
+          <>
           <form
             className="library-chat-form"
             onSubmit={(event) => {
@@ -360,6 +361,7 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
               : 'Connecte-toi pour garder cette conversation dans ton compte.'}
             {' '}Les cartes viennent de la bibliothèque.
           </p>
+          </>
           )}
         </section>
       )}
@@ -456,19 +458,6 @@ function renderInline(line, documents, onOpen) {
     if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
       const value = part.slice(1, -1);
       const doc = documents.find((item) => item.path === value || item.name === value);
-      if (doc && onOpen) {
-        return (
-          <button key={index} type="button" className="library-chat-path" onClick={() => onOpen(doc)}>
-            {value}
-          </button>
-        );
-      }
-      return <code key={index}>{value}</code>;
-    }
-    return <span key={index}>{part}</span>;
-  });
-}
-value || item.name === value);
       if (doc && onOpen) {
         return (
           <button key={index} type="button" className="library-chat-path" onClick={() => onOpen(doc)}>
