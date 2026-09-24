@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { FiMessageCircle, FiSend, FiX } from 'react-icons/fi';
-import { catalogHint, fetchChatStatus, streamChat } from '../services/chat';
+import { catalogHint, fetchChatStatus, listConversations, loadConversation, streamChat } from '../services/chat';
+import { useAuth } from '../hooks/useAuth';
 import { getFileKind, normalizeBucketItem, parentPath } from '../utils/files';
 
 const SUGGESTIONS = [
@@ -24,12 +25,18 @@ const KIND_LABEL = {
 };
 
 export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile }) {
+  const auth = useAuth();
+  const userId = auth.user?.id ?? null;
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState([]);
+  const [conversationId, setConversationId] = useState('');
+  const [conversations, setConversations] = useState([]);
+  const [historyNote, setHistoryNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null);
   const [statusError, setStatusError] = useState('');
+  const conversationRef = useRef('');
   const inputRef = useRef(null);
   const endRef = useRef(null);
   const abortRef = useRef(null);
@@ -39,6 +46,15 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
   const inputId = useId();
 
   useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => { conversationRef.current = conversationId; }, [conversationId]);
+
+  useEffect(() => {
+    conversationRef.current = '';
+    setMessages([]);
+    setConversationId('');
+    setConversations([]);
+    setHistoryNote('');
+  }, [userId]);
 
   useEffect(() => {
     if (!open || status || statusError) return undefined;
@@ -67,6 +83,55 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
     endRef.current?.scrollIntoView({ block: 'end' });
   }, [messages, open, busy]);
 
+  useEffect(() => {
+    if (!open || !userId) return undefined;
+    const controller = new AbortController();
+    listConversations(controller.signal)
+      .then((payload) => {
+        if (payload.unprovisioned) {
+          setHistoryNote(payload.error || 'Lance npm run appwrite:setup pour garder les conversations.');
+          return;
+        }
+        const items = Array.isArray(payload.items) ? payload.items : [];
+        setConversations(items);
+        if (!conversationRef.current && items[0]?.id) {
+          return loadConversation(items[0].id, controller.signal).then((loaded) => {
+            setConversationId(items[0].id);
+            setMessages(messagesFromPayload(loaded.messages));
+          });
+        }
+        return undefined;
+      })
+      .catch((error) => {
+        if (error.name === 'AbortError') return;
+        if (error.status !== 401) setHistoryNote(error.message || 'Historique illisible.');
+      });
+    return () => controller.abort();
+  }, [open, userId]);
+
+  function startFresh() {
+    abortRef.current?.abort();
+    setConversationId('');
+    setMessages([]);
+    setHistoryNote('');
+    setBusy(false);
+  }
+
+  async function openStored(id) {
+    if (!id || busy) return;
+    setHistoryNote('');
+    setBusy(true);
+    try {
+      const loaded = await loadConversation(id);
+      setConversationId(id);
+      setMessages(messagesFromPayload(loaded.messages));
+    } catch (error) {
+      setHistoryNote(error.message || 'Conversation illisible.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function openDocument(doc) {
     const item = normalizeBucketItem(doc);
     if (!item.path) return;
@@ -85,6 +150,7 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
       .filter((item) => item.text && !item.pending)
       .slice(-6)
       .map((item) => ({ role: item.role, content: item.text }));
+    const currentConversation = conversationRef.current;
     idRef.current += 1;
     const userId = `m${idRef.current}`;
     idRef.current += 1;
@@ -106,6 +172,7 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
       await streamChat({
         message: question,
         history,
+        conversationId: currentConversation,
         contextPath: path,
         catalog: catalogHint(catalog, status),
         signal: controller.signal,
@@ -113,6 +180,14 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
           if (event === 'sources') patch((item) => ({ ...item, documents: data.documents || [] }));
           if (event === 'delta') patch((item) => ({ ...item, text: `${item.text}${data.text || ''}` }));
           if (event === 'done') {
+            if (data.conversationId) {
+              setConversationId(data.conversationId);
+              setConversations((current) => {
+                if (current.some((item) => item.id === data.conversationId)) return current;
+                return [{ id: data.conversationId, title: question.slice(0, 80), preview: question.slice(0, 80) }, ...current];
+              });
+            }
+            setHistoryNote(data.saveError || '');
             patch((item) => ({
               ...item,
               text: data.answer || item.text,
@@ -168,6 +243,30 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
               <FiX aria-hidden="true" />
             </button>
           </header>
+
+          {userId && (
+            <div className="library-chat-history">
+              <button type="button" onClick={startFresh} disabled={busy}>Nouvelle</button>
+              {conversations.length > 0 && (
+                <select
+                  aria-label="Conversations enregistrées"
+                  value={conversationId}
+                  disabled={busy}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    if (!next) startFresh();
+                    else void openStored(next);
+                  }}
+                >
+                  <option value="">Choisir un fil</option>
+                  {conversations.map((item) => (
+                    <option key={item.id} value={item.id}>{item.title || item.preview || 'Conversation'}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+          {historyNote && <p className="library-chat-note">{historyNote}</p>}
 
           <div className="library-chat-log" aria-live="polite">
             {messages.length === 0 && (
@@ -242,11 +341,25 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
               <FiSend aria-hidden="true" />
             </button>
           </form>
-          <p className="library-chat-trust">Les cartes viennent de la bibliothèque. Rien n’est inventé comme fichier.</p>
+          <p className="library-chat-trust">
+            {userId
+              ? 'Cette conversation est enregistrée dans ton compte.'
+              : 'Connecte-toi pour garder cette conversation dans ton compte.'}
+            {' '}Les cartes viennent de la bibliothèque.
+          </p>
         </section>
       )}
     </>
   );
+}
+
+function messagesFromPayload(list) {
+  return (Array.isArray(list) ? list : []).map((item, index) => ({
+    id: item.id || `stored-${index}`,
+    role: item.role === 'assistant' ? 'assistant' : 'user',
+    text: item.text || '',
+    documents: Array.isArray(item.documents) ? item.documents : [],
+  }));
 }
 
 function DocumentCard({ doc, onOpen }) {

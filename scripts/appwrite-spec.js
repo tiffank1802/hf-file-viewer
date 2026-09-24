@@ -78,6 +78,38 @@ export const TABLES = [
       { key: 'fulltext_favorite', type: 'fulltext', columns: ['title', 'note'] },
     ],
   },
+  {
+    id: 'conversations',
+    name: 'Conversations de l’assistant',
+    rowSecurity: true,
+    permissions: [`create("${ROLE_CREATE}")`],
+    columns: [
+      { type: 'string', key: 'userId', size: 36, required: true },
+      { type: 'string', key: 'title', size: 160, required: false, default: '' },
+      { type: 'string', key: 'preview', size: 160, required: false, default: '' },
+      { type: 'string', key: 'contextPath', size: 512, required: false, default: '' },
+    ],
+    indexes: [
+      { key: 'idx_chat_user_updated', type: 'key', columns: ['userId', '$updatedAt'] },
+    ],
+  },
+  {
+    id: 'messages',
+    name: 'Messages de l’assistant',
+    rowSecurity: true,
+    permissions: [`create("${ROLE_CREATE}")`],
+    columns: [
+      { type: 'string', key: 'userId', size: 36, required: true },
+      { type: 'string', key: 'conversationId', size: 36, required: true },
+      { type: 'enum', key: 'role', elements: ['user', 'assistant'], required: false, default: 'user' },
+      { type: 'integer', key: 'seq', required: true, min: 0, max: 100000 },
+      { type: 'string', key: 'body', size: 8000, required: false, default: '' },
+      { type: 'string', key: 'sources', size: 2000, required: false, default: '' },
+    ],
+    indexes: [
+      { key: 'idx_msg_convo_seq', type: 'key', columns: ['conversationId', 'seq'] },
+    ],
+  },
 ];
 
 /**

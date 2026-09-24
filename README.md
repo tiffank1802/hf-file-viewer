@@ -372,7 +372,7 @@ Pour un déploiement CI GitHub, stocker `CLOUDFLARE_API_TOKEN` et `CLOUDFLARE_AC
 
 La connexion et les favoris passent par le backend Go, pas par le SDK Appwrite dans le navigateur. Le projet est **Django objects** (`https://fra.cloud.appwrite.io/v1`, `69cedb12002acdd498e0`).
 
-Le compte (email, mot de passe, nom) vit dans Appwrite Auth. La promotion, la filière et les favoris vivent dans la base `enise_docs`, tables `profiles` et `favorites`. Cette base se crée une fois, depuis ta machine, avec une clé serveur :
+Le compte (email, mot de passe, nom) vit dans Appwrite Auth. La promotion, la filière, les favoris et les conversations de l’assistant vivent dans la base `enise_docs`, tables `profiles`, `favorites`, `conversations` et `messages`. Cette base se crée une fois, depuis ta machine, avec une clé serveur :
 
 ```bash
 # Console Appwrite → API Keys → databases.write, puis dans .dev.vars :

@@ -2179,6 +2179,8 @@ async function proxyGoChat(request, env) {
   headers.set('Accept', request.headers.get('Accept') || 'application/json');
   const contentType = request.headers.get('Content-Type');
   if (contentType) headers.set('Content-Type', contentType);
+  const cookie = request.headers.get('Cookie');
+  if (cookie) headers.set('Cookie', cookie);
   const client = String(request.headers.get('CF-Connecting-IP') || '').trim();
   if (client && !/[\s,]/.test(client)) headers.set('X-Enise-Client', client);
   const init = { method: request.method, headers };

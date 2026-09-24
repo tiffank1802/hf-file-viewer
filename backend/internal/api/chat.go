@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"enise-docs/backend/internal/appwrite"
 	"enise-docs/backend/internal/cache"
 	"enise-docs/backend/internal/catalog"
 	"enise-docs/backend/internal/chat"
@@ -35,10 +36,11 @@ const (
 )
 
 type chatRequest struct {
-	Message     string               `json:"message"`
-	ContextPath string               `json:"contextPath"`
-	History     []chatTurn           `json:"history"`
-	Catalog     []catalog.BucketItem `json:"catalog"`
+	Message        string               `json:"message"`
+	ContextPath    string               `json:"contextPath"`
+	ConversationID string               `json:"conversationId"`
+	History        []chatTurn           `json:"history"`
+	Catalog        []catalog.BucketItem `json:"catalog"`
 }
 
 type chatTurn struct {
@@ -166,6 +168,104 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) error {
 		"documents": publicHits(hits),
 	})
 	return nil
+}
+
+type chatSave struct {
+	ID    string
+	Error string
+}
+
+func (s *Server) rememberChat(r *http.Request, conversationID, question, answer, contextPath string, hits []chat.Hit) chatSave {
+	secret := sessionFrom(r)
+	if secret == "" || !s.authReady() {
+		return chatSave{}
+	}
+	if !s.appwrite().HasChats() {
+		return chatSave{Error: "Conversations non configurées."}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	user, err := s.appwrite().GetAccount(ctx, secret)
+	if err != nil {
+		return chatSave{}
+	}
+	saved, err := s.appwrite().AppendChatTurn(ctx, secret, user.ID, conversationID, question, answer, contextPath, chatSources(hits))
+	if err != nil {
+		log.Printf("chat mémoire: %v", err)
+		if appwrite.IsMissingTable(err) {
+			return chatSave{Error: "Lance npm run appwrite:setup pour garder les conversations."}
+		}
+		return chatSave{Error: "La conversation n’a pas pu être enregistrée."}
+	}
+	return chatSave{ID: saved.ID}
+}
+
+func chatSources(hits []chat.Hit) []appwrite.ChatSource {
+	out := make([]appwrite.ChatSource, 0, len(hits))
+	for _, hit := range hits {
+		if hit.Path == "" {
+			continue
+		}
+		out = append(out, appwrite.ChatSource{Path: hit.Path, Name: hit.Name, Type: hit.Type})
+	}
+	return out
+}
+
+func (s *Server) handleChatHistory(w http.ResponseWriter, r *http.Request) error {
+	if !s.authReady() || !s.appwrite().HasChats() {
+		writeJSON(w, r, http.StatusOK, map[string]any{
+			"ok": true, "enabled": false, "items": []any{}, "messages": []any{},
+		}, "no-store", nil)
+		return nil
+	}
+	secret := sessionFrom(r)
+	if secret == "" {
+		return catalog.Error(http.StatusUnauthorized, "Connecte-toi pour retrouver tes conversations.")
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+	defer cancel()
+	user, err := s.appwrite().GetAccount(ctx, secret)
+	if err != nil {
+		if authStatus(err) == http.StatusUnauthorized {
+			return catalog.Error(http.StatusUnauthorized, "Session expirée. Reconnecte-toi.")
+		}
+		return s.authFail(err)
+	}
+	switch {
+	case r.URL.Path == "/api/chat/conversations" && r.Method == http.MethodGet:
+		items, err := s.appwrite().ListChatConversations(ctx, secret, user.ID)
+		if err != nil {
+			if appwrite.IsMissingTable(err) {
+				writeJSON(w, r, http.StatusOK, map[string]any{
+					"ok": true, "enabled": true, "unprovisioned": true, "items": []any{},
+					"error": "Lance npm run appwrite:setup pour garder les conversations.",
+				}, "no-store", nil)
+				return nil
+			}
+			return s.authFail(err)
+		}
+		if items == nil {
+			items = []appwrite.ChatConversation{}
+		}
+		writeJSON(w, r, http.StatusOK, map[string]any{"ok": true, "enabled": true, "items": items}, "no-store", nil)
+		return nil
+	case strings.HasPrefix(r.URL.Path, "/api/chat/conversations/") && r.Method == http.MethodGet:
+		id := strings.TrimPrefix(r.URL.Path, "/api/chat/conversations/")
+		messages, err := s.appwrite().ListChatMessages(ctx, secret, user.ID, id)
+		if err != nil {
+			return s.authFail(err)
+		}
+		if messages == nil {
+			messages = []appwrite.ChatMessage{}
+		}
+		writeJSON(w, r, http.StatusOK, map[string]any{
+			"ok": true, "conversationId": id, "messages": messages,
+		}, "no-store", nil)
+		return nil
+	default:
+		w.Header().Set("Allow", "GET")
+		return catalog.Error(http.StatusMethodNotAllowed, "Méthode "+r.Method+" non autorisée.")
+	}
 }
 
 func readChatRequest(w http.ResponseWriter, r *http.Request) (chatRequest, error) {

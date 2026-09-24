@@ -238,7 +238,16 @@ test('le modèle respecte les règles que le serveur applique', () => {
   // Seules les invariants écrites par le code restent obligatoires.
   assert.deepEqual(
     TABLES.flatMap((table) => table.columns.filter((c) => c.required).map((c) => `${table.id}.${c.key}`)).sort(),
-    ['favorites.filePath', 'favorites.pathKey', 'favorites.userId', 'profiles.userId'],
+    [
+      'conversations.userId',
+      'favorites.filePath',
+      'favorites.pathKey',
+      'favorites.userId',
+      'messages.conversationId',
+      'messages.seq',
+      'messages.userId',
+      'profiles.userId',
+    ],
   );
   for (const { table, column } of enumColumns(TABLES)) {
     assert.ok(column.elements.includes(column.default), `${table.id}.${column.key} : défaut hors enum`);

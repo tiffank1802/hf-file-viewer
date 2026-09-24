@@ -1115,6 +1115,11 @@
 }
 .library-chat-head button { width: 32px; cursor: pointer; }
 .library-chat-pill { padding: 0 8px; font-size: 0.58rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
+.library-chat-history { display: flex; gap: 8px; align-items: center; padding: 8px 14px 0; }
+.library-chat-history + .library-chat-note { margin: 8px 14px 0; }
+.library-chat-history button, .library-chat-history select { border: 1px solid var(--line); border-radius: 999px; background: white; color: var(--ink-soft); font: inherit; font-size: 0.68rem; }
+.library-chat-history button { padding: 4px 10px; cursor: pointer; }
+.library-chat-history select { flex: 1; min-width: 0; padding: 4px 8px; }
 .library-chat-log { display: flex; flex: 1; flex-direction: column; gap: 10px; overflow: auto; padding: 14px; }
 .library-chat-bubble { max-width: 94%; padding: 10px 12px; border-radius: 16px; font-size: 0.78rem; line-height: 1.45; }
 .library-chat-bubble p + p { margin-top: 6px; }

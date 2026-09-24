@@ -1,6 +1,7 @@
 export async function fetchChatStatus(signal) {
   const response = await fetch('/api/chat/status', {
     signal,
+    credentials: 'same-origin',
     headers: { Accept: 'application/json' },
   });
   const payload = await response.json().catch(() => ({}));
@@ -47,6 +48,36 @@ export async function streamChat({ message, history, contextPath, catalog, signa
   }
   buffer += decoder.decode();
   if (buffer.trim()) consume(buffer);
+}
+
+export async function listConversations(signal) {
+  const response = await fetch('/api/chat/conversations', {
+    signal,
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(payload.error || 'Conversations indisponibles.');
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
+
+export async function loadConversation(id, signal) {
+  const response = await fetch(`/api/chat/conversations/${encodeURIComponent(id)}`, {
+    signal,
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(payload.error || 'Conversation illisible.');
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
 }
 
 export function catalogHint(catalog, status) {

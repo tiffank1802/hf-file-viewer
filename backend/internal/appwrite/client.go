@@ -58,13 +58,15 @@ func (e *APIError) Error() string {
 
 // Client appelle l'API REST Appwrite avec la session de l'étudiant, pas une clé admin.
 type Client struct {
-	Endpoint       string
-	ProjectID      string
-	DatabaseID     string
-	ProfileTable   string
-	FavoritesTable string
-	Flavor         string
-	HTTP           *http.Client
+	Endpoint           string
+	ProjectID          string
+	DatabaseID         string
+	ProfileTable       string
+	FavoritesTable     string
+	ConversationsTable string
+	MessagesTable      string
+	Flavor             string
+	HTTP               *http.Client
 }
 
 func (c *Client) httpClient() *http.Client {
