@@ -38,6 +38,13 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
   const [sessionReady, setSessionReady] = useState(false);
   const [status, setStatus] = useState(null);
   const [statusError, setStatusError] = useState('');
+  const [selectedProvider, setSelectedProvider] = useState(() => {
+    try {
+      return window.localStorage.getItem('enise-chat-provider') || '';
+    } catch {
+      return '';
+    }
+  });
   const conversationRef = useRef('');
   const inputRef = useRef(null);
   const endRef = useRef(null);
@@ -186,6 +193,8 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
         history,
         conversationId: currentConversation,
         contextPath: path,
+        provider: selectedProvider,
+        model: activeOption?.model || '',
         catalog: catalogHint(catalog, status),
         signal: controller.signal,
         onEvent: ({ event, data }) => {
@@ -233,7 +242,16 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
     }
   }
 
-  const engineLabel = status?.engine === 'nvidia' ? 'NVIDIA' : 'Bibliothèque';
+  const providers = Array.isArray(status?.providers) ? status.providers : [];
+  const enabledProviders = providers.filter((item) => item.enabled);
+  const activeOption = selectedProvider
+    ? enabledProviders.find((item) => item.id === selectedProvider)
+    : (enabledProviders[0] || null);
+  const engineLabel = statusError
+    ? 'Hors ligne'
+    : activeOption
+      ? `${activeOption.label}`
+      : 'Bibliothèque';
 
   return (
     <>
@@ -256,7 +274,32 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
               <strong id={titleId}>Assistant bibliothèque</strong>
               <p>{path ? `Dossier ouvert : ${path}` : 'Toute la bibliothèque'}</p>
             </div>
-            <span className="library-chat-pill">{statusError ? 'Hors ligne' : engineLabel}</span>
+            {statusError ? (
+              <span className="library-chat-pill">{statusError ? 'Hors ligne' : engineLabel}</span>
+            ) : (
+              <label className="library-chat-model">
+                <span className="sr-only">Modèle de la requête</span>
+                <select
+                  value={activeOption?.id || ''}
+                  disabled={busy}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setSelectedProvider(next);
+                    try {
+                      if (next) window.localStorage.setItem('enise-chat-provider', next);
+                      else window.localStorage.removeItem('enise-chat-provider');
+                    } catch {
+                      // stockage indisponible
+                    }
+                  }}
+                >
+                  {enabledProviders.length === 0 && <option value="">Bibliothèque</option>}
+                  {enabledProviders.map((item) => (
+                    <option key={item.id} value={item.id}>{item.label} · {item.model}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             <button type="button" onClick={() => setOpen(false)} aria-label="Fermer l’assistant">
               <FiX aria-hidden="true" />
             </button>
@@ -350,9 +393,13 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
                 )}
                 {message.engine && !message.pending && (
                   <p className="library-chat-engine">
-                    {message.engine === 'nvidia'
-                      ? 'Rédigé avec NVIDIA, à partir des documents de la bibliothèque.'
-                      : 'Recherche dans la bibliothèque.'}
+                    {message.engine === 'local'
+                      ? 'Recherche dans la bibliothèque.'
+                      : message.engine === 'openrouter'
+                        ? 'Rédigé avec OpenRouter, à partir des documents de la bibliothèque.'
+                        : message.engine === 'opencode'
+                          ? 'Rédigé avec OpenCode, à partir des documents de la bibliothèque.'
+                          : 'Rédigé avec NVIDIA, à partir des documents de la bibliothèque.'}
                   </p>
                 )}
               </article>

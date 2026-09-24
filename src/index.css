@@ -1104,7 +1104,7 @@
 }
 .library-chat-head strong { display: block; font-size: 0.92rem; }
 .library-chat-head p { margin-top: 3px; overflow: hidden; color: rgba(255, 255, 255, 0.72); font-size: 0.64rem; text-overflow: ellipsis; white-space: nowrap; }
-.library-chat-head button, .library-chat-pill {
+.library-chat-head button, .library-chat-pill, .library-chat-model {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1115,6 +1115,21 @@
 }
 .library-chat-head button { width: 32px; cursor: pointer; }
 .library-chat-pill { padding: 0 8px; font-size: 0.58rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
+.library-chat-model select {
+  max-width: 150px;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  color: white;
+  font: inherit;
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  outline: none;
+}
+.library-chat-model option { color: var(--ink); background: white; }
 .library-chat-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 8px 12px 0; }
 .library-chat-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 8px; border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--ink-soft); font: inherit; font-size: 0.7rem; font-weight: 700; cursor: pointer; }
 .library-chat-tabs button.active { border-color: rgba(0, 122, 94, 0.2); background: white; color: var(--green-deep); }

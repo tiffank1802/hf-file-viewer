@@ -24,6 +24,8 @@ func TestAppwriteFallsBackToViteNamesAndCanBeDisabled(t *testing.T) {
 func TestNVIDIAPlaceholderIsUnset(t *testing.T) {
 	t.Setenv("NVIDIA_API_KEY", "nvapi-your-key")
 	t.Setenv("NVIDIA_MODEL", "")
+	t.Setenv("OPENROUTER_API_KEY", "sk-or-v1-your-key")
+	t.Setenv("OPENCODE_API_KEY", "opencode-your-key")
 	t.Setenv("DEV_VARS", filepath.Join(t.TempDir(), "missing"))
 	cfg := Load(t.TempDir())
 	if cfg.NvidiaAPIKey != "" {
@@ -34,5 +36,11 @@ func TestNVIDIAPlaceholderIsUnset(t *testing.T) {
 	}
 	if cfg.NvidiaAPIBase != "https://integrate.api.nvidia.com/v1" {
 		t.Fatalf("base = %q", cfg.NvidiaAPIBase)
+	}
+	if cfg.OpenRouterAPIKey != "" || cfg.OpenCodeAPIKey != "" {
+		t.Fatalf("placeholders providers: openrouter=%q opencode=%q", cfg.OpenRouterAPIKey, cfg.OpenCodeAPIKey)
+	}
+	if cfg.OpenRouterAPIBase != "https://openrouter.ai/api/v1" || cfg.OpenCodeAPIBase != "https://opencode.ai/zen/v1" {
+		t.Fatalf("bases providers: %q %q", cfg.OpenRouterAPIBase, cfg.OpenCodeAPIBase)
 	}
 }

@@ -27,6 +27,10 @@ func TestChatStatusWithoutKeyDoesNotInventOne(t *testing.T) {
 	if payload["status"] != "not-configured" || payload["engine"] != "local" || payload["backend"] != "go" {
 		t.Fatalf("payload = %#v", payload)
 	}
+	providers, _ := payload["providers"].([]any)
+	if len(providers) != 3 {
+		t.Fatalf("providers = %#v", providers)
+	}
 	if _, ok := payload["apiKey"]; ok {
 		t.Fatal("la clé ne doit pas sortir")
 	}

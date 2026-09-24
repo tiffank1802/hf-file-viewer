@@ -39,6 +39,8 @@ type chatRequest struct {
 	Message        string               `json:"message"`
 	ContextPath    string               `json:"contextPath"`
 	ConversationID string               `json:"conversationId"`
+	Provider       string               `json:"provider"`
+	Model          string               `json:"model"`
 	History        []chatTurn           `json:"history"`
 	Catalog        []catalog.BucketItem `json:"catalog"`
 }
@@ -94,21 +96,51 @@ func (l *chatLimiter) allow(key string) bool {
 }
 
 func (s *Server) handleChatStatus(w http.ResponseWriter, r *http.Request) error {
+	providers := s.chatProviders()
+	primary := "local"
+	primaryModel := ""
 	status := "not-configured"
-	engine := "local"
-	if s.nvidiaReady() {
-		status = "ready"
-		engine = "nvidia"
+	for _, provider := range providers {
+		if provider["enabled"] == true {
+			status = "ready"
+			primary, _ = provider["id"].(string)
+			primaryModel, _ = provider["model"].(string)
+			break
+		}
 	}
 	writeJSON(w, r, http.StatusOK, map[string]any{
-		"ok":      true,
-		"status":  status,
-		"engine":  engine,
-		"model":   s.nvidiaModel(),
-		"index":   s.indexLabel(),
-		"backend": "go",
+		"ok":        true,
+		"status":    status,
+		"engine":    primary,
+		"model":     primaryModel,
+		"providers": providers,
+		"index":     s.indexLabel(),
+		"backend":   "go",
 	}, "no-store", nil)
 	return nil
+}
+
+func (s *Server) chatProviders() []map[string]any {
+	return []map[string]any{
+		{
+			"id":      "openrouter",
+			"label":   "OpenRouter",
+			"model":   s.cfg.OpenRouterModel,
+			"enabled": strings.TrimSpace(s.cfg.OpenRouterAPIKey) != "",
+		},
+		{
+			"id":      "nvidia",
+			"label":   "NVIDIA",
+			"model":   s.cfg.NvidiaModel,
+			"enabled": strings.TrimSpace(s.cfg.NvidiaAPIKey) != "",
+		},
+		{
+			"id":      "opencode",
+			"label":   "OpenCode",
+			"model":   s.cfg.OpenCodeModel,
+			"enabled": strings.TrimSpace(s.cfg.OpenCodeAPIKey) != "",
+		},
+	}
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) error {
@@ -160,7 +192,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) error {
 		_ = writeSSE(w, "sources", map[string]any{"documents": publicHits(hits)})
 	}
 
-	answer, engine := s.composeAnswer(r.Context(), w, message, contextPath, sanitizeHistory(body.History, message), hits)
+	answer, engine := s.composeAnswer(r.Context(), w, message, contextPath, sanitizeHistory(body.History, message), hits, body.Provider, body.Model)
 	s.finishChat(w, r, body.ConversationID, message, answer, contextPath, engine, hits)
 	return nil
 }
@@ -394,10 +426,11 @@ func excerptKey(item catalog.BucketItem) string {
 	return "chat-excerpt:" + item.Path + ":" + size + ":" + item.Mtime
 }
 
-func (s *Server) composeAnswer(ctx context.Context, w http.ResponseWriter, message, contextPath string, history []chatTurn, hits []chat.Hit) (string, string) {
-	if len(hits) == 0 || !s.nvidiaReady() {
+func (s *Server) composeAnswer(ctx context.Context, w http.ResponseWriter, message, contextPath string, history []chatTurn, hits []chat.Hit, providerID, modelOverride string) (string, string) {
+	provider := s.resolveChatProvider(providerID, modelOverride)
+	if len(hits) == 0 || provider == nil {
 		note := ""
-		if len(hits) > 0 && !s.nvidiaReady() {
+		if len(hits) > 0 {
 			note = nvidiaMissingNote
 		}
 		answer := localAnswer(hits, note)
@@ -408,20 +441,63 @@ func (s *Server) composeAnswer(ctx context.Context, w http.ResponseWriter, messa
 	answerCtx, cancel := context.WithTimeout(ctx, chatAnswerWait)
 	defer cancel()
 	var streamed strings.Builder
-	err := s.streamNVIDIA(answerCtx, s.nvidiaMessages(message, contextPath, history, hits), func(delta string) error {
+	err := s.streamChatCompletion(answerCtx, provider, s.nvidiaMessages(message, contextPath, history, hits), func(delta string) error {
 		streamed.WriteString(delta)
 		return writeSSE(w, "delta", map[string]string{"text": delta})
 	})
 	if err != nil || streamed.Len() == 0 {
 		if streamed.Len() > 0 {
-			return ensureStructure(streamed.String(), hits), "nvidia"
+			return ensureStructure(streamed.String(), hits), provider.id
 		}
-		note := nvidiaFailureNote(err)
+		note := nvidiaFailureNote(err, provider.label)
 		answer := localAnswer(hits, note)
 		_ = writeSSE(w, "delta", map[string]string{"text": answer})
 		return answer, "local"
 	}
-	return ensureStructure(streamed.String(), hits), "nvidia"
+	return ensureStructure(streamed.String(), hits), provider.id
+}
+
+type chatProvider struct {
+	id      string
+	label   string
+	baseURL string
+	apiKey  string
+	model   string
+}
+
+func (s *Server) resolveChatProvider(providerID, modelOverride string) *chatProvider {
+	providerID = strings.ToLower(strings.TrimSpace(providerID))
+	modelOverride = sanitizeModel(modelOverride)
+	candidates := []*chatProvider{
+		{
+			id: "openrouter", label: "OpenRouter",
+			baseURL: s.cfg.OpenRouterAPIBase, apiKey: s.cfg.OpenRouterAPIKey,
+			model: firstNonEmpty(modelOverride, s.cfg.OpenRouterModel),
+		},
+		{
+			id: "nvidia", label: "NVIDIA",
+			baseURL: s.cfg.NvidiaAPIBase, apiKey: s.cfg.NvidiaAPIKey,
+			model: firstNonEmpty(modelOverride, s.cfg.NvidiaModel),
+		},
+		{
+			id: "opencode", label: "OpenCode",
+			baseURL: s.cfg.OpenCodeAPIBase, apiKey: s.cfg.OpenCodeAPIKey,
+			model: firstNonEmpty(modelOverride, s.cfg.OpenCodeModel),
+		},
+	}
+	var firstReady *chatProvider
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate.apiKey) == "" || candidate.model == "" {
+			continue
+		}
+		if firstReady == nil {
+			firstReady = candidate
+		}
+		if providerID == "" || providerID == candidate.id {
+			return candidate
+		}
+	}
+	return firstReady
 }
 
 func (s *Server) nvidiaMessages(message, contextPath string, history []chatTurn, hits []chat.Hit) []nvidiaMessage {
@@ -485,13 +561,16 @@ func documentPrompt(question, contextPath string, hits []chat.Hit) string {
 	return b.String()
 }
 
-func (s *Server) streamNVIDIA(ctx context.Context, messages []nvidiaMessage, onDelta func(string) error) error {
-	endpoint, err := s.nvidiaEndpoint()
+func (s *Server) streamChatCompletion(ctx context.Context, provider *chatProvider, messages []nvidiaMessage, onDelta func(string) error) error {
+	if provider == nil {
+		return fmt.Errorf("provider LLM absent")
+	}
+	endpoint, err := chatEndpoint(provider.baseURL, provider.label)
 	if err != nil {
 		return err
 	}
 	payload, err := json.Marshal(map[string]any{
-		"model":       s.nvidiaModel(),
+		"model":       provider.model,
 		"messages":    messages,
 		"temperature": 0.2,
 		"max_tokens":  1100,
@@ -504,18 +583,22 @@ func (s *Server) streamNVIDIA(ctx context.Context, messages []nvidiaMessage, onD
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", "Bearer "+s.cfg.NvidiaAPIKey)
+	request.Header.Set("Authorization", "Bearer "+provider.apiKey)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "text/event-stream, application/json")
 	request.Header.Set("User-Agent", "enise-docs-go")
+	if provider.id == "openrouter" {
+		request.Header.Set("HTTP-Referer", "https://enise-docs.local")
+		request.Header.Set("X-Title", "ENISE Docs")
+	}
 	response, err := s.client.Do(request)
 	if err != nil {
-		log.Printf("nvidia chat injoignable")
+		log.Printf("%s chat injoignable", provider.id)
 		return err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		log.Printf("nvidia chat status %d", response.StatusCode)
+		log.Printf("%s chat status %d", provider.id, response.StatusCode)
 		return &nvidiaStatusError{status: response.StatusCode}
 	}
 	contentType := response.Header.Get("Content-Type")
@@ -533,17 +616,20 @@ func (e *nvidiaStatusError) Error() string {
 	if e == nil {
 		return ""
 	}
-	return fmt.Sprintf("nvidia status %d", e.status)
+	return fmt.Sprintf("llm status %d", e.status)
 }
 
-func nvidiaFailureNote(err error) string {
+func nvidiaFailureNote(err error, providerLabel string) string {
+	if providerLabel == "" {
+		providerLabel = "NVIDIA"
+	}
 	var statusErr *nvidiaStatusError
 	if errors.As(err, &statusErr) {
 		switch statusErr.status {
 		case http.StatusUnauthorized, http.StatusForbidden:
-			return "La clé NVIDIA a été refusée. Les documents ci-dessus viennent quand même de la bibliothèque."
+			return "La clé " + providerLabel + " a été refusée. Les documents ci-dessus viennent quand même de la bibliothèque."
 		case http.StatusTooManyRequests:
-			return "NVIDIA limite le débit pour le moment. Les documents ci-dessus viennent quand même de la bibliothèque."
+			return providerLabel + " limite le débit pour le moment. Les documents ci-dessus viennent quand même de la bibliothèque."
 		}
 	}
 	return "La rédaction automatique n’a pas répondu. Les documents ci-dessus viennent quand même de la bibliothèque."
@@ -627,6 +713,31 @@ func completionText(payload []byte) string {
 	}
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func sanitizeModel(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 120 {
+		return ""
+	}
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '/' || r == '.' || r == '_' || r == '-' || r == ':':
+		default:
+			return ""
+		}
+	}
+	return value
+}
+
 func (s *Server) nvidiaReady() bool {
 	if strings.TrimSpace(s.cfg.NvidiaAPIKey) == "" {
 		return false
@@ -652,7 +763,11 @@ func (s *Server) nvidiaModel() string {
 }
 
 func (s *Server) nvidiaEndpoint() (string, error) {
-	base := strings.TrimRight(strings.TrimSpace(s.cfg.NvidiaAPIBase), "/")
+	return chatEndpoint(s.cfg.NvidiaAPIBase, "NVIDIA")
+}
+
+func chatEndpoint(rawBase, label string) (string, error) {
+	base := strings.TrimRight(strings.TrimSpace(rawBase), "/")
 	if base == "" {
 		base = "https://integrate.api.nvidia.com/v1"
 	}
@@ -661,17 +776,17 @@ func (s *Server) nvidiaEndpoint() (string, error) {
 	}
 	parsed, err := http.NewRequest(http.MethodGet, base, nil)
 	if err != nil || parsed.URL == nil || parsed.URL.Host == "" {
-		return "", fmt.Errorf("origine NVIDIA invalide")
+		return "", fmt.Errorf("origine %s invalide", label)
 	}
 	switch parsed.URL.Scheme {
 	case "https":
 	case "http":
 		host := parsed.URL.Hostname()
 		if host != "localhost" && host != "127.0.0.1" && !strings.HasPrefix(host, "127.") {
-			return "", fmt.Errorf("NVIDIA_API_BASE doit être en HTTPS")
+			return "", fmt.Errorf("%s_API_BASE doit être en HTTPS", strings.ToUpper(label))
 		}
 	default:
-		return "", fmt.Errorf("origine NVIDIA invalide")
+		return "", fmt.Errorf("origine %s invalide", label)
 	}
 	return strings.TrimRight(parsed.URL.String(), "/") + "/chat/completions", nil
 }

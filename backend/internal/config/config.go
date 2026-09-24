@@ -72,10 +72,16 @@ type Config struct {
 	MaxSolidworksFiles   int
 	MaxSolidworksBundle  int64
 
-	NvidiaAPIKey   string
-	NvidiaAPIBase  string
-	NvidiaModel    string
-	ChatTrustProxy bool
+	NvidiaAPIKey      string
+	NvidiaAPIBase     string
+	NvidiaModel       string
+	OpenRouterAPIKey  string
+	OpenRouterAPIBase string
+	OpenRouterModel   string
+	OpenCodeAPIKey    string
+	OpenCodeAPIBase   string
+	OpenCodeModel     string
+	ChatTrustProxy    bool
 
 	AppwriteEnabled            bool
 	AppwriteEndpoint           string
@@ -150,7 +156,13 @@ func Load(root string) Config {
 	}
 	cfg.NvidiaAPIKey = unsetPlaceholder(firstNonEmpty(get("NVIDIA_API_KEY"), get("NVIDIA_NIM_API_KEY")))
 	cfg.NvidiaAPIBase = catalog.TrimTrailingSlashes(firstNonEmpty(get("NVIDIA_API_BASE"), defaultNvidiaBase))
-	cfg.NvidiaModel = sanitizeModel(get("NVIDIA_MODEL"))
+	cfg.NvidiaModel = firstNonEmpty(sanitizeModel(get("NVIDIA_MODEL")), defaultNvidiaModel)
+	cfg.OpenRouterAPIKey = unsetPlaceholder(firstNonEmpty(get("OPENROUTER_API_KEY"), get("OPENROUTER_KEY")))
+	cfg.OpenRouterAPIBase = catalog.TrimTrailingSlashes(firstNonEmpty(get("OPENROUTER_API_BASE"), "https://openrouter.ai/api/v1"))
+	cfg.OpenRouterModel = firstNonEmpty(sanitizeModel(get("OPENROUTER_MODEL")), "meta-llama/llama-3.3-70b-instruct")
+	cfg.OpenCodeAPIKey = unsetPlaceholder(firstNonEmpty(get("OPENCODE_API_KEY"), get("OPENCODE_ZEN_API_KEY")))
+	cfg.OpenCodeAPIBase = catalog.TrimTrailingSlashes(firstNonEmpty(get("OPENCODE_API_BASE"), "https://opencode.ai/zen/v1"))
+	cfg.OpenCodeModel = firstNonEmpty(sanitizeModel(get("OPENCODE_MODEL")), "nemotron-3-ultra-free")
 	cfg.ChatTrustProxy = truthy(get("CHAT_TRUST_PROXY"))
 	cfg.AppwriteEndpoint = catalog.TrimTrailingSlashes(firstNonEmpty(get("APPWRITE_ENDPOINT"), get("VITE_APPWRITE_ENDPOINT"), defaultAppwriteURL))
 	cfg.AppwriteProjectID = firstNonEmpty(get("APPWRITE_PROJECT_ID"), get("VITE_APPWRITE_PROJECT_ID"), defaultAppwriteProj)
@@ -202,7 +214,8 @@ func firstNonEmpty(values ...string) string {
 func unsetPlaceholder(value string) string {
 	switch strings.TrimSpace(value) {
 	case "", "hf_your_read_only_token", "your_aps_client_id", "your_aps_client_secret", "secret-partage-avec-le-service",
-		"nvapi-your-key", "nvapi-votre-cle", "nvapi-VOTRE_CLE":
+		"nvapi-your-key", "nvapi-votre-cle", "nvapi-VOTRE_CLE",
+		"sk-or-v1-your-key", "sk-or-votre-cle", "opencode-your-key":
 		return ""
 	default:
 		return strings.TrimSpace(value)
@@ -257,14 +270,14 @@ func (c Config) ApsConfigured() bool {
 func sanitizeModel(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" || len(value) > 120 {
-		return defaultNvidiaModel
+		return ""
 	}
 	for _, r := range value {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
 		case r == '/' || r == '.' || r == '_' || r == '-' || r == ':':
 		default:
-			return defaultNvidiaModel
+			return ""
 		}
 	}
 	return value
