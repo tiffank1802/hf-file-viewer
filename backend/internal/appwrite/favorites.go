@@ -176,7 +176,22 @@ func (c *Client) favoriteAPIs() []dataAPI {
 }
 
 func (c *Client) listFavoritesWith(ctx context.Context, api dataAPI, session, userID string) ([]Favorite, error) {
-	result, err := c.do(ctx, http.MethodGet, favoriteListPath(api.create, userID), session, nil)
+	items, err := c.listFavoritesAt(ctx, api, session, userID, true)
+	if err == nil || !isSkippableFavoriteQuery(err) {
+		return items, err
+	}
+	// Un index encore en construction, ou une requête equal refusée, ne doit
+	// pas vider l'écran : la sécurité par ligne ne renvoie déjà que les lignes
+	// lisibles par ce compte.
+	fallback, fallbackErr := c.listFavoritesAt(ctx, api, session, userID, false)
+	if fallbackErr != nil || len(fallback) == 0 {
+		return nil, err
+	}
+	return fallback, nil
+}
+
+func (c *Client) listFavoritesAt(ctx context.Context, api dataAPI, session, userID string, filterOwner bool) ([]Favorite, error) {
+	result, err := c.do(ctx, http.MethodGet, favoriteListPath(api.create, userID, filterOwner), session, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -229,11 +244,45 @@ func (c *Client) findFavorite(ctx context.Context, api dataAPI, session, userID,
 	return Favorite{}, nil
 }
 
-func favoriteListPath(createPath, userID string) string {
+// appwriteQuery est le format JSON exigé par TablesDB.
+// equal("userId",["…"]) est rejeté : general_query_invalid.
+type appwriteQuery struct {
+	Method    string `json:"method"`
+	Attribute string `json:"attribute,omitempty"`
+	Values    []any  `json:"values"`
+}
+
+func favoriteListPath(createPath, userID string, filterOwner bool) string {
+	queries := []appwriteQuery{{Method: "limit", Values: []any{100}}}
+	if filterOwner {
+		queries = append([]appwriteQuery{{
+			Method:    "equal",
+			Attribute: "userId",
+			Values:    []any{userID},
+		}}, queries...)
+	}
 	values := url.Values{}
-	values.Add("queries[]", fmt.Sprintf(`equal("userId",["%s"])`, userID))
-	values.Add("queries[]", "limit(200)")
+	for _, query := range queries {
+		raw, err := json.Marshal(query)
+		if err != nil {
+			continue
+		}
+		values.Add("queries[]", string(raw))
+	}
 	return createPath + "?" + values.Encode()
+}
+
+func isSkippableFavoriteQuery(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr == nil {
+		return false
+	}
+	switch apiErr.Type {
+	case "general_query_invalid", "index_not_found":
+		return true
+	default:
+		return false
+	}
 }
 
 func favoritesFrom(raw []byte, userID string) []Favorite {
