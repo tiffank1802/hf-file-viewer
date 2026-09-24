@@ -104,7 +104,25 @@ npm run build
 STATIC_DIR=./dist ADDR=0.0.0.0:8788 go -C backend run ./cmd/enise-api
 ```
 
-Ou l’image `backend/Dockerfile`. Le frontend construit et l’API partagent alors le même port : ShareCAD et le viewer Microsoft continuent de voir une URL publique, comme avec le Worker.
+Ou l’image `backend/Dockerfile`.
+
+## Servir l’API derrière le Worker Cloudflare
+
+Le cas le plus courant en production : le Worker sert les assets et relaie `/api/*`, Go ne fait que l’API.
+
+```bash
+# sur la machine qui héberge l’API
+npm ci
+cd backend && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../enise-api ./cmd/enise-api && cd ..
+./enise-api                       # 0.0.0.0:8788, sans STATIC_DIR
+# ou : npm run start:api
+```
+
+Côté Worker, dans `wrangler.jsonc` : `"GO_API_ORIGIN": "https://api.exemple.fr"`, puis `npm run deploy`.
+
+Dans le `.dev.vars` du serveur Go, ajouter `CHAT_TRUST_PROXY=1` : Go lit alors `CF-Connecting-IP` et limite le débit par étudiant au lieu de voir tout le site derrière une seule IP Cloudflare.
+
+ Le frontend construit et l’API partagent alors le même port : ShareCAD et le viewer Microsoft continuent de voir une URL publique, comme avec le Worker.
 
 Ne pas publier `HF_TOKEN`, la clé NVIDIA ni les secrets APS dans l’image. Les passer au runtime (`--env-file .dev.vars`).
 

@@ -120,6 +120,70 @@ Les réglages de production sont dans [`wrangler.jsonc`](./wrangler.jsonc) :
 
 Un changement de TTL s’applique aux nouvelles entrées de cache. Les anciennes expirent naturellement ou peuvent être purgées depuis le tableau de bord Cloudflare.
 
+### Le Worker sert le site, Go ne sert que l’API
+
+C’est la configuration à privilégier dès qu’un moteur d’assistant est configuré : le Worker (assets + proxy `/api/*`) reste chez Cloudflare, le binaire Go tourne où tu veux. Le navigateur ne voit qu’une seule origine.
+
+1. **Construire et lancer l’API** sur la machine qui l’héberge :
+
+   ```bash
+   npm ci
+   cd backend && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../enise-api ./cmd/enise-api && cd ..
+   ./enise-api                 # écoute 0.0.0.0:8788
+   ```
+
+   Ou, sans compiler, avec Node :
+
+   ```bash
+   npm run start:api           # API seule, écoute 0.0.0.0:8788
+   ```
+
+   Ne **pas** définir `STATIC_DIR` ici : les assets sont servis par le Worker.
+
+2. **Exposer l’API en HTTPS**. Derrière un domaine, avec Caddy :
+
+   ```caddyfile
+   api.exemple.fr {
+     reverse_proxy 127.0.0.1:8788
+   }
+   ```
+
+   Sans serveur, depuis ta machine (pratique pour tester) :
+
+   ```bash
+   cloudflared tunnel --url http://localhost:8788
+   # → https://xxxx.trycloudflare.com
+   ```
+
+3. **Brancher le Worker** sur cette origine :
+
+   ```jsonc
+   // wrangler.jsonc
+   "vars": { "GO_API_ORIGIN": "https://api.exemple.fr" }
+   ```
+
+   puis :
+
+   ```bash
+   npm run deploy
+   ```
+
+4. **Faire confiance à Cloudflare côté Go** — sans ça, toutes les questions semblent venir de la même IP et la limite de 30 questions/minute s’applique au site entier au lieu de chaque étudiant :
+
+   ```bash
+   CHAT_TRUST_PROXY=1          # dans le .dev.vars du serveur Go
+   ```
+
+5. **Vérifier** :
+
+   ```bash
+   curl -s https://api.exemple.fr/api/health
+   curl -sI https://TON-SITE/api/chat/status | grep -i x-backend   # X-Backend: go
+   curl -s https://TON-SITE/api/chat/status | python3 -m json.tool
+   ```
+
+   Sans `GO_API_ORIGIN`, `/api/chat` répond 501 et le bouton Assistant reste inerte. L’URL ne doit jamais pointer vers le Worker lui-même.
+
 ### Couche Workers KV facultative
 
 Le déploiement par défaut n’exige aucune ressource KV. Pour éviter qu’un nouveau datacenter Cloudflare rappelle Hugging Face lors de son premier MISS, il est possible d’activer un cache global de **métadonnées uniquement** :
