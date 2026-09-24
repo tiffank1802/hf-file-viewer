@@ -44,7 +44,7 @@ APS_CLIENT_SECRET="your_aps_client_secret"
 # CHAT_TRUST_PROXY="1"
 # Clé serveur Appwrite, uniquement pour `npm run appwrite:setup`.
 # Console → API Keys, scope databases.write (et tablesdb.write). Jamais en VITE_.
-# APPWRITE_API_KEY=""
+APPWRITE_API_KEY="standard_967d1b91acaba6581297f08217b87baaca77a14d0e4f0cf64860f02e41fb7fa7ad623c577ad94affdd484c721a29047afc3f56666d79c48cbff9b0a73afccdb19892f000a389493a778ca3291daffd80d2d8688319b884c86d400f3d5ccfda2f2476ea90c0004314f4ba5f3cd19a1a3a0915b2ebc01f9c71c25fec5b2a19d309"
 
 # MAX_SOLIDWORKS_BYTES="104857600"
 # MAX_SOLIDWORKS_DEPENDENCY_FILES="64"
