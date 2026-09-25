@@ -31,7 +31,7 @@
 		"MAX_SOLIDWORKS_BYTES": "104857600",
 		"MAX_SOLIDWORKS_DEPENDENCY_FILES": "64",
 		"MAX_SOLIDWORKS_BUNDLE_BYTES": "262144000",
-		"GO_API_ORIGIN": ""
+		"GO_API_ORIGIN": "https://enise-docs-api-mb66o5jbpa-ew.a.run.app"
 	},
 	"observability": {
 		"enabled": true,

@@ -1,0 +1,710 @@
+From 999231e41e8bcd4ffedd33d01c0fa066c6e3a945 Mon Sep 17 00:00:00 2001
+From: T <t@e.fr>
+Date: Fri, 25 Sep 2026 00:16:39 +0000
+Subject: [PATCH] Dossiers dont le nom se termine par une espace : chemins
+ transmis tels quels
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+« GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA/1) introduction
+to solidworks tutorials » (le nom réel se termine par une espace) ne s’ouvrait
+pas sur le site. Cause : le `.trim()` appliqué aux préfixes supprimait cette
+espace. Vérifié sur le bucket, l’API Hugging Face distingue les deux noms —
+avec l’espace elle renvoie les 6 sections du dossier, sans elle une seule
+entrée, le dossier lui-même, si bien que la page semblait vide.
+
+- Worker : `normalizePrefix` et `normalizeFilePath` ne retirent plus les
+  espaces (seuls les « / » de bord) ; un préfixe uniquement composé d’espaces
+  vaut la racine ;
+- Go : même correction dans `catalog.NormalizePrefix` / `NormalizeFilePath` ;
+- script de comptage : `normalizePrefix` conserve les espaces et le 404
+  transporté porte désormais son statut (`error.status`) ;
+- deux rattrapages, pour que le dossier s’ouvre quelle que soit l’URL reçue :
+  après un 404, le préfixe est réessayé sans ses espaces de bord (chemin collé
+  à la main) ; et si ce nom élagué ne liste que le dossier lui-même, Hugging
+  Face en donne le nom réel, aussitôt redemandé (`selfEntryName` côté Worker,
+  script et Go) — un favori ou un lien partagé sans l’espace finale fonctionne
+  donc aussi ;
+- cache porté en `v5` : les entrées calculées par les versions précédentes
+  avec un préfixe élagué sont abandonnées tout de suite, sans attendre leur
+  expiration ;
+- tests : 161/161 (`npm ci && npm run check`), dont le contenu d’un dossier à
+  espace finale, les trois formes d’URL (exacte, élaguée, espaces en trop),
+  l’aller-retour d’URL et les cas Go.
+---
+ README.md                                |   4 +-
+ backend/internal/api/hf.go               |  57 ++++++++++
+ backend/internal/catalog/catalog.go      |  12 ++-
+ backend/internal/catalog/catalog_test.go |  25 +++++
+ scripts/count-bucket-files.mjs           |  55 +++++++++-
+ tests/count-script.test.js               |  47 +++++++-
+ tests/routes.test.js                     |   8 ++
+ tests/worker-cache.test.js               | 130 +++++++++++++++++++++++
+ tests/worker.test.js                     |  40 +++++++
+ worker/index.js                          |  83 ++++++++++++++-
+ 10 files changed, 450 insertions(+), 11 deletions(-)
+
+diff --git a/README.md b/README.md
+index 145f36b..fd9a33d 100644
+--- a/README.md
++++ b/README.md
+@@ -54,6 +54,8 @@ Le frontend et le Worker sont sur **le même domaine**. Le navigateur n’appell
+ | GLB 3D `/api/model3d/glb` | 1 h | Cache API, 7 j | Space FreeCAD |
+ | Aperçu lien `/api/link/preview` | 1 h | Cache API, 24 h | page cible |
+ 
++**Espaces dans les noms.** Certains dossiers du bucket se terminent par une espace (`GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA/1) introduction to solidworks tutorials `). L’API Hugging Face les distingue : avec l’espace, elle renvoie le contenu du dossier ; sans, elle ne renvoie que le dossier lui-même. Les chemins sont donc transmis tels quels (`normalizePrefix`, `normalizeFilePath` côté Worker et Go, `normalizePrefix` du script de comptage). Deux rattrapages gardent ces dossiers accessibles quel que soit le chemin reçu : un préfixe collé à la main avec des espaces en trop est réessayé sans eux après un 404, et un préfixe dont l’espace finale a été perdue (lien ancien, favori, URL recopiée) est rejoué avec le nom réel — Hugging Face rend en effet le dossier lui-même, sous son nom complet, quand on l’interroge sans cette espace. Dans les deux cas, la page du dossier s’ouvre comme les autres.
++
+ Un listage de dossier vide, partiel ou refusé par Hugging Face (404) est complété par les enfants du même dossier déjà connus dans l’index : un dossier dont les fichiers sont présents dans le bucket ne peut donc pas apparaître vide sur le site. Si les deux sources l’ignorent, la réponse reste un 404.
+ 
+ Les fichiers ne sont ajoutés au Cache API que si une réponse complète possède une taille connue inférieure ou égale à **25 Mio**. Les requêtes `Range` et les fichiers plus grands sont transmis sans mise en cache par le Worker (`BYPASS-RANGE` ou `BYPASS-SIZE`) ; le CDN de Hugging Face peut néanmoins les optimiser.
+@@ -555,7 +557,7 @@ npm run count:files -- --compare https://enise-docs.example.workers.dev
+ 
+ Si le script trouve des fichiers alors que le site en affiche 0, le document d’index servi a été calculé pendant la création du bucket (bucket alors vide) puis mis en cache. Trois façons de l’invalider :
+ 
+-1. **Redéployer avec une nouvelle version de clés** (recommandé, fonctionne aussi sur `*.workers.dev`) : incrémenter `CACHE_KEY_VERSION` dans `worker/index.js` puis `npm run deploy`. La version courante est `v3` : elle a servi à abandonner les listages vides mis en cache avant l’arrivée des fichiers SolidWorks. Le Worker utilise des clés de cache personnalisées que la « purge par URL » du tableau de bord ne peut pas atteindre ; changer la version rend les anciennes entrées orphelines (elles expirent seules).
++1. **Redéployer avec une nouvelle version de clés** (recommandé, fonctionne aussi sur `*.workers.dev`) : incrémenter `CACHE_KEY_VERSION` dans `worker/index.js` puis `npm run deploy`. La version courante est `v5` : elle a servi à abandonner les listages vides mis en cache avant l’arrivée des fichiers SolidWorks ; `v4` puis `v5` abandonnent ceux que les versions précédentes avaient calculés avec un préfixe élagué, donc sans l’espace finale de certains dossiers. Le Worker utilise des clés de cache personnalisées que la « purge par URL » du tableau de bord ne peut pas atteindre ; changer la version rend les anciennes entrées orphelines (elles expirent seules).
+ 2. **Purge Everything** au niveau de la zone Cloudflare (Caching → Purge Cache → Purge Everything), uniquement si le site est rattaché à un domaine personnalisé. C’est la seule purge du tableau de bord qui vide aussi le Cache API des Workers. Inutile si le site est servi depuis `*.workers.dev` (pas de zone).
+ 3. **Attendre la relecture automatique** : un index périmé est relu en arrière-plan au bout de 10 min (`INDEX_CACHE_TTL`). Le comptage se corrige donc tout seul, sans purge ni redéploiement.
+ 
+diff --git a/backend/internal/api/hf.go b/backend/internal/api/hf.go
+index 377307b..3343453 100644
+--- a/backend/internal/api/hf.go
++++ b/backend/internal/api/hf.go
+@@ -3,6 +3,7 @@ package api
+ import (
+ 	"context"
+ 	"encoding/json"
++	"errors"
+ 	"io"
+ 	"net/http"
+ 	"strconv"
+@@ -51,7 +52,63 @@ func (s *Server) do(req *http.Request) (*http.Response, error) {
+ 	return response, nil
+ }
+ 
++// fetchTree liste un dossier chez Hugging Face, en trois essais au plus.
++//
++// Le préfixe exact est essayé en premier : une espace finale est significative
++// dans certains noms de dossiers du bucket. Seul un 404 déclenche une seconde
++// tentative sans les espaces de bord, pour un chemin collé à la main. Si cette
++// variante élaguée ne reliste que le dossier lui-même, c’est que l’espace
++// finale manquait : Hugging Face en donne alors le nom réel, redemandé aussitôt.
+ func (s *Server) fetchTree(ctx context.Context, prefix string, recursive bool) ([]catalog.BucketItem, bool, error) {
++	items, complete, err := s.fetchTreePages(ctx, prefix, recursive)
++	if err != nil {
++		trimmed := strings.TrimSpace(prefix)
++		if trimmed == "" || trimmed == prefix {
++			return nil, false, err
++		}
++		var httpErr *catalog.HTTPError
++		if !errors.As(err, &httpErr) || httpErr.Status != http.StatusNotFound {
++			return nil, false, err
++		}
++		items, complete, err = s.fetchTreePages(ctx, trimmed, recursive)
++		if err != nil {
++			return nil, false, err
++		}
++		prefix = trimmed
++	}
++	if exact := selfEntryName(items, prefix); exact != "" {
++		return s.fetchTreePages(ctx, exact, recursive)
++	}
++	return items, complete, nil
++}
++
++// selfEntryName rend le nom réel d’un dossier dont le préfixe demandé a perdu
++// ses espaces de bord.
++//
++// Interrogé avec « …tutorials » (sans l’espace finale, qui fait pourtant partie
++// du nom), Hugging Face ne renvoie qu’une entrée : le dossier lui-même, sous son
++// nom complet. La détection reste stricte pour ne jamais confondre ce cas avec
++// un dossier contenant un unique sous-dossier : l’entrée doit être un dossier,
++// égal au préfixe demandé suivi d’espaces ou de tabulations uniquement.
++func selfEntryName(items []catalog.BucketItem, prefix string) string {
++	if prefix == "" || len(items) != 1 {
++		return ""
++	}
++	only := items[0]
++	if only.Type != "directory" {
++		return ""
++	}
++	path := only.Path
++	if path == prefix || !strings.HasPrefix(path, prefix) {
++		return ""
++	}
++	if strings.Trim(path[len(prefix):], " \t") != "" {
++		return ""
++	}
++	return path
++}
++
++func (s *Server) fetchTreePages(ctx context.Context, prefix string, recursive bool) ([]catalog.BucketItem, bool, error) {
+ 	items := make([]catalog.BucketItem, 0)
+ 	nextURL := catalog.BuildHfTreeURL(s.cfg.HFOrigin, s.cfg.BucketID, prefix, recursive)
+ 	pages := 0
+diff --git a/backend/internal/catalog/catalog.go b/backend/internal/catalog/catalog.go
+index 7ad2fbd..47d52ba 100644
+--- a/backend/internal/catalog/catalog.go
++++ b/backend/internal/catalog/catalog.go
+@@ -62,8 +62,15 @@ func ValidBucketID(value string) bool {
+ 	return bucketIDPattern.MatchString(value)
+ }
+ 
++// NormalizePrefix nettoie un préfixe de dossier sans élaguer les espaces :
++// elles peuvent faire partie du nom d’un dossier du bucket (« … tutorials » se
++// termine par une espace). Un préfixe uniquement composé d’espaces vaut la
++// racine.
+ func NormalizePrefix(value string) (string, error) {
+-	prefix := strings.Trim(strings.TrimSpace(value), "/")
++	prefix := strings.Trim(value, "/")
++	if strings.TrimSpace(prefix) == "" {
++		prefix = ""
++	}
+ 	if err := validatePath(prefix, true); err != nil {
+ 		return "", err
+ 	}
+@@ -74,7 +81,8 @@ func NormalizeFilePath(value string) (string, error) {
+ 	if strings.TrimSpace(value) == "" {
+ 		return "", Error(400, "Le chemin du document est obligatoire.")
+ 	}
+-	filePath := strings.TrimLeft(strings.TrimSpace(value), "/")
++	// Les espaces internes ou finales appartiennent au nom du fichier.
++	filePath := strings.TrimLeft(value, "/")
+ 	if err := validatePath(filePath, false); err != nil {
+ 		return "", err
+ 	}
+diff --git a/backend/internal/catalog/catalog_test.go b/backend/internal/catalog/catalog_test.go
+index 9dcc068..1afef2e 100644
+--- a/backend/internal/catalog/catalog_test.go
++++ b/backend/internal/catalog/catalog_test.go
+@@ -66,6 +66,31 @@ func TestPaths(t *testing.T) {
+ 	}
+ }
+ 
++// Certains dossiers du bucket se terminent par une espace
++// (« 1) introduction to solidworks tutorials ») : l’élaguer ferait perdre le
++// contenu du dossier, Hugging Face ne renvoyant alors que le dossier lui-même.
++func TestPathsKeepTrailingSpaces(t *testing.T) {
++	dossier := "GM/Tutos SolidWorks/SolidProfessor/1-CSWA/1) introduction to solidworks tutorials "
++	prefix, err := NormalizePrefix(dossier)
++	if err != nil || prefix != dossier {
++		t.Fatalf("préfixe %q %v", prefix, err)
++	}
++	if got, err := NormalizePrefix("  "); err != nil || got != "" {
++		t.Fatalf("préfixe vide %q %v", got, err)
++	}
++	if got, err := NormalizePrefix("/TOEIC/"); err != nil || got != "TOEIC" {
++		t.Fatalf("préfixe simple %q %v", got, err)
++	}
++
++	filePath, err := NormalizeFilePath(dossier + "/Section 1 - Overview/welcome.pdf")
++	if err != nil || filePath != dossier+"/Section 1 - Overview/welcome.pdf" {
++		t.Fatalf("fichier %q %v", filePath, err)
++	}
++	if _, err := NormalizeFilePath("   "); err == nil {
++		t.Fatal("un chemin uniquement composé d’espaces doit être refusé")
++	}
++}
++
+ func TestCountAndSelect(t *testing.T) {
+ 	counts, total := CountFilesByDirectory([]BucketItem{
+ 		{Type: "directory", Path: "GM"},
+diff --git a/scripts/count-bucket-files.mjs b/scripts/count-bucket-files.mjs
+index 421ede1..d802c8f 100644
+--- a/scripts/count-bucket-files.mjs
++++ b/scripts/count-bucket-files.mjs
+@@ -76,9 +76,16 @@ export function parseNextLink(linkHeader, currentUrl) {
+   return null;
+ }
+ 
+-/** Valide/normalise le préfixe demandé, comme normalizePrefix côté Worker. */
++/**
++ * Valide/normalise le préfixe demandé, comme normalizePrefix côté Worker.
++ *
++ * Les espaces ne sont pas élaguées : elles font partie du nom de certains
++ * dossiers du bucket (« … tutorials » se termine par une espace).
++ */
+ export function normalizePrefix(value = '') {
+-  const prefix = String(value ?? '').trim().replace(/^\/+|\/+$/g, '');
++  const raw = String(value ?? '').replace(/^\/+|\/+$/g, '');
++  const prefix = raw.trim() === '' ? '' : raw;
++  if (!prefix) return prefix;
+   if (prefix.split('/').some((segment) => segment === '..')) {
+     throw new Error(`Préfixe invalide : « ${value} ».`);
+   }
+@@ -376,7 +383,45 @@ export async function fetchBucketStats({ bucketId, token }) {
+ }
+ 
+ /** Parcours récursif paginé du bucket (identique au premier /api/index du Worker). */
++/** Variante tolérante : espaces de bord et « / » retirés (second essai). */
++export function fallbackPrefix(value = '') {
++  return String(value ?? '').trim().replace(/^\/+|\/+$/g, '');
++}
++
++/**
++ * Liste un préfixe chez Hugging Face.
++ *
++ * Le nom exact passe en premier (une espace finale est significative), puis la
++ * variante élaguée si le dossier n’existe pas sous cette forme.
++ */
++export function selfEntryName(items = [], prefix = '') {
++  if (!Array.isArray(items) || items.length !== 1) return '';
++  const only = items[0];
++  if (!only || (only.type && only.type !== 'directory')) return '';
++  const asked = String(prefix ?? '');
++  const path = String(only.path || '');
++  if (!asked || !path || path === asked || !path.startsWith(asked)) return '';
++  return /^[ \t]+$/.test(path.slice(asked.length)) ? path : '';
++}
++
+ export async function listBucketFiles({ bucketId, prefix = '', token = '', quiet = false }) {
++  let name = prefix;
++  for (let attempt = 0; attempt < 3; attempt += 1) {
++    try {
++      const result = await listBucketPages({ bucketId, prefix: name, token, quiet });
++      const exact = selfEntryName(result.items, name);
++      if (!exact) return result;
++      name = exact;
++    } catch (error) {
++      const fallback = fallbackPrefix(name);
++      if (!fallback || fallback === name || error?.status !== 404) throw error;
++      name = fallback;
++    }
++  }
++  return listBucketPages({ bucketId, prefix: name, token, quiet });
++}
++
++async function listBucketPages({ bucketId, prefix = '', token = '', quiet = false }) {
+   const items = [];
+   let nextUrl = buildTreeUrl(bucketId, prefix);
+   let pageCount = 0;
+@@ -389,7 +434,11 @@ export async function listBucketFiles({ bucketId, prefix = '', token = '', quiet
+     } catch {
+       throw new Error('connexion au stockage Hugging Face impossible (réseau ou résolution DNS)');
+     }
+-    if (!response.ok) throw new Error(await describeHttpError(response));
++    if (!response.ok) {
++      const error = new Error(await describeHttpError(response));
++      error.status = response.status;
++      throw error;
++    }
+ 
+     const data = await response.json().catch(() => null);
+     const pageItems = Array.isArray(data) ? data : data?.items;
+diff --git a/tests/count-script.test.js b/tests/count-script.test.js
+index 929e180..086fd2f 100644
+--- a/tests/count-script.test.js
++++ b/tests/count-script.test.js
+@@ -5,10 +5,13 @@ import {
+   buildTreeUrl,
+   countFilesInListing,
+   diffWithIndexDocument,
++  fallbackPrefix,
++  listBucketFiles,
+   normalizePrefix,
+   parseNextLink,
+   renderComparison,
+   renderReport,
++  selfEntryName,
+ } from '../scripts/count-bucket-files.mjs';
+ 
+ // Échantillon calqué sur la réponse réelle de l’API buckets Hugging Face.
+@@ -69,9 +72,17 @@ test('parseNextLink suit la pagination rel="next"', () => {
+   assert.equal(parseNextLink('</other>; rel="prev"', 'https://example.com'), null);
+ });
+ 
+-test('normalizePrefix nettoie le chemin', () => {
+-  assert.equal(normalizePrefix(' /GM/3A GM/ '), 'GM/3A GM');
++test('normalizePrefix nettoie le chemin sans élaguer les espaces des noms', () => {
++  assert.equal(normalizePrefix('/GM/3A GM/'), 'GM/3A GM');
+   assert.equal(normalizePrefix(''), '');
++  assert.equal(normalizePrefix('   '), '');
++  // Une espace finale fait partie du nom : la retirer ferait perdre le dossier.
++  assert.equal(
++    normalizePrefix('GM/Tutos SolidWorks/SolidProfessor/1-CSWA/1) intro '),
++    'GM/Tutos SolidWorks/SolidProfessor/1-CSWA/1) intro ',
++  );
++  // Second essai, pour un chemin collé avec des espaces en trop.
++  assert.equal(fallbackPrefix(' /GM/3A GM/ '), 'GM/3A GM');
+   assert.throws(() => normalizePrefix('GM/../TOEIC'));
+ });
+ 
+@@ -141,3 +152,35 @@ test('renderReport affiche la hiérarchie et respecte la profondeur', () => {
+   assert.match(shallow, /^\s{2}GM : 3 fichier\(s\)/m);
+   assert.doesNotMatch(shallow, /Calcul Tensoriel/);
+ });
++
++test('selfEntryName n’accepte qu’un dossier rendu sous un nom plus long', () => {
++  const dossier = 'GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA/1) introduction to solidworks tutorials ';
++
++  assert.equal(selfEntryName([{ type: 'directory', path: dossier }], dossier.trim()), dossier);
++  assert.equal(selfEntryName([{ type: 'directory', path: 'A/A ' }], 'A'), '');
++  assert.equal(selfEntryName([{ type: 'directory', path: dossier }], dossier), '');
++  assert.equal(selfEntryName([{ type: 'file', path: dossier }], dossier.trim()), '');
++  assert.equal(selfEntryName([], ''), '');
++});
++
++test('listBucketFiles redemande le nom réel quand le nom élagué ne liste que le dossier', async () => {
++  const originalFetch = globalThis.fetch;
++  const dossier = 'GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA/1) introduction to solidworks tutorials ';
++  const prefixes = [];
++  globalThis.fetch = async (url) => {
++    prefixes.push(decodeURIComponent(String(url).split('/tree/')[1].split('?')[0]));
++    if (prefixes.at(-1) === dossier) {
++      return Response.json([{ type: 'file', path: `${dossier}Section 1 - Overview/1-About This Course.mp4`, size: 3767619 }]);
++    }
++    return Response.json([{ type: 'directory', path: dossier }]);
++  };
++
++  try {
++    const listing = await listBucketFiles({ bucketId: 'ktongue/ENISE-SITE', prefix: dossier.trim() });
++    assert.equal(listing.items.length, 1);
++    assert.equal(listing.items[0].size, 3767619);
++    assert.deepEqual(prefixes, [dossier.trim(), dossier]);
++  } finally {
++    globalThis.fetch = originalFetch;
++  }
++});
+diff --git a/tests/routes.test.js b/tests/routes.test.js
+index fc239a5..2812654 100644
+--- a/tests/routes.test.js
++++ b/tests/routes.test.js
+@@ -14,6 +14,14 @@ test('les routes de dossiers conservent espaces et accents', () => {
+   assert.equal(pathFromHash(hash), 'GM/3A GM/Mécanique');
+ });
+ 
++test('un dossier terminé par une espace survit à l’aller-retour d’URL', () => {
++  const dossier = 'GM/Tutos SolidWorks/SolidProfessor/1-CSWA/1) introduction to solidworks tutorials ';
++  const href = hrefFromLibraryPath(dossier);
++  assert.equal(href, `/bibliotheque/${dossier.split('/').map(encodeURIComponent).join('/')}`);
++  assert.ok(href.endsWith('%20'), href);
++  assert.equal(pathFromPathname(href), dossier);
++});
++
+ test('les ancres de page ne sont pas interprétées comme des dossiers', () => {
+   assert.equal(pathFromHash('#main-content'), null);
+   assert.equal(pathFromHash('#about'), null);
+diff --git a/tests/worker-cache.test.js b/tests/worker-cache.test.js
+index 5c17e1b..43a517e 100644
+--- a/tests/worker-cache.test.js
++++ b/tests/worker-cache.test.js
+@@ -39,6 +39,12 @@ function createCache() {
+   };
+ }
+ 
++/** Préfixe réellement demandé à Hugging Face dans une URL de listage. */
++function hfPrefix(url) {
++  const suffix = String(url).split('/tree/')[1] || '';
++  return decodeURIComponent(suffix.split('?')[0]);
++}
++
+ function createContext() {
+   const promises = [];
+   return {
+@@ -668,3 +674,127 @@ test('un dossier inconnu des deux côtés reste un 404', async () => {
+     globalThis.caches = originalCaches;
+   }
+ });
++
++test('un préfixe collé avec des espaces en trop est réessayé sans elles', async () => {
++  const originalFetch = globalThis.fetch;
++  const originalCaches = globalThis.caches;
++  const dossier = 'GM/Tutos SolidWorks/SolidProfessor/1-CSWA/1) introduction to solidworks tutorials ';
++  const sections = ['Section 1 - Overview'];
++  const calls = [];
++  globalThis.caches = { default: createCache() };
++  globalThis.fetch = async (url) => {
++    const prefix = hfPrefix(url);
++    calls.push(prefix);
++    if (prefix === dossier) {
++      return Response.json(sections.map((name) => ({ type: 'directory', path: `${dossier}${name}` })));
++    }
++    if (prefix === dossier.trim()) {
++      // Le nom sans l’espace finale : Hugging Face rend le dossier lui-même.
++      return Response.json([{ type: 'directory', path: dossier }]);
++    }
++    return new Response('{"error":"not found"}', { status: 404 });
++  };
++
++  try {
++    const context = createContext();
++    // Chemin collé avec deux espaces finales : le nom exact échoue (404), la
++    // version élaguée rend le nom réel, qui liste enfin le dossier.
++    const response = await worker.fetch(
++      new Request(`https://docs.example/api/tree?prefix=${encodeURIComponent(`${dossier} `)}`),
++      env,
++      context,
++    );
++    assert.equal(response.status, 200);
++    const payload = await response.json();
++    assert.equal(payload.items.length, 1);
++    assert.equal(payload.items[0].path, `${dossier}Section 1 - Overview`);
++    assert.deepEqual(calls, [`${dossier} `, dossier.trim(), dossier]);
++    await context.done();
++  } finally {
++    globalThis.fetch = originalFetch;
++    globalThis.caches = originalCaches;
++  }
++});
++
++test('un dossier dont le nom finit par une espace est listé avec son contenu', async () => {
++  const originalFetch = globalThis.fetch;
++  const originalCaches = globalThis.caches;
++  const dossier = 'GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA/1) introduction to solidworks tutorials ';
++  const sections = [
++    'Section 1 - Overview',
++    'Section 2 - Introduction to Sketching',
++    'Section 3 - Features and Part Design',
++    'Section 4 - Revolve and Pattern',
++    'Section 5 - Assembly Design',
++    'Section 6 - Drawings',
++  ];
++  let calledUrl = '';
++  globalThis.caches = { default: createCache() };
++  globalThis.fetch = async (url) => {
++    calledUrl = decodeURIComponent(String(url));
++    // Hugging Face ne renvoie le contenu que si l’espace finale est conservée.
++    if (!calledUrl.endsWith(`${dossier}?recursive=false`)) {
++      return Response.json([{ type: 'directory', path: dossier.trim() }]);
++    }
++    return Response.json(sections.map((name) => ({ type: 'directory', path: `${dossier}${name}` })));
++  };
++
++  try {
++    const context = createContext();
++    const response = await worker.fetch(
++      new Request(`https://docs.example/api/tree?prefix=${encodeURIComponent(dossier)}`),
++      env,
++      context,
++    );
++    assert.equal(response.status, 200);
++    const payload = await response.json();
++    assert.equal(payload.prefix, dossier);
++    assert.equal(payload.items.length, 6);
++    assert.equal(payload.items[0].path, `${dossier}Section 1 - Overview`);
++    await context.done();
++  } finally {
++    globalThis.fetch = originalFetch;
++    globalThis.caches = originalCaches;
++  }
++});
++
++test('une URL sans l’espace finale retrouve le dossier grâce au nom rendu par Hugging Face', async () => {
++  const originalFetch = globalThis.fetch;
++  const originalCaches = globalThis.caches;
++  const dossier = 'GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA/1) introduction to solidworks tutorials ';
++  const sections = ['Section 1 - Overview', 'Section 2 - Introduction to Sketching'];
++  const calls = [];
++  globalThis.caches = { default: createCache() };
++  globalThis.fetch = async (url) => {
++    const prefix = hfPrefix(url);
++    calls.push(prefix);
++    // Le préfixe élagué ne liste que le dossier lui-même, sous son nom complet.
++    if (prefix === dossier) {
++      return Response.json(sections.map((name) => ({ type: 'directory', path: `${dossier}${name}` })));
++    }
++    if (prefix === dossier.trim()) {
++      return Response.json([{ type: 'directory', path: dossier }]);
++    }
++    return new Response('{"error":"not found"}', { status: 404 });
++  };
++
++  try {
++    const context = createContext();
++    // Route à la septième profondeur, copiée sans l’espace finale : le dossier
++    // doit tout de même s’ouvrir.
++    const response = await worker.fetch(
++      new Request(`https://docs.example/api/tree?prefix=${encodeURIComponent(dossier.trim())}`),
++      env,
++      context,
++    );
++    assert.equal(response.status, 200);
++    const payload = await response.json();
++    assert.equal(payload.items.length, 2);
++    assert.equal(payload.items[0].path, `${dossier}Section 1 - Overview`);
++    assert.deepEqual(calls, [dossier.trim(), dossier]);
++    await context.done();
++  } finally {
++    globalThis.fetch = originalFetch;
++    globalThis.caches = originalCaches;
++  }
++});
+diff --git a/tests/worker.test.js b/tests/worker.test.js
+index c6373a7..7890eab 100644
+--- a/tests/worker.test.js
++++ b/tests/worker.test.js
+@@ -27,6 +27,7 @@ import worker, {
+   normalizeFilePath,
+   normalizePrefix,
+   selectCountsForPrefix,
++  selfEntryName,
+ } from '../worker/index.js';
+ 
+ test('buildHfTreeUrl encode les préfixes sans perdre les caractères Unicode', () => {
+@@ -433,3 +434,42 @@ test('les redirections vers le login Microsoft sont détectées', () => {
+   assert.equal(isAuthWallUrl(''), false);
+   assert.equal(isAuthWallUrl('pas une url'), false);
+ });
++
++test('un nom de dossier terminé par une espace est conservé', () => {
++  const dossier = 'GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA/1) introduction to solidworks tutorials ';
++  // Le trim ferait perdre l’espace finale et Hugging Face ne renverrait plus
++  // que le dossier lui-même au lieu de son contenu.
++  assert.equal(normalizePrefix(dossier), dossier);
++  assert.equal(normalizePrefix(`/${dossier}/`), dossier);
++  assert.equal(normalizePrefix('   '), '');
++  assert.equal(normalizePrefix('/GM/3A GM/'), 'GM/3A GM');
++
++  assert.equal(normalizeFilePath(`/${dossier}/Section 1 - Overview/welcome.pdf`),
++    `${dossier}/Section 1 - Overview/welcome.pdf`);
++  assert.equal(normalizeFilePath('GM/notes v2.pdf '), 'GM/notes v2.pdf ');
++  assert.throws(() => normalizeFilePath('   '), /chemin/i);
++});
++
++test('buildHfTreeUrl encode les espaces finales du préfixe', () => {
++  const url = buildHfTreeUrl('ktongue/ENISE-SITE', 'GM/tutorials ', false);
++  assert.ok(url.includes('GM%2Ftutorials%20'), url);
++  assert.equal(decodeURIComponent(url.split('/tree/')[1].split('?')[0]), 'GM/tutorials ');
++});
++
++test('selfEntryName reconnaît un préfixe élagué et rend le nom réel', () => {
++  const dossier = 'GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA/1) introduction to solidworks tutorials ';
++
++  // Cas réel : Hugging Face renvoie le dossier lui-même, sous son nom complet.
++  assert.equal(selfEntryName([{ type: 'directory', path: dossier }], dossier.trim()), dossier);
++
++  // Un dossier qui contient un unique sous-dossier n’est pas confondu avec un
++  // retour sur soi-même.
++  assert.equal(selfEntryName([{ type: 'directory', path: 'A/A ' }], 'A'), '');
++
++  // Le nom exact demandé, une entrée multiple ou un fichier ne déclenchent rien.
++  assert.equal(selfEntryName([{ type: 'directory', path: dossier }], dossier), '');
++  assert.equal(selfEntryName([{ type: 'directory', path: dossier }, { type: 'file', path: 'x' }], dossier.trim()), '');
++  assert.equal(selfEntryName([{ type: 'file', path: dossier }], dossier.trim()), '');
++  assert.equal(selfEntryName([], ''), '');
++  assert.equal(selfEntryName(undefined, 'GM'), '');
++});
+diff --git a/worker/index.js b/worker/index.js
+index e0855eb..622dc4b 100644
+--- a/worker/index.js
++++ b/worker/index.js
+@@ -10,7 +10,10 @@ const DEFAULT_BUCKET_ID = 'ktongue/ENISE-SITE';
+  * puis redéployer. Les anciennes entrées deviennent orphelines et expirent
+  * naturellement selon leur TTL.
+  */
+-const CACHE_KEY_VERSION = 'v3';
++// v5 : les clés v4 ont pu mémoriser des listages calculés avec un préfixe
++// élagué (dossier dont le nom se termine par une espace) ; changer de version
++// rend ces entrées orphelines immédiatement, sans attendre leur expiration.
++const CACHE_KEY_VERSION = 'v5';
+ /**
+  * Fraîcheur des documents d’arborescence et d’index.
+  *
+@@ -2148,7 +2151,38 @@ async function model3dConvertHttpError(response) {
+   return new HttpError(response.status >= 500 ? 502 : response.status, `Conversion 3D : ${message}`);
+ }
+ 
++/**
++ * Liste un dossier chez Hugging Face, en trois essais au plus.
++ *
++ * 1. le préfixe exact — une espace finale fait partie du nom du dossier ;
++ * 2. sa variante élaguée, uniquement si Hugging Face répond 404 : un chemin
++ *    collé à la main avec des espaces en trop reste accepté ;
++ * 3. le nom réel rendu par Hugging Face lui-même, quand c’est la variante
++ *    élaguée qui a été essayée et que l’espace finale manquait (voir
++ *    `selfEntryName`) : un lien ancien, un favori ou une URL recopiée sans
++ *    l’espace ouvre malgré tout le dossier.
++ */
+ export async function fetchBucketTree(env, prefix = '', recursive = false) {
++  let name = prefix;
++  for (let attempt = 0; attempt < 3; attempt += 1) {
++    let result;
++    try {
++      result = await fetchBucketTreePages(env, name, recursive);
++    } catch (error) {
++      const fallback = fallbackPrefix(name);
++      const notFound = error instanceof HttpError && error.status === 404;
++      if (!notFound || !fallback || fallback === name) throw error;
++      name = fallback;
++      continue;
++    }
++    const exact = recursive ? '' : selfEntryName(result.items, name);
++    if (!exact) return result;
++    name = exact;
++  }
++  return fetchBucketTreePages(env, name, recursive);
++}
++
++async function fetchBucketTreePages(env, prefix = '', recursive = false) {
+   const bucketId = getBucketId(env);
+   const items = [];
+   let nextUrl = buildHfTreeUrl(bucketId, prefix, recursive);
+@@ -2220,12 +2254,53 @@ export function getNextLink(linkHeader, currentUrl) {
+   return null;
+ }
+ 
++/**
++ * Normalise un préfixe de dossier.
++ *
++ * Les espaces ne sont pas élaguées : elles peuvent faire partie du nom d’un
++ * dossier du bucket (« 1) introduction to solidworks tutorials » se termine
++ * par une espace), et Hugging Face ne retrouve alors qu’un seul résultat —
++ * le dossier lui-même — au lieu de son contenu. Un préfixe entièrement
++ * composé d’espaces vaut la racine.
++ */
+ export function normalizePrefix(value) {
+-  const prefix = String(value ?? '').trim().replace(/^\/+|\/+$/g, '');
++  const raw = String(value ?? '').replace(/^\/+|\/+$/g, '');
++  const prefix = raw.trim() === '' ? '' : raw;
+   validatePath(prefix, true);
+   return prefix;
+ }
+ 
++/**
++ * Variante « tolérante » d’un chemin : espaces de bord et « / » retirés.
++ *
++ * Sert de second essai après un 404 : un chemin collé à la main avec des
++ * espaces en trop retrouve ainsi le dossier visé.
++ */
++export function fallbackPrefix(value) {
++  return String(value ?? '').trim().replace(/^\/+|\/+$/g, '');
++}
++
++/**
++ * Nom réel d’un dossier dont le préfixe demandé a perdu ses espaces de bord.
++ *
++ * Interrogé avec « …tutorials » (sans l’espace finale, qui fait pourtant partie
++ * du nom), Hugging Face ne renvoie qu’une seule entrée : le dossier lui-même,
++ * sous son nom complet. Redemander ce nom donne enfin le contenu du dossier.
++ *
++ * La détection reste stricte pour ne jamais confondre ce cas avec un dossier
++ * contenant un unique sous-dossier : l’entrée doit être un dossier, égal au
++ * préfixe demandé suivi d’espaces ou de tabulations uniquement.
++ */
++export function selfEntryName(items = [], prefix = '') {
++  if (!Array.isArray(items) || items.length !== 1) return '';
++  const only = items[0];
++  if (!only || (only.type && only.type !== 'directory')) return '';
++  const asked = String(prefix ?? '');
++  const path = String(only.path || '');
++  if (!asked || !path || path === asked || !path.startsWith(asked)) return '';
++  return /^[ \t]+$/.test(path.slice(asked.length)) ? path : '';
++}
++
+ /** Décode le suffixe `/api/file/<chemin>` (400 si le percent-encoding est invalide). */
+ function decodeFilePathSuffix(suffix) {
+   try {
+@@ -2239,7 +2314,9 @@ export function normalizeFilePath(value) {
+   if (value === null || value === undefined || String(value).trim() === '') {
+     throw new HttpError(400, 'Le chemin du document est obligatoire.');
+   }
+-  const filePath = String(value).trim().replace(/^\/+/, '');
++  // Comme pour les dossiers, les espaces font partie du nom du fichier : seul
++  // le « / » de tête est retiré.
++  const filePath = String(value).replace(/^\/+/, '');
+   validatePath(filePath, false);
+   return filePath;
+ }
+-- 
+2.39.5
