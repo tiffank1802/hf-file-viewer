@@ -1,0 +1,453 @@
+From 7ae73e859784613b2319868133f5c8b5bdb3d138 Mon Sep 17 00:00:00 2001
+From: tiffank1802 <209676063+tiffank1802@users.noreply.github.com>
+Date: Thu, 24 Sep 2026 22:43:41 +0000
+Subject: [PATCH] Cartes : la racine du bucket fait foi (dossiers autres que GM
+ et TOEIC)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+L’index récursif ne voit que les dossiers qui contiennent des fichiers : un
+dossier vide de la racine, ou absent d’un index tronqué, n’obtenait aucune
+carte alors qu’il figure bien dans l’en-tête du bucket.
+
+- `src/utils/spaces.js` fusionne l’index (`/api/index`) et le listage racine
+  (`/api/tree` sans préfixe) ; ce dernier fait foi pour le premier niveau, donc
+  chaque dossier de la racine obtient sa carte, même vide ;
+- la carte « Toute la bibliothèque » annonce les dossiers de l’en-tête
+  (`GM · TOEIC · …`) et expose leur nombre ;
+- sans index, les espaces connus restent affichés et les dossiers réellement
+  présents à la racine sont ajoutés (aucun doublon avec GM / TOEIC) ;
+- un dossier de la racine porte désormais son nom lisible (`GM` → « Génie
+  mécanique ») et son effectif quand le listage le fournit ;
+- `useLibrary` relit le dossier affiché toutes les 5 minutes en arrière-plan,
+  sans vider la liste ni afficher de squelette ;
+- tests : 146/146, dont 3 nouveaux sur l’en-tête du bucket.
+
+Co-authored-by: arena-agent <297053741+arena-agent@users.noreply.github.com>
+---
+ README.md               |  13 ++++-
+ src/App.jsx             |  10 ++--
+ src/hooks/useLibrary.js |  29 +++++++++-
+ src/utils/spaces.js     | 114 ++++++++++++++++++++++++++++++++--------
+ tests/spaces.test.js    |  74 ++++++++++++++++++++++++++
+ 5 files changed, 212 insertions(+), 28 deletions(-)
+
+diff --git a/README.md b/README.md
+index ea939aa..dd2039b 100644
+--- a/README.md
++++ b/README.md
+@@ -13,7 +13,7 @@ Bibliothèque étudiante moderne pour les ressources de **Centrale Lyon ENISE**,
+ - aperçu 3D hybride : conversion **GLB gratuite** (FreeCAD) pour `.step`, `.iges`, `.stl`, `.obj` avec rotation, zoom et déplacement, **Autodesk APS** (Model Derivative) pour les autres formats (`.dwg`, `.rvt`, `.sldprt`, `.ifc`, `.catpart`, … — FreeCAD ne lit pas les formats propriétaires), et plugin iframe **ShareCAD** en roue de secours gratuite sans conversion ;
+ - téléchargement, partage et favoris enregistrés dans le navigateur ;
+ - assistant bibliothèque : il retrouve un document, l’ouvre, le résume, et sait croiser plusieurs annales pour répondre à « comment se structure l’examen d’économie ? ». La rédaction reste côté serveur Go ; sans clé, les cartes de documents sont quand même proposées ;
+-- **cartes d’espaces construites depuis l’index du bucket** : un dossier ajouté dans Hugging Face apparaît sur l’accueil en quelques minutes, sans redéploiement, avec un badge « Nouveau » et une entrée « Autres dossiers » dans la barre latérale ;
++- **cartes d’espaces construites depuis le bucket** : l’index (`/api/index`) donne l’arborescence et les effectifs, l’en-tête du bucket (`/api/tree` racine) fait foi pour le premier niveau. Un dossier ajouté dans Hugging Face apparaît donc en quelques minutes — **même s’il est encore vide** — avec un badge « Nouveau » et une entrée « Autres dossiers » dans la barre latérale ;
+ - effectifs par dossier calculés **une seule fois à l’indexation** et stockés dans le JSON d’index ;
+ - Worker Cloudflare servant à la fois les assets statiques et l’API proxy ;
+ - Cache API configuré pour les arbres, l’index et les fichiers raisonnablement petits ;
+@@ -518,7 +518,16 @@ Le bucket n’est parcouru récursivement qu’au **premier** `GET /api/index` d
+ 3. `counts` (chemin → nombre) et `totalFiles` sont écrits **dans le document d’index** ;
+ 4. ce document part au Cache API, et dans Workers KV si le binding existe.
+ 
+-Le frontend charge ce JSON au démarrage (`useIndexCatalog`) puis le relit toutes les 5 minutes (uniquement quand l’onglet est visible). L’accueil, les cartes d’espaces, l’explorateur et la recherche lisent ensuite les mêmes valeurs : **changer de dossier ne déclenche aucun recomptage**, seule la liste du dossier est demandée à `/api/tree` (elle-même cachée). Pendant le tout premier index, l’interface affiche « Indexation… ».
++Le frontend charge ce JSON au démarrage (`useIndexCatalog`) puis le relit toutes les 5 minutes (uniquement quand l’onglet est visible). L’accueil, les cartes d’espaces, l’explorateur et la recherche lisent ensuite les mêmes valeurs : **changer de dossier ne déclenche aucun recomptage**, seule la liste du dossier est demandée à `/api/tree` (elle-même cachée, et relue en arrière-plan toutes les 5 minutes pour l’onglet affiché). Pendant le tout premier index, l’interface affiche « Indexation… ».
++
++#### Cartes d’accueil et en-tête du bucket
++
++`src/utils/spaces.js` fusionne deux sources, dans cet ordre :
++
++1. **l’index récursif** (`/api/index`) : quels dossiers existent, leurs effectifs et la date du dernier dépôt (badge « Nouveau » sous 30 jours) ;
++2. **le listage racine** (`/api/tree` sans préfixe) : l’en-tête du bucket, qui fait foi pour le premier niveau. Un dossier de la racine obtient donc sa carte **même s’il est vide** — cas où l’index récursif ne le voit pas.
++
++Les espaces connus (3A, 4A, 5A, TOEIC, SolidWorks) gardent leur titre, leur icône et leur couleur, mais ne s’affichent que s’ils existent encore. Un dossier conteneur (par exemple `GM`, qui regroupe 3A / 4A / 5A) n’a pas de carte : ses sous-dossiers prennent la place, ce qui fait apparaître `GM/Stages` sans toucher au code. La carte **Toute la bibliothèque** ouvre la racine et affiche en description les dossiers de l’en-tête. Si l’index ne répond pas, les espaces connus restent affichés comme avant, complétés par les dossiers réellement présents à la racine.
+ 
+ #### Fraîcheur sans attente
+ 
+diff --git a/src/App.jsx b/src/App.jsx
+index 52169b1..897e83c 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -21,9 +21,13 @@ import './index.css';
+ export default function App() {
+   const library = useLibrary();
+   const catalog = useIndexCatalog();
+-  // Les cartes d’accueil et la barre latérale sont dérivées de l’index :
+-  // un dossier ajouté au bucket apparaît sans redéploiement.
+-  const home = useMemo(() => buildHomeCards(catalog), [catalog]);
++  // Les cartes d’accueil et la barre latérale sont dérivées de l’index et du
++  // listage racine (`/api/tree`, l’en-tête du bucket) : un dossier ajouté
++  // apparaît sans redéploiement, même s’il est encore vide.
++  const home = useMemo(
++    () => buildHomeCards(catalog, { rootItems: library.path === '' ? library.items : [] }),
++    [catalog, library.path, library.items],
++  );
+   const [selectedFile, setSelectedFile] = useState(null);
+   const [searchState, setSearchState] = useState({ open: false, mode: 'search' });
+   const [authPanel, setAuthPanel] = useState({ open: false, mode: 'signin' });
+diff --git a/src/hooks/useLibrary.js b/src/hooks/useLibrary.js
+index cd48ed1..f0ce2ed 100644
+--- a/src/hooks/useLibrary.js
++++ b/src/hooks/useLibrary.js
+@@ -3,6 +3,9 @@ import { fetchTree } from '../services/api';
+ import { getFallbackTree } from '../data/fallbackData';
+ import { hrefFromLibraryPath, pathFromHash, pathFromLocation } from '../utils/routes';
+ 
++/** Un onglet resté ouvert relit le dossier affiché à ce rythme. */
++const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
++
+ export function useLibrary() {
+   const [path, setPath] = useState(() => pathFromLocation());
+   const [state, setState] = useState({
+@@ -15,6 +18,8 @@ export function useLibrary() {
+   });
+   const [reloadKey, setReloadKey] = useState(0);
+   const cacheRef = useRef(new Map());
++  // Une relecture périodique ne doit ni vider la liste ni afficher de squelette.
++  const backgroundRef = useRef(false);
+ 
+   useEffect(() => {
+     const syncPath = () => {
+@@ -34,14 +39,19 @@ export function useLibrary() {
+ 
+   useEffect(() => {
+     const controller = new AbortController();
+-    const cached = cacheRef.current.get(path);
++    const background = backgroundRef.current;
++    backgroundRef.current = false;
++    // Une relecture en arrière-plan ignore le cache : c’est tout son intérêt.
++    const cached = background ? null : cacheRef.current.get(path);
+ 
+     if (cached) {
+       setState({ ...cached, loading: false });
+       return () => controller.abort();
+     }
+ 
+-    setState((current) => ({ ...current, items: [], loading: true, error: null }));
++    if (!background) {
++      setState((current) => ({ ...current, items: [], loading: true, error: null }));
++    }
+ 
+     fetchTree(path, controller.signal)
+       .then((payload) => {
+@@ -58,6 +68,9 @@ export function useLibrary() {
+       })
+       .catch((error) => {
+         if (error.name === 'AbortError') return;
++        // Relecture silencieuse : un échec réseau passager ne remplace pas la
++        // liste affichée par les données de secours.
++        if (background) return;
+         const fallbackItems = getFallbackTree(path);
+         const nextState = {
+           items: fallbackItems,
+@@ -73,6 +86,18 @@ export function useLibrary() {
+     return () => controller.abort();
+   }, [path, reloadKey]);
+ 
++  // Le dossier affiché est relu en arrière-plan : un dossier ajouté dans le
++  // bucket apparaît sans rechargement de page.
++  useEffect(() => {
++    const interval = window.setInterval(() => {
++      if (document.visibilityState === 'hidden') return;
++      cacheRef.current.delete(path);
++      backgroundRef.current = true;
++      setReloadKey((key) => key + 1);
++    }, REFRESH_INTERVAL_MS);
++    return () => window.clearInterval(interval);
++  }, [path]);
++
+   const navigate = useCallback(
+     (nextPath = '', options = {}) => {
+       const normalized = nextPath.replace(/^\/+|\/+$/g, '');
+diff --git a/src/utils/spaces.js b/src/utils/spaces.js
+index fdad6b9..15885c1 100644
+--- a/src/utils/spaces.js
++++ b/src/utils/spaces.js
+@@ -4,6 +4,7 @@ import {
+   NEW_SPACE_WINDOW_DAYS,
+   SPACE_TONES,
+ } from '../config.js';
++
+ const DAY_MS = 24 * 60 * 60 * 1000;
+ 
+ /** Noms « lisibles » des dossiers conteneurs du bucket. */
+@@ -41,6 +42,38 @@ export function indexedDirectories(items = []) {
+   return directories;
+ }
+ 
++/**
++ * Dossiers de premier niveau d’un listage de racine.
++ *
++ * C’est l’en-tête du bucket : `/api/tree` sans préfixe. Il fait foi pour la
++ * racine, y compris pour un dossier vide que l’index récursif ignore.
++ */
++export function rootDirectories(rootItems = []) {
++  const directories = new Set();
++  for (const item of rootItems) {
++    const path = normalizeSpacePath(item?.path);
++    if (!path) continue;
++    const parts = path.split('/').filter(Boolean);
++    if (!parts.length) continue;
++    if (parts.length === 1 && item?.type !== 'directory') continue;
++    directories.add(parts[0]);
++  }
++  return directories;
++}
++
++/** Fusionne deux listages en gardant la première entrée vue pour un chemin. */
++export function mergeItems(primary = [], extra = []) {
++  const seen = new Set();
++  const merged = [];
++  for (const item of [...primary, ...extra]) {
++    const path = normalizeSpacePath(item?.path);
++    if (!path || seen.has(path)) continue;
++    seen.add(path);
++    merged.push(item);
++  }
++  return merged;
++}
++
+ /** Vrai si le dossier existe encore dans l’index. */
+ export function hasDirectory(items = [], path = '') {
+   const base = normalizeSpacePath(path);
+@@ -80,7 +113,9 @@ export function isRecentActivity(time, now = Date.now(), windowDays = NEW_SPACE_
+ 
+ /** Titre lisible pour un dossier découvert dans le bucket. */
+ export function titleFromPath(path = '') {
+-  const name = segmentsOf(path).pop() || '';
++  const normalized = normalizeSpacePath(path);
++  if (FOLDER_LABELS[normalized]) return FOLDER_LABELS[normalized];
++  const name = segmentsOf(normalized).pop() || '';
+   const words = name.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+   if (!words) return 'Dossier';
+   return words.charAt(0).toUpperCase() + words.slice(1);
+@@ -106,16 +141,25 @@ function finiteCount(value) {
+   return Number.isFinite(number) ? number : null;
+ }
+ 
+-function countFor(catalog, path) {
+-  return finiteCount(catalog?.counts?.[normalizeSpacePath(path)]);
++function countFor(catalog, path, entry = null) {
++  const fromIndex = finiteCount(catalog?.counts?.[normalizeSpacePath(path)]);
++  if (fromIndex !== null) return fromIndex;
++  // Sans index, un dossier peut déjà annoncer son effectif dans le listage.
++  return finiteCount(entry?.count ?? entry?.numItems ?? entry?.totalFiles);
++}
++
++/** Entrée de listage d’un dossier, pour son effectif ou sa date. */
++function entryFor(items, path) {
++  const base = normalizeSpacePath(path);
++  return items.find((item) => normalizeSpacePath(item?.path) === base) || null;
+ }
+ 
+-function curatedSpace(space, catalog) {
++function curatedSpace(space, catalog, items = []) {
+   const path = normalizeSpacePath(space.path);
+   return {
+     ...space,
+     path,
+-    count: countFor(catalog, path),
++    count: countFor(catalog, path, entryFor(items, path)),
+     dynamic: false,
+     badge: null,
+     updatedAt: null,
+@@ -153,8 +197,10 @@ export function dynamicSpacePaths(directories = new Set(), knownPaths = []) {
+ }
+ 
+ function dynamicSpace(path, items, catalog, now) {
+-  const updatedAt = latestActivity(items, path);
+-  const recent = isRecentActivity(updatedAt, now);
++  const entry = entryFor(items, path);
++  const updatedAt = latestActivity(items, path) ?? Date.parse(entry?.mtime ?? '');
++  const updated = Number.isFinite(updatedAt) ? updatedAt : null;
++  const recent = isRecentActivity(updated, now);
+   return {
+     path,
+     title: titleFromPath(path),
+@@ -162,10 +208,10 @@ function dynamicSpace(path, items, catalog, now) {
+     description: describeDynamicSpace(path, recent),
+     tone: SPACE_TONES[0],
+     icon: 'folder',
+-    count: countFor(catalog, path),
++    count: countFor(catalog, path, entry),
+     dynamic: true,
+     badge: recent ? 'Nouveau' : null,
+-    updatedAt,
++    updatedAt: updated,
+   };
+ }
+ 
+@@ -177,16 +223,24 @@ function byActivity(a, b) {
+ }
+ 
+ /**
+- * Construit les cartes d’espaces à partir de l’index du bucket.
++ * Construit les cartes d’espaces à partir du bucket.
+  *
+- * - les espaces connus ne s’affichent que s’ils existent toujours ;
+- * - tout autre dossier (racine, ou sous-dossier d’un conteneur) est ajouté,
+- *   trié du plus récemment modifié au plus ancien ;
+- * - si l’index n’a pas répondu (chargement, panne), les espaces connus
+- *   restent affichés comme avant.
++ * Deux sources se complètent :
++ *
++ * - l’index (`/api/index`) donne l’arborescence complète et les effectifs ;
++ * - le listage racine (`/api/tree` sans préfixe, l’en-tête du bucket) fait foi
++ *   pour le premier niveau : un dossier qui y figure obtient une carte même
++ *   s’il est vide, donc absent de l’index récursif.
++ *
++ * Les espaces connus ne s’affichent que s’ils existent toujours ; tout autre
++ * dossier (racine, ou sous-dossier d’un conteneur) est ajouté, trié du plus
++ * récemment modifié au plus ancien. Si l’index n’a pas répondu, les espaces
++ * connus restent affichés comme avant.
+  */
+ export function buildSpaces(catalog, options = {}) {
+-  const items = Array.isArray(catalog?.items) ? catalog.items : [];
++  const indexItems = Array.isArray(catalog?.items) ? catalog.items : [];
++  const rootItems = Array.isArray(options.rootItems) ? options.rootItems : [];
++  const items = mergeItems(indexItems, rootItems);
+   const now = Number.isFinite(options.now) ? options.now : Date.now();
+ 
+   if (items.length === 0) {
+@@ -196,9 +250,13 @@ export function buildSpaces(catalog, options = {}) {
+   const knownPaths = FEATURED_SPACES.map((space) => normalizeSpacePath(space.path));
+   const directories = indexedDirectories(items);
+ 
+-  const curated = FEATURED_SPACES.filter((space) =>
+-    directories.has(normalizeSpacePath(space.path)),
+-  ).map((space) => curatedSpace(space, catalog));
++  // Index indisponible : la liste connue sert de repli, complétée par les
++  // dossiers réellement présents à la racine du bucket.
++  const curated = indexItems.length === 0
++    ? FEATURED_SPACES.map((space) => curatedSpace(space, catalog, items))
++    : FEATURED_SPACES
++        .filter((space) => directories.has(normalizeSpacePath(space.path)))
++        .map((space) => curatedSpace(space, catalog, items));
+ 
+   const dynamic = dynamicSpacePaths(directories, knownPaths)
+     .map((path) => dynamicSpace(path, items, catalog, now))
+@@ -208,11 +266,25 @@ export function buildSpaces(catalog, options = {}) {
+   return [...curated, ...dynamic];
+ }
+ 
++/**
++ * Description de la carte racine : les dossiers de l’en-tête du bucket, pour
++ * que le lien annonce ce qu’il ouvre vraiment.
++ */
++export function libraryDescription(rootItems = [], max = 3) {
++  const names = [...rootDirectories(rootItems)].sort((a, b) => a.localeCompare(b, 'fr'));
++  if (names.length === 0) return LIBRARY_ROOT_CARD.description;
++  if (names.length <= max) return names.join(' · ');
++  return `${names.slice(0, max).join(' · ')} · +${names.length - max}`;
++}
++
+ /** Carte qui ouvre la racine du bucket (toujours disponible). */
+-export function buildLibraryCard(catalog) {
++export function buildLibraryCard(catalog, options = {}) {
++  const rootItems = Array.isArray(options.rootItems) ? options.rootItems : [];
+   return {
+     ...LIBRARY_ROOT_CARD,
+     path: '',
++    description: libraryDescription(rootItems),
++    folders: rootDirectories(rootItems).size,
+     count: finiteCount(catalog?.totalFiles),
+     dynamic: false,
+     badge: null,
+@@ -223,5 +295,5 @@ export function buildLibraryCard(catalog) {
+ /** Cartes de l’accueil : espaces réels + accès à toute la bibliothèque. */
+ export function buildHomeCards(catalog, options = {}) {
+   const spaces = buildSpaces(catalog, options);
+-  return { spaces, cards: [...spaces, buildLibraryCard(catalog)] };
++  return { spaces, cards: [...spaces, buildLibraryCard(catalog, options)] };
+ }
+diff --git a/tests/spaces.test.js b/tests/spaces.test.js
+index 4f3901b..4e18333 100644
+--- a/tests/spaces.test.js
++++ b/tests/spaces.test.js
+@@ -8,6 +8,8 @@ import {
+   hasDirectory,
+   indexedDirectories,
+   latestActivity,
++  libraryDescription,
++  rootDirectories,
+ } from '../src/utils/spaces.js';
+ 
+ const NOW = Date.parse('2026-09-24T12:00:00Z');
+@@ -114,3 +116,75 @@ test('les dossiers de l’index se déduisent des fichiers et des entrées de ty
+   assert.equal(latestActivity(items, 'GM/3A GM'), Date.parse(daysBefore(1)));
+   assert.equal(latestActivity(items, 'GM/4A GM'), null);
+ });
++
++test('un dossier de l’en-tête du bucket obtient sa carte même s’il est vide', () => {
++  // L’index récursif ne voit pas un dossier vide : le listage racine fait foi.
++  const { spaces, cards } = buildHomeCards(
++    catalogOf([file('GM/3A GM/S5/poly.pdf', daysBefore(4))], { 'GM/3A GM': 1 }, 1),
++    {
++      now: NOW,
++      rootItems: [
++        folder('GM'),
++        folder('TOEIC'),
++        folder('Annales 2025'),
++        file('Annales 2025/sujet.pdf', daysBefore(3)),
++        file('README.md', daysBefore(200)),
++      ],
++    },
++  );
++
++  // Les espaces connus d’abord, puis les dossiers découverts.
++  assert.deepEqual(spaces.map((space) => space.path), ['GM/3A GM', 'TOEIC', 'Annales 2025']);
++  const annales = spaces[2];
++  assert.equal(annales.dynamic, true);
++  assert.equal(annales.badge, 'Nouveau');
++  // TOEIC n’existe que dans l’index mais pas encore dans le listage : la carte
++  // de l’espace connu reste affichée, sans doublon dynamique.
++  assert.equal(spaces[1].dynamic, false);
++
++  const library = cards[cards.length - 1];
++  assert.equal(library.folders, 3);
++  assert.equal(library.description, 'Annales 2025 · GM · TOEIC');
++});
++
++test('sans index, l’en-tête du bucket complète les espaces connus', () => {
++  const { spaces, cards } = buildHomeCards(
++    { items: [], counts: {}, totalFiles: null, loading: false, error: 'Index indisponible' },
++    {
++      now: NOW,
++      rootItems: [
++        folder('GM'),
++        folder('TOEIC'),
++        folder('Stages 2026'),
++        file('Stages 2026/offre.pdf', daysBefore(5)),
++      ],
++    },
++  );
++
++  // Les 5 espaces connus restent affichés comme avant…
++  assert.equal(spaces.length, FEATURED_SPACES.length + 1);
++  assert.deepEqual(
++    spaces.slice(0, FEATURED_SPACES.length).map((space) => space.path),
++    FEATURED_SPACES.map((space) => space.path),
++  );
++  // … et le nouveau dossier racine apparaît, sans doublon pour GM / TOEIC.
++  const added = spaces.slice(FEATURED_SPACES.length);
++  assert.deepEqual(added.map((space) => space.path), ['Stages 2026']);
++  assert.equal(added[0].badge, 'Nouveau');
++  assert.equal(cards[cards.length - 1].description, 'GM · Stages 2026 · TOEIC');
++});
++
++test('les dossiers de l’en-tête se lisent depuis les entrées du listage', () => {
++  const directories = rootDirectories([
++    folder('GM'),
++    file('GM/3A GM/poly.pdf', daysBefore(1)),
++    folder('TOEIC'),
++    file('README.md', daysBefore(2)),
++  ]);
++  assert.deepEqual([...directories].sort(), ['GM', 'TOEIC']);
++  assert.equal(libraryDescription([]), 'Tous les dossiers du bucket');
++  assert.equal(
++    libraryDescription(['A', 'B', 'C', 'D', 'E'].map((name) => folder(name))),
++    'A · B · C · +2',
++  );
++});
+-- 
+2.39.5
