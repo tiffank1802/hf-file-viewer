@@ -10,7 +10,10 @@ const DEFAULT_BUCKET_ID = 'ktongue/ENISE-SITE';
  * puis redéployer. Les anciennes entrées deviennent orphelines et expirent
  * naturellement selon leur TTL.
  */
-const CACHE_KEY_VERSION = 'v3';
+// v5 : les clés v4 ont pu mémoriser des listages calculés avec un préfixe
+// élagué (dossier dont le nom se termine par une espace) ; changer de version
+// rend ces entrées orphelines immédiatement, sans attendre leur expiration.
+const CACHE_KEY_VERSION = 'v5';
 /**
  * Fraîcheur des documents d’arborescence et d’index.
  *
@@ -2148,7 +2151,38 @@ async function model3dConvertHttpError(response) {
   return new HttpError(response.status >= 500 ? 502 : response.status, `Conversion 3D : ${message}`);
 }
 
+/**
+ * Liste un dossier chez Hugging Face, en trois essais au plus.
+ *
+ * 1. le préfixe exact — une espace finale fait partie du nom du dossier ;
+ * 2. sa variante élaguée, uniquement si Hugging Face répond 404 : un chemin
+ *    collé à la main avec des espaces en trop reste accepté ;
+ * 3. le nom réel rendu par Hugging Face lui-même, quand c’est la variante
+ *    élaguée qui a été essayée et que l’espace finale manquait (voir
+ *    `selfEntryName`) : un lien ancien, un favori ou une URL recopiée sans
+ *    l’espace ouvre malgré tout le dossier.
+ */
 export async function fetchBucketTree(env, prefix = '', recursive = false) {
+  let name = prefix;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let result;
+    try {
+      result = await fetchBucketTreePages(env, name, recursive);
+    } catch (error) {
+      const fallback = fallbackPrefix(name);
+      const notFound = error instanceof HttpError && error.status === 404;
+      if (!notFound || !fallback || fallback === name) throw error;
+      name = fallback;
+      continue;
+    }
+    const exact = recursive ? '' : selfEntryName(result.items, name);
+    if (!exact) return result;
+    name = exact;
+  }
+  return fetchBucketTreePages(env, name, recursive);
+}
+
+async function fetchBucketTreePages(env, prefix = '', recursive = false) {
   const bucketId = getBucketId(env);
   const items = [];
   let nextUrl = buildHfTreeUrl(bucketId, prefix, recursive);
@@ -2220,10 +2254,51 @@ export function getNextLink(linkHeader, currentUrl) {
   return null;
 }
 
+/**
+ * Normalise un préfixe de dossier.
+ *
+ * Les espaces ne sont pas élaguées : elles peuvent faire partie du nom d’un
+ * dossier du bucket (« 1) introduction to solidworks tutorials » se termine
+ * par une espace), et Hugging Face ne retrouve alors qu’un seul résultat —
+ * le dossier lui-même — au lieu de son contenu. Un préfixe entièrement
+ * composé d’espaces vaut la racine.
+ */
 export function normalizePrefix(value) {
-  const prefix = String(value ?? '').trim().replace(/^\/+|\/+$/g, '');
+  const raw = String(value ?? '').replace(/^\/+|\/+$/g, '');
+  const prefix = raw.trim() === '' ? '' : raw;
   validatePath(prefix, true);
   return prefix;
+}
+
+/**
+ * Variante « tolérante » d’un chemin : espaces de bord et « / » retirés.
+ *
+ * Sert de second essai après un 404 : un chemin collé à la main avec des
+ * espaces en trop retrouve ainsi le dossier visé.
+ */
+export function fallbackPrefix(value) {
+  return String(value ?? '').trim().replace(/^\/+|\/+$/g, '');
+}
+
+/**
+ * Nom réel d’un dossier dont le préfixe demandé a perdu ses espaces de bord.
+ *
+ * Interrogé avec « …tutorials » (sans l’espace finale, qui fait pourtant partie
+ * du nom), Hugging Face ne renvoie qu’une seule entrée : le dossier lui-même,
+ * sous son nom complet. Redemander ce nom donne enfin le contenu du dossier.
+ *
+ * La détection reste stricte pour ne jamais confondre ce cas avec un dossier
+ * contenant un unique sous-dossier : l’entrée doit être un dossier, égal au
+ * préfixe demandé suivi d’espaces ou de tabulations uniquement.
+ */
+export function selfEntryName(items = [], prefix = '') {
+  if (!Array.isArray(items) || items.length !== 1) return '';
+  const only = items[0];
+  if (!only || (only.type && only.type !== 'directory')) return '';
+  const asked = String(prefix ?? '');
+  const path = String(only.path || '');
+  if (!asked || !path || path === asked || !path.startsWith(asked)) return '';
+  return /^[ \t]+$/.test(path.slice(asked.length)) ? path : '';
 }
 
 /** Décode le suffixe `/api/file/<chemin>` (400 si le percent-encoding est invalide). */
@@ -2239,7 +2314,9 @@ export function normalizeFilePath(value) {
   if (value === null || value === undefined || String(value).trim() === '') {
     throw new HttpError(400, 'Le chemin du document est obligatoire.');
   }
-  const filePath = String(value).trim().replace(/^\/+/, '');
+  // Comme pour les dossiers, les espaces font partie du nom du fichier : seul
+  // le « / » de tête est retiré.
+  const filePath = String(value).replace(/^\/+/, '');
   validatePath(filePath, false);
   return filePath;
 }

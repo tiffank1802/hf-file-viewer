@@ -39,6 +39,12 @@ function createCache() {
   };
 }
 
+/** Préfixe réellement demandé à Hugging Face dans une URL de listage. */
+function hfPrefix(url) {
+  const suffix = String(url).split('/tree/')[1] || '';
+  return decodeURIComponent(suffix.split('?')[0]);
+}
+
 function createContext() {
   const promises = [];
   return {
@@ -662,6 +668,130 @@ test('un dossier inconnu des deux côtés reste un 404', async () => {
       context,
     );
     assert.equal(response.status, 404);
+    await context.done();
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.caches = originalCaches;
+  }
+});
+
+test('un préfixe collé avec des espaces en trop est réessayé sans elles', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCaches = globalThis.caches;
+  const dossier = 'GM/Tutos SolidWorks/SolidProfessor/1-CSWA/1) introduction to solidworks tutorials ';
+  const sections = ['Section 1 - Overview'];
+  const calls = [];
+  globalThis.caches = { default: createCache() };
+  globalThis.fetch = async (url) => {
+    const prefix = hfPrefix(url);
+    calls.push(prefix);
+    if (prefix === dossier) {
+      return Response.json(sections.map((name) => ({ type: 'directory', path: `${dossier}${name}` })));
+    }
+    if (prefix === dossier.trim()) {
+      // Le nom sans l’espace finale : Hugging Face rend le dossier lui-même.
+      return Response.json([{ type: 'directory', path: dossier }]);
+    }
+    return new Response('{"error":"not found"}', { status: 404 });
+  };
+
+  try {
+    const context = createContext();
+    // Chemin collé avec deux espaces finales : le nom exact échoue (404), la
+    // version élaguée rend le nom réel, qui liste enfin le dossier.
+    const response = await worker.fetch(
+      new Request(`https://docs.example/api/tree?prefix=${encodeURIComponent(`${dossier} `)}`),
+      env,
+      context,
+    );
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.items.length, 1);
+    assert.equal(payload.items[0].path, `${dossier}Section 1 - Overview`);
+    assert.deepEqual(calls, [`${dossier} `, dossier.trim(), dossier]);
+    await context.done();
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.caches = originalCaches;
+  }
+});
+
+test('un dossier dont le nom finit par une espace est listé avec son contenu', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCaches = globalThis.caches;
+  const dossier = 'GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA/1) introduction to solidworks tutorials ';
+  const sections = [
+    'Section 1 - Overview',
+    'Section 2 - Introduction to Sketching',
+    'Section 3 - Features and Part Design',
+    'Section 4 - Revolve and Pattern',
+    'Section 5 - Assembly Design',
+    'Section 6 - Drawings',
+  ];
+  let calledUrl = '';
+  globalThis.caches = { default: createCache() };
+  globalThis.fetch = async (url) => {
+    calledUrl = decodeURIComponent(String(url));
+    // Hugging Face ne renvoie le contenu que si l’espace finale est conservée.
+    if (!calledUrl.endsWith(`${dossier}?recursive=false`)) {
+      return Response.json([{ type: 'directory', path: dossier.trim() }]);
+    }
+    return Response.json(sections.map((name) => ({ type: 'directory', path: `${dossier}${name}` })));
+  };
+
+  try {
+    const context = createContext();
+    const response = await worker.fetch(
+      new Request(`https://docs.example/api/tree?prefix=${encodeURIComponent(dossier)}`),
+      env,
+      context,
+    );
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.prefix, dossier);
+    assert.equal(payload.items.length, 6);
+    assert.equal(payload.items[0].path, `${dossier}Section 1 - Overview`);
+    await context.done();
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.caches = originalCaches;
+  }
+});
+
+test('une URL sans l’espace finale retrouve le dossier grâce au nom rendu par Hugging Face', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCaches = globalThis.caches;
+  const dossier = 'GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA/1) introduction to solidworks tutorials ';
+  const sections = ['Section 1 - Overview', 'Section 2 - Introduction to Sketching'];
+  const calls = [];
+  globalThis.caches = { default: createCache() };
+  globalThis.fetch = async (url) => {
+    const prefix = hfPrefix(url);
+    calls.push(prefix);
+    // Le préfixe élagué ne liste que le dossier lui-même, sous son nom complet.
+    if (prefix === dossier) {
+      return Response.json(sections.map((name) => ({ type: 'directory', path: `${dossier}${name}` })));
+    }
+    if (prefix === dossier.trim()) {
+      return Response.json([{ type: 'directory', path: dossier }]);
+    }
+    return new Response('{"error":"not found"}', { status: 404 });
+  };
+
+  try {
+    const context = createContext();
+    // Route à la septième profondeur, copiée sans l’espace finale : le dossier
+    // doit tout de même s’ouvrir.
+    const response = await worker.fetch(
+      new Request(`https://docs.example/api/tree?prefix=${encodeURIComponent(dossier.trim())}`),
+      env,
+      context,
+    );
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.items.length, 2);
+    assert.equal(payload.items[0].path, `${dossier}Section 1 - Overview`);
+    assert.deepEqual(calls, [dossier.trim(), dossier]);
     await context.done();
   } finally {
     globalThis.fetch = originalFetch;

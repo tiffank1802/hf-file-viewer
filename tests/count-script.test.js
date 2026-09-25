@@ -5,10 +5,13 @@ import {
   buildTreeUrl,
   countFilesInListing,
   diffWithIndexDocument,
+  fallbackPrefix,
+  listBucketFiles,
   normalizePrefix,
   parseNextLink,
   renderComparison,
   renderReport,
+  selfEntryName,
 } from '../scripts/count-bucket-files.mjs';
 
 // Échantillon calqué sur la réponse réelle de l’API buckets Hugging Face.
@@ -69,9 +72,17 @@ test('parseNextLink suit la pagination rel="next"', () => {
   assert.equal(parseNextLink('</other>; rel="prev"', 'https://example.com'), null);
 });
 
-test('normalizePrefix nettoie le chemin', () => {
-  assert.equal(normalizePrefix(' /GM/3A GM/ '), 'GM/3A GM');
+test('normalizePrefix nettoie le chemin sans élaguer les espaces des noms', () => {
+  assert.equal(normalizePrefix('/GM/3A GM/'), 'GM/3A GM');
   assert.equal(normalizePrefix(''), '');
+  assert.equal(normalizePrefix('   '), '');
+  // Une espace finale fait partie du nom : la retirer ferait perdre le dossier.
+  assert.equal(
+    normalizePrefix('GM/Tutos SolidWorks/SolidProfessor/1-CSWA/1) intro '),
+    'GM/Tutos SolidWorks/SolidProfessor/1-CSWA/1) intro ',
+  );
+  // Second essai, pour un chemin collé avec des espaces en trop.
+  assert.equal(fallbackPrefix(' /GM/3A GM/ '), 'GM/3A GM');
   assert.throws(() => normalizePrefix('GM/../TOEIC'));
 });
 
@@ -140,4 +151,36 @@ test('renderReport affiche la hiérarchie et respecte la profondeur', () => {
   const shallow = renderReport(analysis, { depth: 1 });
   assert.match(shallow, /^\s{2}GM : 3 fichier\(s\)/m);
   assert.doesNotMatch(shallow, /Calcul Tensoriel/);
+});
+
+test('selfEntryName n’accepte qu’un dossier rendu sous un nom plus long', () => {
+  const dossier = 'GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA/1) introduction to solidworks tutorials ';
+
+  assert.equal(selfEntryName([{ type: 'directory', path: dossier }], dossier.trim()), dossier);
+  assert.equal(selfEntryName([{ type: 'directory', path: 'A/A ' }], 'A'), '');
+  assert.equal(selfEntryName([{ type: 'directory', path: dossier }], dossier), '');
+  assert.equal(selfEntryName([{ type: 'file', path: dossier }], dossier.trim()), '');
+  assert.equal(selfEntryName([], ''), '');
+});
+
+test('listBucketFiles redemande le nom réel quand le nom élagué ne liste que le dossier', async () => {
+  const originalFetch = globalThis.fetch;
+  const dossier = 'GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA/1) introduction to solidworks tutorials ';
+  const prefixes = [];
+  globalThis.fetch = async (url) => {
+    prefixes.push(decodeURIComponent(String(url).split('/tree/')[1].split('?')[0]));
+    if (prefixes.at(-1) === dossier) {
+      return Response.json([{ type: 'file', path: `${dossier}Section 1 - Overview/1-About This Course.mp4`, size: 3767619 }]);
+    }
+    return Response.json([{ type: 'directory', path: dossier }]);
+  };
+
+  try {
+    const listing = await listBucketFiles({ bucketId: 'ktongue/ENISE-SITE', prefix: dossier.trim() });
+    assert.equal(listing.items.length, 1);
+    assert.equal(listing.items[0].size, 3767619);
+    assert.deepEqual(prefixes, [dossier.trim(), dossier]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

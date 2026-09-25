@@ -66,6 +66,31 @@ func TestPaths(t *testing.T) {
 	}
 }
 
+// Certains dossiers du bucket se terminent par une espace
+// (« 1) introduction to solidworks tutorials ») : l’élaguer ferait perdre le
+// contenu du dossier, Hugging Face ne renvoyant alors que le dossier lui-même.
+func TestPathsKeepTrailingSpaces(t *testing.T) {
+	dossier := "GM/Tutos SolidWorks/SolidProfessor/1-CSWA/1) introduction to solidworks tutorials "
+	prefix, err := NormalizePrefix(dossier)
+	if err != nil || prefix != dossier {
+		t.Fatalf("préfixe %q %v", prefix, err)
+	}
+	if got, err := NormalizePrefix("  "); err != nil || got != "" {
+		t.Fatalf("préfixe vide %q %v", got, err)
+	}
+	if got, err := NormalizePrefix("/TOEIC/"); err != nil || got != "TOEIC" {
+		t.Fatalf("préfixe simple %q %v", got, err)
+	}
+
+	filePath, err := NormalizeFilePath(dossier + "/Section 1 - Overview/welcome.pdf")
+	if err != nil || filePath != dossier+"/Section 1 - Overview/welcome.pdf" {
+		t.Fatalf("fichier %q %v", filePath, err)
+	}
+	if _, err := NormalizeFilePath("   "); err == nil {
+		t.Fatal("un chemin uniquement composé d’espaces doit être refusé")
+	}
+}
+
 func TestCountAndSelect(t *testing.T) {
 	counts, total := CountFilesByDirectory([]BucketItem{
 		{Type: "directory", Path: "GM"},

@@ -62,8 +62,15 @@ func ValidBucketID(value string) bool {
 	return bucketIDPattern.MatchString(value)
 }
 
+// NormalizePrefix nettoie un préfixe de dossier sans élaguer les espaces :
+// elles peuvent faire partie du nom d’un dossier du bucket (« … tutorials » se
+// termine par une espace). Un préfixe uniquement composé d’espaces vaut la
+// racine.
 func NormalizePrefix(value string) (string, error) {
-	prefix := strings.Trim(strings.TrimSpace(value), "/")
+	prefix := strings.Trim(value, "/")
+	if strings.TrimSpace(prefix) == "" {
+		prefix = ""
+	}
 	if err := validatePath(prefix, true); err != nil {
 		return "", err
 	}
@@ -74,7 +81,8 @@ func NormalizeFilePath(value string) (string, error) {
 	if strings.TrimSpace(value) == "" {
 		return "", Error(400, "Le chemin du document est obligatoire.")
 	}
-	filePath := strings.TrimLeft(strings.TrimSpace(value), "/")
+	// Les espaces internes ou finales appartiennent au nom du fichier.
+	filePath := strings.TrimLeft(value, "/")
 	if err := validatePath(filePath, false); err != nil {
 		return "", err
 	}

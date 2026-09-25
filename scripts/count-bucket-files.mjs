@@ -76,9 +76,16 @@ export function parseNextLink(linkHeader, currentUrl) {
   return null;
 }
 
-/** Valide/normalise le préfixe demandé, comme normalizePrefix côté Worker. */
+/**
+ * Valide/normalise le préfixe demandé, comme normalizePrefix côté Worker.
+ *
+ * Les espaces ne sont pas élaguées : elles font partie du nom de certains
+ * dossiers du bucket (« … tutorials » se termine par une espace).
+ */
 export function normalizePrefix(value = '') {
-  const prefix = String(value ?? '').trim().replace(/^\/+|\/+$/g, '');
+  const raw = String(value ?? '').replace(/^\/+|\/+$/g, '');
+  const prefix = raw.trim() === '' ? '' : raw;
+  if (!prefix) return prefix;
   if (prefix.split('/').some((segment) => segment === '..')) {
     throw new Error(`Préfixe invalide : « ${value} ».`);
   }
@@ -376,7 +383,45 @@ export async function fetchBucketStats({ bucketId, token }) {
 }
 
 /** Parcours récursif paginé du bucket (identique au premier /api/index du Worker). */
+/** Variante tolérante : espaces de bord et « / » retirés (second essai). */
+export function fallbackPrefix(value = '') {
+  return String(value ?? '').trim().replace(/^\/+|\/+$/g, '');
+}
+
+/**
+ * Liste un préfixe chez Hugging Face.
+ *
+ * Le nom exact passe en premier (une espace finale est significative), puis la
+ * variante élaguée si le dossier n’existe pas sous cette forme.
+ */
+export function selfEntryName(items = [], prefix = '') {
+  if (!Array.isArray(items) || items.length !== 1) return '';
+  const only = items[0];
+  if (!only || (only.type && only.type !== 'directory')) return '';
+  const asked = String(prefix ?? '');
+  const path = String(only.path || '');
+  if (!asked || !path || path === asked || !path.startsWith(asked)) return '';
+  return /^[ \t]+$/.test(path.slice(asked.length)) ? path : '';
+}
+
 export async function listBucketFiles({ bucketId, prefix = '', token = '', quiet = false }) {
+  let name = prefix;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const result = await listBucketPages({ bucketId, prefix: name, token, quiet });
+      const exact = selfEntryName(result.items, name);
+      if (!exact) return result;
+      name = exact;
+    } catch (error) {
+      const fallback = fallbackPrefix(name);
+      if (!fallback || fallback === name || error?.status !== 404) throw error;
+      name = fallback;
+    }
+  }
+  return listBucketPages({ bucketId, prefix: name, token, quiet });
+}
+
+async function listBucketPages({ bucketId, prefix = '', token = '', quiet = false }) {
   const items = [];
   let nextUrl = buildTreeUrl(bucketId, prefix);
   let pageCount = 0;
@@ -389,7 +434,11 @@ export async function listBucketFiles({ bucketId, prefix = '', token = '', quiet
     } catch {
       throw new Error('connexion au stockage Hugging Face impossible (réseau ou résolution DNS)');
     }
-    if (!response.ok) throw new Error(await describeHttpError(response));
+    if (!response.ok) {
+      const error = new Error(await describeHttpError(response));
+      error.status = response.status;
+      throw error;
+    }
 
     const data = await response.json().catch(() => null);
     const pageItems = Array.isArray(data) ? data : data?.items;

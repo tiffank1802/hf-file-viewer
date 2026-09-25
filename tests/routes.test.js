@@ -14,6 +14,14 @@ test('les routes de dossiers conservent espaces et accents', () => {
   assert.equal(pathFromHash(hash), 'GM/3A GM/Mécanique');
 });
 
+test('un dossier terminé par une espace survit à l’aller-retour d’URL', () => {
+  const dossier = 'GM/Tutos SolidWorks/SolidProfessor/1-CSWA/1) introduction to solidworks tutorials ';
+  const href = hrefFromLibraryPath(dossier);
+  assert.equal(href, `/bibliotheque/${dossier.split('/').map(encodeURIComponent).join('/')}`);
+  assert.ok(href.endsWith('%20'), href);
+  assert.equal(pathFromPathname(href), dossier);
+});
+
 test('les ancres de page ne sont pas interprétées comme des dossiers', () => {
   assert.equal(pathFromHash('#main-content'), null);
   assert.equal(pathFromHash('#about'), null);

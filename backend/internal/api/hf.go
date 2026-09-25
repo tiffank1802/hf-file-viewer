@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -51,7 +52,63 @@ func (s *Server) do(req *http.Request) (*http.Response, error) {
 	return response, nil
 }
 
+// fetchTree liste un dossier chez Hugging Face, en trois essais au plus.
+//
+// Le préfixe exact est essayé en premier : une espace finale est significative
+// dans certains noms de dossiers du bucket. Seul un 404 déclenche une seconde
+// tentative sans les espaces de bord, pour un chemin collé à la main. Si cette
+// variante élaguée ne reliste que le dossier lui-même, c’est que l’espace
+// finale manquait : Hugging Face en donne alors le nom réel, redemandé aussitôt.
 func (s *Server) fetchTree(ctx context.Context, prefix string, recursive bool) ([]catalog.BucketItem, bool, error) {
+	items, complete, err := s.fetchTreePages(ctx, prefix, recursive)
+	if err != nil {
+		trimmed := strings.TrimSpace(prefix)
+		if trimmed == "" || trimmed == prefix {
+			return nil, false, err
+		}
+		var httpErr *catalog.HTTPError
+		if !errors.As(err, &httpErr) || httpErr.Status != http.StatusNotFound {
+			return nil, false, err
+		}
+		items, complete, err = s.fetchTreePages(ctx, trimmed, recursive)
+		if err != nil {
+			return nil, false, err
+		}
+		prefix = trimmed
+	}
+	if exact := selfEntryName(items, prefix); exact != "" {
+		return s.fetchTreePages(ctx, exact, recursive)
+	}
+	return items, complete, nil
+}
+
+// selfEntryName rend le nom réel d’un dossier dont le préfixe demandé a perdu
+// ses espaces de bord.
+//
+// Interrogé avec « …tutorials » (sans l’espace finale, qui fait pourtant partie
+// du nom), Hugging Face ne renvoie qu’une entrée : le dossier lui-même, sous son
+// nom complet. La détection reste stricte pour ne jamais confondre ce cas avec
+// un dossier contenant un unique sous-dossier : l’entrée doit être un dossier,
+// égal au préfixe demandé suivi d’espaces ou de tabulations uniquement.
+func selfEntryName(items []catalog.BucketItem, prefix string) string {
+	if prefix == "" || len(items) != 1 {
+		return ""
+	}
+	only := items[0]
+	if only.Type != "directory" {
+		return ""
+	}
+	path := only.Path
+	if path == prefix || !strings.HasPrefix(path, prefix) {
+		return ""
+	}
+	if strings.Trim(path[len(prefix):], " \t") != "" {
+		return ""
+	}
+	return path
+}
+
+func (s *Server) fetchTreePages(ctx context.Context, prefix string, recursive bool) ([]catalog.BucketItem, bool, error) {
 	items := make([]catalog.BucketItem, 0)
 	nextURL := catalog.BuildHfTreeURL(s.cfg.HFOrigin, s.cfg.BucketID, prefix, recursive)
 	pages := 0

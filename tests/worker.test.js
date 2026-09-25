@@ -27,6 +27,7 @@ import worker, {
   normalizeFilePath,
   normalizePrefix,
   selectCountsForPrefix,
+  selfEntryName,
 } from '../worker/index.js';
 
 test('buildHfTreeUrl encode les préfixes sans perdre les caractères Unicode', () => {
@@ -432,4 +433,43 @@ test('les redirections vers le login Microsoft sont détectées', () => {
   assert.equal(isAuthWallUrl('https://exemple.fr/'), false);
   assert.equal(isAuthWallUrl(''), false);
   assert.equal(isAuthWallUrl('pas une url'), false);
+});
+
+test('un nom de dossier terminé par une espace est conservé', () => {
+  const dossier = 'GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA/1) introduction to solidworks tutorials ';
+  // Le trim ferait perdre l’espace finale et Hugging Face ne renverrait plus
+  // que le dossier lui-même au lieu de son contenu.
+  assert.equal(normalizePrefix(dossier), dossier);
+  assert.equal(normalizePrefix(`/${dossier}/`), dossier);
+  assert.equal(normalizePrefix('   '), '');
+  assert.equal(normalizePrefix('/GM/3A GM/'), 'GM/3A GM');
+
+  assert.equal(normalizeFilePath(`/${dossier}/Section 1 - Overview/welcome.pdf`),
+    `${dossier}/Section 1 - Overview/welcome.pdf`);
+  assert.equal(normalizeFilePath('GM/notes v2.pdf '), 'GM/notes v2.pdf ');
+  assert.throws(() => normalizeFilePath('   '), /chemin/i);
+});
+
+test('buildHfTreeUrl encode les espaces finales du préfixe', () => {
+  const url = buildHfTreeUrl('ktongue/ENISE-SITE', 'GM/tutorials ', false);
+  assert.ok(url.includes('GM%2Ftutorials%20'), url);
+  assert.equal(decodeURIComponent(url.split('/tree/')[1].split('?')[0]), 'GM/tutorials ');
+});
+
+test('selfEntryName reconnaît un préfixe élagué et rend le nom réel', () => {
+  const dossier = 'GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA/1) introduction to solidworks tutorials ';
+
+  // Cas réel : Hugging Face renvoie le dossier lui-même, sous son nom complet.
+  assert.equal(selfEntryName([{ type: 'directory', path: dossier }], dossier.trim()), dossier);
+
+  // Un dossier qui contient un unique sous-dossier n’est pas confondu avec un
+  // retour sur soi-même.
+  assert.equal(selfEntryName([{ type: 'directory', path: 'A/A ' }], 'A'), '');
+
+  // Le nom exact demandé, une entrée multiple ou un fichier ne déclenchent rien.
+  assert.equal(selfEntryName([{ type: 'directory', path: dossier }], dossier), '');
+  assert.equal(selfEntryName([{ type: 'directory', path: dossier }, { type: 'file', path: 'x' }], dossier.trim()), '');
+  assert.equal(selfEntryName([{ type: 'file', path: dossier }], dossier.trim()), '');
+  assert.equal(selfEntryName([], ''), '');
+  assert.equal(selfEntryName(undefined, 'GM'), '');
 });
