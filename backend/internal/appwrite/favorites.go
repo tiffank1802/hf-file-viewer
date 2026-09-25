@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -372,15 +373,21 @@ func PathKey(path string) string {
 	return hex.EncodeToString(sum[:16])
 }
 
+// favoriteEdgePattern repère un « / » de bord et les espaces qui l'entourent.
+var favoriteEdgePattern = regexp.MustCompile(`^\s*/+|/+\s*$`)
+
 // NormalizeFavoritePath aligne le chemin sur celui stocké dans la table.
+//
+// Les espaces font partie des noms du bucket (un dossier peut se terminer par
+// une espace) : seules celles qui entourent un « / » de bord sont retirées,
+// exactement comme normalizeFavoritePath côté frontend.
 func NormalizeFavoritePath(path string) (string, bool) {
-	path = strings.TrimSpace(path)
 	path = strings.ReplaceAll(path, "\\", "/")
 	for strings.Contains(path, "//") {
 		path = strings.ReplaceAll(path, "//", "/")
 	}
-	path = strings.Trim(path, "/")
-	if path == "" || len(path) > 1024 || strings.Contains(path, "..") {
+	path = favoriteEdgePattern.ReplaceAllString(path, "")
+	if strings.TrimSpace(path) == "" || len(path) > 1024 || strings.Contains(path, "..") {
 		return "", false
 	}
 	for _, r := range path {

@@ -60,4 +60,14 @@ func TestNormalizeFavoritePathRejectsTraversal(t *testing.T) {
 	if !ok || got != "GM/3A GM/td.pdf" {
 		t.Fatalf("chemin = %q ok=%v", got, ok)
 	}
+	// Une espace finale fait partie du nom du dossier dans le bucket.
+	folder := "GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA/1) introduction to solidworks tutorials "
+	for _, input := range []string{folder, folder + "/", "/" + folder} {
+		if got, ok := NormalizeFavoritePath(input); !ok || got != folder {
+			t.Fatalf("NormalizeFavoritePath(%q) = %q ok=%v", input, got, ok)
+		}
+	}
+	if _, ok := NormalizeFavoritePath("   "); ok {
+		t.Fatal("chemin vide accepté")
+	}
 }

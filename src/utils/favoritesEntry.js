@@ -25,13 +25,21 @@ import { getFileKind } from './files.js';
 
 export const MAX_FAVORITE_NOTE = 280;
 
-/** Un seul séparateur, sans bordure ni espace oisif : `GM/3A GM/td1.pdf`. */
+/**
+ * Un seul séparateur, sans « / » de bord : `GM/3A GM/td1.pdf`.
+ *
+ * Les espaces font partie des noms du bucket (« 1) introduction to solidworks
+ * tutorials » se termine par une espace) : elles ne sont retirées que
+ * lorsqu’elles entourent un « / » de bord (` /GM/a.pdf/ ` → `GM/a.pdf`). Sans
+ * cette précaution, un dossier favori perdait son espace finale : l’étoile ne
+ * s’allumait plus sur le dossier et le favori pointait vers un autre chemin.
+ */
 export function normalizeFavoritePath(path) {
-  return String(path ?? '')
-    .trim()
+  const value = String(path ?? '')
     .replace(/\\/g, '/')
     .replace(/\/{2,}/g, '/')
-    .replace(/^\/+|\/+$/g, '');
+    .replace(/^\s*\/+|\/+\s*$/g, '');
+  return value.trim() === '' ? '' : value;
 }
 
 export function normalizeFavorite(entry) {

@@ -38,7 +38,12 @@ function fakeStorage(seed = {}) {
 
 test('normalizeFavoritePath unifie les séparateurs et retire les bords', () => {
   assert.equal(normalizeFavoritePath('/GM//3A GM/td1.pdf'), 'GM/3A GM/td1.pdf');
-  assert.equal(normalizeFavoritePath('  GM/a.pdf  '), 'GM/a.pdf');
+  assert.equal(normalizeFavoritePath(' /GM/a.pdf/  '), 'GM/a.pdf');
+  // Une espace finale fait partie du nom du dossier dans le bucket.
+  const folder = 'GM/Tutos SolidWorks/SolidProfessor/1-SOLIDWORKS Paths/1-CSWA/1) introduction to solidworks tutorials ';
+  assert.equal(normalizeFavoritePath(folder), folder);
+  assert.equal(normalizeFavoritePath(`${folder}/`), folder);
+  assert.equal(normalizeFavoritePath('   '), '');
   assert.equal(normalizeFavoritePath('GM\\3A GM\\td1.pdf/'), 'GM/3A GM/td1.pdf');
   assert.equal(normalizeFavoritePath(null), '');
   assert.equal(normalizeFavoritePath(undefined), '');
