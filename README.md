@@ -8,9 +8,9 @@ Bibliothèque étudiante moderne pour les ressources de **Centrale Lyon ENISE**,
 - identité blanche « liquid glass », verte, rouge et jaune ;
 - icônes React (`react-icons`) et logos locaux optimisés ;
 - navigation par dossier, fil d’Ariane, tri, grille/liste ;
-- aperçu PDF, image, audio, vidéo, texte et **visionneuse Office hybride** : rendu local (`.docx`, `.xlsx`/`.xls`, texte `.pptx`), conversion PDF serveur (LibreOffice) et **Viewer Office Web** (`.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`, `.odt`, `.ods`, `.odp`, ≤ 10 Mo) ;
+- aperçu PDF, image, audio, vidéo, texte et **visionneuse Office hybride** : rendu local (`.docx`, `.xlsx`/`.xls`, texte `.pptx`) et **Viewer Office Web** (`.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`, `.odt`, `.ods`, `.odp`, ≤ 10 Mo) ; la conversion PDF à la demande est désactivée sauf service distinct explicitement configuré ;
 - raccourcis **Microsoft OneNote** (`.url`) affichés avec leur cible ouvrable, blocs-notes `.one` disponibles au téléchargement ;
-- aperçu 3D hybride : conversion **GLB gratuite** (FreeCAD) pour `.step`, `.iges`, `.stl`, `.obj` avec rotation, zoom et déplacement, **Autodesk APS** (Model Derivative) pour les autres formats (`.dwg`, `.rvt`, `.sldprt`, `.ifc`, `.catpart`, … — FreeCAD ne lit pas les formats propriétaires), et plugin iframe **ShareCAD** en roue de secours gratuite sans conversion ;
+- aperçu 3D hybride : **Autodesk APS** (Model Derivative), plugin iframe **ShareCAD** et, uniquement si une URL distincte est configurée, conversion GLB ; `ktongue/Rupture` n'est plus un convertisseur 3D ;
 - téléchargement, partage et favoris enregistrés dans le navigateur ;
 - assistant bibliothèque : il retrouve un document, l’ouvre, le résume, et sait croiser plusieurs annales pour répondre à « comment se structure l’examen d’économie ? ». La rédaction reste côté serveur Go ; sans clé, les cartes de documents sont quand même proposées ;
 - **cartes d’espaces construites depuis le bucket** : l’index (`/api/index`) donne l’arborescence et les effectifs, l’en-tête du bucket (`/api/tree` racine) fait foi pour le premier niveau. Un dossier ajouté dans Hugging Face apparaît donc en quelques minutes — **même s’il est encore vide** — avec un badge « Nouveau » et une entrée « Autres dossiers » dans la barre latérale ;
@@ -41,6 +41,25 @@ Navigateur
 
 Le frontend et le Worker sont sur **le même domaine**. Le navigateur n’appelle donc jamais Hugging Face avec une clé secrète et il n’y a pas de problème CORS à gérer.
 
+### Prétraitement documentaire automatisé
+
+Le Space Docker existant [`ktongue/Rupture`](https://huggingface.co/spaces/ktongue/Rupture) est désormais entièrement réservé à Docling :
+
+```text
+ktongue/ENISE-SITE
+        │ scan au démarrage + passages périodiques
+        ▼
+ktongue/Rupture (Docling, traitement séquentiel et reprenable)
+        │ manifest publié en dernier
+        ▼
+ktongue/ENISE-SITE-DERIVED
+  └── reader/v1/{catalog.json,status.json,documents/...}
+```
+
+Les documents sont convertis **avant** consultation. Une signature de l'objet source et `PIPELINE_VERSION` rendent le traitement idempotent ; un catalogue durable reprend après mise en veille ou interruption. Les visiteurs ne déclenchent aucune conversion. Le Space ne contient plus LibreOffice, FreeCAD, SolidWorks ni les anciennes routes de conversion. Voir [`space-huggingface/README.md`](./space-huggingface/README.md) pour les artefacts et [`scripts/README_DEPLOYMENT.md`](./scripts/README_DEPLOYMENT.md) pour le remplacement atomique du Space.
+
+> Un Space gratuit dort lorsqu'il n'est pas utilisé : sa boucle périodique ne constitue pas un cron permanent. Le scan au démarrage reprend automatiquement le travail ; un endpoint administratif protégé permet aussi de réveiller explicitement un passage.
+
 ### Où se trouve chaque cache ?
 
 | Contenu | Cache navigateur | Cache Cloudflare | Origine |
@@ -50,8 +69,8 @@ Le frontend et le Worker sont sur **le même domaine**. Le navigateur n’appell
 | Index `/api/index` | 2 min | Cache API, servi aussitôt, relu après 10 min | API Hugging Face |
 | Comptage `/api/counts` | 2 min | idem index (JSON partagé) | JSON d’index (aucun appel HF) |
 | Fichier `/api/file` | 1 h | Cache API, 7 j | bucket Hugging Face |
-| PDF Office `/api/office/pdf` | 1 h | Cache API, 7 j | Space LibreOffice |
-| GLB 3D `/api/model3d/glb` | 1 h | Cache API, 7 j | Space FreeCAD |
+| PDF Office `/api/office/pdf` | 1 h | Cache API, 7 j | service optionnel distinct (désactivé par défaut) |
+| GLB 3D `/api/model3d/glb` | 1 h | Cache API, 7 j | service optionnel distinct (désactivé par défaut) |
 | Aperçu lien `/api/link/preview` | 1 h | Cache API, 24 h | page cible |
 
 Les fichiers ne sont ajoutés au Cache API que si une réponse complète possède une taille connue inférieure ou égale à **25 Mio**. Les requêtes `Range` et les fichiers plus grands sont transmis sans mise en cache par le Worker (`BYPASS-RANGE` ou `BYPASS-SIZE`) ; le CDN de Hugging Face peut néanmoins les optimiser.
@@ -236,7 +255,7 @@ La modale d’aperçu propose jusqu’à **3 modes** (sélecteur en haut, préf�
 |---|---|---|---|---|
 | **Aperçu local** | `.docx`/`.docm`, `.xlsx`/`.xls`/`.xlsm` | `docx-preview`, `xlsx` (SheetJS CE) + grille maison | bonne | ≤ 15 Mo, ≤ 50 000 cellules |
 | **Texte local** | `.pptx`/`.pptm` | `jszip` (extraction du texte par diapo) | texte seul | ≤ 15 Mo |
-| **PDF** | `.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`, `.odt`, `.ods`, `.odp` | conversion LibreOffice côté serveur | très bonne | Space configuré (voir ci-dessous) |
+| **PDF** | formats Office | service distinct optionnel | très bonne | désactivé par défaut ; ne pas utiliser `ktongue/Rupture` |
 | **Microsoft** | `doc`, `docx`, `xls`, `xlsx`, `ppt`, `pptx`, `odt`, `ods`, `odp`, … | Viewer Office Web (`view.officeapps.live.com`) | maximale | site public, ≤ 10 Mo |
 
 - Les librairies locales sont chargées en `import()` dynamique : le bundle initial n’augmente pas, aucun CDN externe n’est utilisé (aucune modification CSP requise).
@@ -244,27 +263,18 @@ La modale d’aperçu propose jusqu’à **3 modes** (sélecteur en haut, préf�
 - Le mode Microsoft nécessite toujours une URL publique : en développement `localhost`, utiliser l’**Aperçu local** ou l’URL publique exposée par l’environnement (`npm run dev:worker`).
 - Les bases `.odb` (LibreOffice Base) affichent leur **structure lue localement** (tables, requêtes, formulaires, états + moteur source) : aucun service web ne sait afficher une base de données, les données restent consultables après téléchargement dans LibreOffice Base.
 
-### Conversion PDF via LibreOffice (mode « PDF »)
+### Conversion PDF à la demande (compatibilité optionnelle)
 
-Le Worker ne peut pas convertir lui-même (binaire natif, CPU limité) : il délègue au Space Docker [`space-huggingface/`](./space-huggingface/) (LibreOffice headless), puis met le PDF en cache (Cache API, 7 j) :
+`OFFICE_CONVERT_URL` est vide par défaut. Le Space de ce dépôt n'expose plus LibreOffice : il préconvertit le corpus avec Docling et publie les artefacts dans le bucket dérivé. Les aperçus locaux et Microsoft restent disponibles sans service.
 
-```text
-Navigateur
-   ├── GET /api/office/status   -> conversion configurée ou non
-   └── GET /api/office/pdf      -> Worker : HF (source) → Space → PDF caché
+Les routes historiques `/api/office/status` et `/api/office/pdf` sont conservées pour brancher, si nécessaire, **un service Office distinct** :
+
+```bash
+# wrangler.jsonc ou .dev.vars — ne pas utiliser ktongue/Rupture
+OFFICE_CONVERT_URL="https://<service-office-distinct>.example"
 ```
 
-1. Déployer le Space Docker (`space-huggingface/`, SDK `docker`, port `7860`).
-2. Renseigner son URL publique :
-   ```bash
-   # production (variable publique, affichée dans wrangler.jsonc)
-   # OFFICE_CONVERT_URL="https://<votre-space>.hf.space"
-   # développement local dans .dev.vars :
-   # OFFICE_CONVERT_URL="https://<votre-space>.hf.space"
-   ```
-3. Redéployer (`npm run deploy`). Sans cette variable, le mode « PDF » est masqué et les autres modes restent disponibles.
-
-Premier appel à froid : compter jusqu’à une minute si le Space gratuit dormait ; les appels suivants sont cachés côté Cloudflare.
+Sans cette variable, le mode PDF serveur est masqué. Cette compatibilité ne doit pas servir de chemin normal : les documents connus doivent être préparés par le pipeline batch.
 
 ### Raccourcis `.url` (dont liens OneNote)
 
@@ -282,38 +292,32 @@ Ce viewer remplace l’ancienne intégration ONLYOFFICE : aucun document server 
 
 Les fichiers modèles (`.dwg`, `.dxf`, `.dwf`, `.rvt`, `.rfa`, `.ifc`, `.ipt`, `.iam`, `.sldprt`, `.sldasm`, `.stp`, `.step`, `.igs`, `.iges`, `.obj`, `.stl`, `.sat`, `.x_t`, `.x_b`, `.3ds`, `.fbx`, `.dae`, `.skp`, …) sont ouverts dans la modale d’aperçu avec rotation, zoom et panoramique à la souris. Les modes disponibles (onglets, préférence mémorisée) sont :
 
-- **Aperçu Web** (défaut, gratuit) : les formats `.step`, `.stp`, `.iges`, `.igs`, `.stl` et `.obj` sont convertis en GLB par le Space FreeCAD puis affichés en WebGL (three.js), avec choix de la qualité du maillage (brouillon/standard/fin), rotation automatique et statistiques (triangles, dimensions, volume). FreeCAD ne lit pas les formats propriétaires : `.sldprt`, `.dwg`, assemblages… restent sur Autodesk ou ShareCAD.
+- **Aperçu Web** (compatibilité, désactivé par défaut) : les formats `.step`, `.stp`, `.iges`, `.igs`, `.stl` et `.obj` peuvent être convertis en GLB par un service 3D distinct puis affichés en WebGL (three.js). Le Space `ktongue/Rupture` ne remplit plus ce rôle.
 - **Export SolidWorks → STEP** (nouveau, configuration HOOPS requise) : pour `.sldprt` et `.sldasm`, le bouton « Exporter STEP » appelle le service HOOPS Converter, écrit le résultat sous `derived/step/` dans le bucket et conserve un manifest SHA-256. Le fichier source original n’est jamais écrasé.
 - **Autodesk** (fidélité maximale, configuration requise) : tous les formats via APS / Model Derivative.
 - **ShareCAD** (tiers gratuit, sans conversion) : `.dwg`, `.dxf`, `.dwf`, `.step`, `.iges`, `.stl`, `.sldprt`, `.sat`, `.x_t`, `.x_b` affichés via le plugin iframe `iframe.sharecad.org`, sans compte ni conversion. Le fichier est téléchargé et stocké sur les serveurs ShareCAD (limite 50 Mo) : chargement sur clic explicite uniquement, à réserver aux documents non confidentiels.
 
 Les formats sans conversion GLB ni support ShareCAD (`.rvt`, `.ifc`, `.catpart`, assemblages, …) n’affichent que l’onglet Autodesk ; si Autodesk APS n’est pas configuré, la modale conserve l’écran de téléchargement actuel.
 
-### Aperçu Web via FreeCAD (mode « Web »)
+### Aperçu Web via un service 3D distinct (mode « Web »)
 
-Le Worker exécute le pipeline **FreeCAD → GLB** (style 3Dfindit) :
+Les routes historiques restent disponibles pour un convertisseur GLB séparé :
 
 ```text
 Navigateur
-   ├── GET /api/model3d/status        -> conversion configurée ou non
-   ├── GET /api/model3d/glb?path=...  -> Worker : HF (source) → Space → GLB caché
-   └── three.js -> modèle 3D interactif (+ X-Model3D-Meta : triangles, bbox…)
+   ├── GET /api/model3d/status        -> service distinct configuré ou non
+   ├── GET /api/model3d/glb?path=...  -> Worker : HF → service 3D → GLB caché
+   └── three.js -> modèle interactif
 ```
 
-Le Space par défaut est `ktongue/Rupture` (public, aucun token côté Worker). Pour utiliser un autre Space, définir `MODEL3D_CONVERT_URL` (vide = mode Web désactivé) :
+Aucune URL n'est configurée par défaut. `ktongue/Rupture` est réservé au batch Docling et ne doit pas être renseigné ici :
 
 ```bash
-# wrangler.jsonc (vars) ou .dev.vars en local :
-MODEL3D_CONVERT_URL="https://<votre-space>.hf.space"
+# wrangler.jsonc ou .dev.vars, seulement avec un autre service
+MODEL3D_CONVERT_URL="https://<service-3d-distinct>.example"
 ```
 
-Déployer le Space depuis ce dépôt (sauvegarder l’éventuelle application existante du Space, l’upload écrase son contenu) :
-
-```bash
-HF_TOKEN="hf_..." npm run deploy:space -- --space-id <utilisateur>/<space>
-```
-
-Par défaut, les fichiers de plus de 25 Mo sont refusés (`MAX_MODEL3D_BYTES`) et les GLB sont mis en cache 7 jours (`MODEL3D_CACHE_TTL`). Le premier appel après une mise en veille du Space peut prendre jusqu’à une minute (réveil + conversion).
+Les fichiers de plus de 25 Mo sont refusés (`MAX_MODEL3D_BYTES`) et les GLB sont mis en cache 7 jours (`MODEL3D_CACHE_TTL`). Autodesk APS et ShareCAD restent les solutions 3D intégrées lorsque cette variable est vide.
 
 ### Export SolidWorks vers STEP et enregistrement dans le bucket
 
@@ -344,13 +348,7 @@ MAX_SOLIDWORKS_BUNDLE_BYTES="262144000"
 npx wrangler secret put SOLIDWORKS_CONVERTER_TOKEN
 ```
 
-C62144000"
-
-# secret partagé uniquement avec le service HOOPS
-npx wrangler secret put SOLIDWORKS_CONVERTER_TOKEN
-```
-
-Configuration du service (voir [`space-huggingface/README.md`](space-huggingface/README.md)) :
+Le service HOOPS doit rester distinct de `ktongue/Rupture`. Il reçoit
 `HOOPS_CONVERTER_PATH`, `HOOPS_LICENSE_FILE` ou `HOOPS_LICENSE_KEY`,
 `HF_BUCKET_ID`, `HF_TOKEN` avec permission d’écriture et
 `SOLIDWORKS_CONVERTER_TOKEN`. Le package propriétaire HOOPS n’est pas inclus
@@ -489,12 +487,12 @@ Le Worker Cloudflare et le backend Go exposent les mêmes routes. L’en-tête `
 | `GET /api/aps/token` | jeton public Autodesk pour la visionneuse 3D |
 | `POST /api/aps/view?path=...` | prépare le fichier 3D : OSS + conversion SVF2 |
 | `GET /api/aps/status?path=...` | état et progression de la conversion 3D |
-| `GET /api/model3d/status` | conversion GLB FreeCAD configurée ou non |
-| `GET /api/model3d/glb?path=...&quality=...` | GLB converti via FreeCAD (mis en cache, métadonnées `X-Model3D-Meta`) |
+| `GET /api/model3d/status` | service GLB distinct configuré ou non (désactivé par défaut) |
+| `GET /api/model3d/glb?path=...&quality=...` | GLB via service distinct optionnel (cache, métadonnées `X-Model3D-Meta`) |
 | `GET /api/solidworks/status` | export SolidWorks → STEP configuré ou non |
 | `POST /api/solidworks/step?path=...&force=1` | convertit `.sldprt`/`.sldasm` avec HOOPS et enregistre le STEP dans le bucket |
 | `GET /api/office/status` | conversion PDF Office configurée ou non |
-| `GET /api/office/pdf?path=...` | PDF converti via LibreOffice (mis en cache) |
+| `GET /api/office/pdf?path=...` | PDF via service Office distinct optionnel (désactivé par défaut) |
 | `GET /api/link/preview?url=...` | aperçu enrichi d’un lien `.url` (Open Graph, mis en cache) |
 | `GET /api/chat/status` | assistant prêt, local, ou non configuré. Jamais de clé dans la réponse |
 | `POST /api/chat` | question en JSON, réponse en flux (`text/event-stream`) : documents, réflexion éventuelle, puis texte |

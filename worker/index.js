@@ -52,7 +52,10 @@ const LINK_PREVIEW_TIMEOUT_MS = 10_000;
 const MAX_LINK_PREVIEW_BYTES = 128 * 1024;
 const DEFAULT_MODEL3D_CACHE_TTL = 7 * 24 * 60 * 60;
 const DEFAULT_MAX_MODEL3D_BYTES = 25 * 1024 * 1024;
-const DEFAULT_MODEL3D_CONVERT_URL = 'https://ktongue-rupture.hf.space';
+// Le Space ktongue/Rupture est désormais réservé au prétraitement Docling.
+// La conversion 3D à la demande reste disponible uniquement si un service
+// distinct est explicitement configuré.
+const DEFAULT_MODEL3D_CONVERT_URL = '';
 const DEFAULT_MAX_SOLIDWORKS_BYTES = 100 * 1024 * 1024;
 const DEFAULT_MAX_SOLIDWORKS_DEPENDENCY_FILES = 64;
 const DEFAULT_MAX_SOLIDWORKS_BUNDLE_BYTES = 250 * 1024 * 1024;
@@ -1143,7 +1146,7 @@ async function autodeskHttpError(response, fallback) {
   return new HttpError(response.status >= 500 ? 502 : response.status, `Autodesk APS : ${detail}`);
 }
 
-/** Extensions convertibles en PDF par le Space LibreOffice. */
+/** Extensions acceptées par un éventuel service Office distinct. */
 export function isOfficeConvertibleExtension(extension = '') {
   return OFFICE_CONVERTIBLE_EXTENSIONS.has(String(extension).toLowerCase());
 }
@@ -1170,11 +1173,11 @@ function handleOfficeStatus(env) {
 }
 
 /**
- * Convertit un document Office en PDF via le Space LibreOffice.
+ * Compatibilité PDF via un éventuel service Office distinct.
  *
- * Pipeline : Hugging Face (source) → Space `/api/convert-office` → PDF mis
- * en cache dans le Cache API. Le Worker ne fait que proxifier : LibreOffice
- * ne peut pas tourner dans un Worker (binaire natif, CPU limité).
+ * Ce chemin est désactivé par défaut : le corpus connu doit normalement être
+ * préparé par Docling. S'il est configuré, le Worker met encore la réponse du
+ * service externe en cache.
  */
 async function handleOfficePdf(request, env, ctx) {
   const url = new URL(request.url);
@@ -1903,7 +1906,7 @@ async function solidworksConvertHttpError(response) {
   return new HttpError(response.status >= 500 ? 502 : response.status, `Conversion SolidWorks : ${message}`);
 }
 
-/** Extensions 3D convertibles en GLB par le Space (FreeCAD + trimesh). */
+/** Extensions acceptées par un éventuel service GLB distinct. */
 export function isModelGlbExtension(extension = '') {
   return MODEL3D_GLB_EXTENSIONS.has(String(extension).toLowerCase());
 }
@@ -1914,9 +1917,9 @@ export function isModel3dQuality(value = '') {
 }
 
 /**
- * URL publique du Space de conversion 3D (sans slash final).
- * Par défaut le Space Rupture ; surchargeable via `MODEL3D_CONVERT_URL`.
- * Une valeur explicitement vide désactive la conversion.
+ * URL d'un éventuel service de conversion 3D distinct (sans slash final).
+ * Aucun service n'est activé par défaut : ktongue/Rupture est réservé à
+ * Docling. Une valeur vide désactive la conversion à la demande.
  */
 export function getModel3dConvertUrl(env) {
   if (env && Object.hasOwn(env, 'MODEL3D_CONVERT_URL')) {
@@ -1949,11 +1952,11 @@ function handleModel3dStatus(env) {
 }
 
 /**
- * Convertit un modèle 3D en GLB via le Space FreeCAD (pipeline type 3Dfindit).
+ * Compatibilité GLB via un éventuel service 3D distinct.
  *
- * Pipeline : Hugging Face (source) → Space `/api/convert-3d` → GLB mis en
- * cache dans le Cache API. Les métadonnées viewer (triangles, bbox, volume)
- * transitent dans l’en-tête `X-Model3D-Meta` (base64url JSON).
+ * Aucun service n'est activé par défaut. Lorsqu'une URL est explicitement
+ * configurée, les métadonnées viewer transitent encore dans l'en-tête
+ * `X-Model3D-Meta` (base64url JSON).
  */
 async function handleModel3dGlb(request, env, ctx) {
   const url = new URL(request.url);

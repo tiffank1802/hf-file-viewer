@@ -70,8 +70,8 @@ test('les qualités de tessellation sont validées', () => {
   assert.equal(isModel3dQuality(), false);
 });
 
-test('l’URL de conversion 3D pointe vers Rupture par défaut', () => {
-  assert.equal(getModel3dConvertUrl({}), 'https://ktongue-rupture.hf.space');
+test('la conversion 3D est désactivée par défaut et exige un service distinct', () => {
+  assert.equal(getModel3dConvertUrl({}), '');
   assert.equal(getModel3dConvertUrl({ MODEL3D_CONVERT_URL: 'https://autre.hf.space///' }), 'https://autre.hf.space');
   assert.equal(getModel3dConvertUrl({ MODEL3D_CONVERT_URL: '' }), '');
   assert.equal(getModel3dConvertUrl({ MODEL3D_CONVERT_URL: '  ' }), '');

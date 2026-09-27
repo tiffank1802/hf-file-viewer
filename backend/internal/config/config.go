@@ -17,7 +17,9 @@ import (
 const (
 	defaultBucketID       = "ktongue/ENISE-SITE"
 	defaultHFOrigin       = "https://huggingface.co"
-	defaultModel3DURL     = "https://ktongue-rupture.hf.space"
+	// ktongue/Rupture est désormais le préprocesseur Docling. La conversion
+	// 3D à la demande exige un service distinct explicitement configuré.
+	defaultModel3DURL     = ""
 	defaultAddr           = "0.0.0.0:8788"
 	defaultTreeTTL        = 5 * time.Minute
 	defaultIndexTTL       = 10 * time.Minute

@@ -75,8 +75,8 @@ Mêmes noms que `wrangler.jsonc` / `.dev.vars` :
 | `ADDR` | écoute, défaut `0.0.0.0:8788` (`PORT` est aussi accepté) |
 | `CACHE_DIR` | cache disque |
 | `STATIC_DIR` | dossier `dist/` à servir avec l’API |
-| `OFFICE_CONVERT_URL` | Space LibreOffice, vide = PDF désactivé |
-| `MODEL3D_CONVERT_URL` | Space FreeCAD, défaut Rupture, vide = désactivé |
+| `OFFICE_CONVERT_URL` | service Office distinct, vide = PDF à la demande désactivé |
+| `MODEL3D_CONVERT_URL` | service 3D distinct, vide = désactivé (défaut) |
 | `SOLIDWORKS_CONVERT_URL` | service HOOPS, vide = désactivé |
 | `APS_CLIENT_ID` / `APS_CLIENT_SECRET` | Autodesk, jamais exposés |
 | `CLOUDFLARE_ACCOUNT_ID` | IA intégrée Cloudflare (Workers AI). Les deux ensemble activent le moteur « cloudflare », essayé en premier |
@@ -99,7 +99,7 @@ Mêmes noms que `wrangler.jsonc` / `.dev.vars` :
 | `APPWRITE_PUBLIC_ORIGIN` | origine des liens d’email, par exemple `https://le-site`. Vide = hôte de la requête, seulement s’il n’est pas usurpé |
 | `APPWRITE_ENABLED` | `0` masque le bouton de connexion |
 
-`MODEL3D_CONVERT_URL` absent active Rupture. Une valeur explicitement vide désactive la conversion, comme le Worker.
+`MODEL3D_CONVERT_URL` est vide par défaut. Le Space `ktongue/Rupture` est réservé au prétraitement documentaire Docling et ne doit pas être utilisé par ces routes 3D.
 
 ## Publier l’API sur Firebase (Cloud Run)
 

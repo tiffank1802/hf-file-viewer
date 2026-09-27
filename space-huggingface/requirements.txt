@@ -1,7 +1,6 @@
-gradio>=4.0.0
-fastapi>=0.100.0
-huggingface_hub>=1.0.0
-trimesh>=4.0.0
-numpy>=1.24.0
-uvicorn>=0.24.0
-python-multipart>=0.0.9
+# Versions validated together for the September 2026 document pipeline.
+docling==2.130.0
+huggingface_hub==1.33.0
+fastapi>=0.115,<1
+uvicorn[standard]>=0.35,<1
+Pillow>=10.4,<13
