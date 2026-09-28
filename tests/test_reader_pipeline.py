@@ -99,6 +99,52 @@ class ReaderPipelineHelpersTest(unittest.TestCase):
         selected_retry = pipeline._select_sources([failed], catalog, retry_failed=True)
         self.assertEqual([item.path for item in selected_retry], ["failed.pdf"])
 
+    def test_missing_optional_dependency_aborts_without_consuming_document_attempt(self):
+        settings = make_settings(supported_extensions=frozenset({".odt"}))
+        state = reader_pipeline.RuntimeState(settings)
+        pipeline = reader_pipeline.ReaderPipeline(settings, state)
+        source = reader_pipeline.SourceObject("support.odt", 10, "date", "odf")
+        catalog = pipeline._empty_catalog()
+        missing = ImportError("The 'odfdo' package is required to process OpenDocument files")
+        with (
+            patch.object(pipeline, "_ensure_destination_bucket"),
+            patch.object(pipeline, "_load_catalog", return_value=catalog),
+            patch.object(pipeline, "_list_sources", return_value=[source]),
+            patch.object(pipeline, "_mark_missing_sources"),
+            patch.object(pipeline, "_process_source", side_effect=missing),
+            patch.object(pipeline, "_publish_catalog") as publish_catalog,
+            patch.object(pipeline, "_publish_status"),
+        ):
+            self.assertTrue(pipeline.sync())
+        self.assertNotIn(source.path, catalog["documents"])
+        self.assertEqual(state.snapshot()["failed"], 0)
+        self.assertEqual(state.snapshot()["phase"], "error")
+        self.assertIn("Dépendance Docling absente", state.snapshot()["lastError"])
+        publish_catalog.assert_not_called()
+
+    def test_resolved_optional_dependency_reopens_capped_failures(self):
+        settings = make_settings()
+        pipeline = reader_pipeline.ReaderPipeline(
+            settings, reader_pipeline.RuntimeState(settings)
+        )
+        source = reader_pipeline.SourceObject("support.odt", 10, "date", "odf")
+        catalog = pipeline._empty_catalog()
+        catalog["documents"][source.path] = {
+            "status": "failed",
+            "attempts": 3,
+            "lastError": "ImportError: The 'odfdo' package is required to process OpenDocument files.",
+            "artifactId": reader_pipeline.artifact_id(source.path, source.signature, "v1"),
+            "pipelineVersion": "v1",
+        }
+        self.assertTrue(reader_pipeline.optional_dependency_failure(catalog["documents"][source.path]["lastError"]))
+        with patch.object(reader_pipeline.importlib.util, "find_spec", return_value=object()):
+            selected = pipeline._select_sources([source], catalog, retry_failed=False)
+        self.assertEqual([item.path for item in selected], [source.path])
+
+    def test_space_declares_the_opendocument_runtime_dependency(self):
+        requirements = (MODULE_PATH.parent / "requirements.txt").read_text(encoding="utf-8")
+        self.assertRegex(requirements, r"(?m)^odfdo>=3\.22,<4$")
+
     def test_source_listing_prioritizes_lightweight_files(self):
         settings = make_settings()
         pipeline = reader_pipeline.ReaderPipeline(

@@ -53,6 +53,7 @@ coverage/
 !tests/e2e/**/*.spec.js
 playwright-report/
 test-results/
+reader-rollout-report*.json
 
 # Cache directories
 .cache/

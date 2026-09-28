@@ -517,6 +517,17 @@ npm run test:e2e:install   # une fois sur la machine/CI
 npm run test:e2e
 ```
 
+Avant de passer de `off` à `pilot`, l’audit opérationnel choisit des artefacts `ready` légers et variés dans le catalogue, puis vérifie santé API, métadonnées, fenêtres de blocs, navigation directe et requêtes Range PDF. Il est strictement en lecture seule : il n’appelle ni le Space, ni `/api/sync`, ni une route de conversion.
+
+```bash
+npm run reader:audit -- \
+  --origin https://votre-api-go.example \
+  --limit 8 \
+  --json reader-rollout-report.json
+```
+
+Le rapport affiche uniquement chemins et métadonnées techniques, puis produit l’allowlist `VITE_READER_PILOT_PATHS` avec les documents ayant passé tous les contrôles. La sélection automatique écarte les rares chemins impossibles à représenter sans ambiguïté dans la liste séparée par des virgules. Un code de sortie non nul interdit l’activation pilote.
+
 1. **Classement local** de l’index en mémoire (aucun appel réseau). Les mots-outils (« se », « sa ») sont ignorés et un mot-clé doit correspondre à un mot entier : « ex » ne remonte plus « examen ».
 2. **Profil de la question** : une recherche ouvre deux documents, une synthèse (« structure », « annales », « déroulement », « compare »…) en ouvre jusqu’à huit du meilleur dossier et en lit cinq.
 3. **Lecture structurée ou fallback**, puis rédaction par le moteur choisi (Cloudflare Workers AI, OpenRouter, NVIDIA ou OpenCode). Pour un document ciblé et `ready`, Go relie les chunks Docling aux titres, blocs et pages, mesure la couverture et injecte des preuves citées ; sinon il conserve l’extraction locale historique. Pour les PDF en fallback, seul le texte des pages (entre `BT` et `ET`) est lu : un encodage par glyphes peut donc rester illisible. Le modèle choisi dans le menu ne s’applique qu’à son moteur ; si tous échouent, la note indique la raison de chacun (clé refusée, quota, délai…).

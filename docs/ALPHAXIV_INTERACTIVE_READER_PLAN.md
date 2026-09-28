@@ -645,15 +645,45 @@ Tester Chromium, Firefox et WebKit, plus un viewport mobile.
 
 ## 15. Déploiement progressif
 
-1. feature flag réservé aux administrateurs ;
-2. cinq à dix PDF `ready` représentatifs : texte, formule, tableau, figure, scan OCR ;
-3. mesure des temps de première page et taux d’ancrage ;
-4. activation pour tous les PDF `ready` avec bouton « Nouveau lecteur » ;
-5. maintien de l’aperçu historique pendant au moins une version ;
-6. lecteur interactif par défaut quand les critères sont atteints ;
-7. extension aux formats non PDF via la vue structurée.
+### 15.1 Préflight automatisé
 
-Aucun changement ne doit interrompre le lecteur actuel pendant cette montée en charge.
+Le backend contenant les routes lecteur doit être déployé **avant** d'activer le frontend. Depuis une machine ayant accès à l'origine déployée :
+
+```bash
+npm run reader:audit -- \
+  --origin https://api.example \
+  --limit 8 \
+  --json reader-rollout-report.json
+```
+
+L'audit est en lecture seule et ne déclenche aucune conversion. Il sélectionne des artefacts `ready` légers mais variés (PDF avec assets, PDF textuel/long et formats structurés), puis contrôle `/api/health`, `/api/reader/document`, la première fenêtre et la suivante lorsqu'elle existe dans `/api/reader/blocks`, l'accès direct à un `blockId` et `Range: bytes=0-1023` pour chaque PDF. Un rapport réussi fournit la valeur exacte de `VITE_READER_PILOT_PATHS`; un seul échec produit un code de sortie non nul et interdit la promotion.
+
+Prérequis à chaque changement de phase : build frontend/backend identifié, catalogue dérivé disponible, audit à 100 %, fallback historique encore accessible et aucune conversion active interrompue par l'opération.
+
+### 15.2 Phases et seuils de promotion
+
+Les taux sont calculés depuis les lignes `reader_metric` et les journaux de requêtes API sur la fenêtre indiquée. Une promotion requiert aussi un passage manuel sans erreur du flux ouvrir → sélectionner → IA citée → revenir au bloc → note, sur les navigateurs demandés.
+
+| Passage | Exposition minimale | Critères cumulatifs |
+| --- | --- | --- |
+| `off` → `pilot` | 5 à 10 chemins issus de l'audit | rapport à 100 % ; Playwright Chromium/Firefox/WebKit/mobile réussi ; parcours manuel desktop + mobile ; routes lecteur et métriques confirmées dans le déploiement |
+| `pilot` → `pdf` | au moins 48 h et 30 ouvertures `pilot` | métadonnées réussies ≥ 99 % ; première page réussie ≥ 98 % ; p95 première page ≤ 2,5 s cache chaud ; erreurs PDF.js < 1 % des ouvertures ; 0 incident bloquant ; sélection, citation et sauvegarde d'annotation vérifiées au moins une fois sur chaque document pilote |
+| `pdf` → `all` | au moins 7 jours et 200 ouvertures PDF | seuils `pilot` maintenus ; fallback `conversion-pending`/`artifact-failed` lisible à 100 % de l'échantillon ; audit de 10 documents à 100 % ; vue structurée testée sur chaque famille réellement présente (`document`, `presentation`, `spreadsheet`, `text`) ; taux d'erreur de chargement structuré < 1 % |
+
+Si le volume minimal n'est pas atteint, la phase est prolongée : le temps écoulé seul ne vaut jamais validation. L'aperçu historique est conservé pendant au moins une version après le passage à `all`.
+
+### 15.3 Rollback
+
+Revenir immédiatement à la phase précédente (`all` → `pdf` → `pilot` → `off`) si l'un des signaux suivants apparaît :
+
+- audit de préflight non nul ou route lecteur absente ;
+- erreurs HTTP 5xx lecteur ≥ 2 % sur 15 minutes avec au moins 20 requêtes ;
+- échec de première page ≥ 5 % sur 15 minutes avec au moins 20 ouvertures ;
+- p95 première page > 5 s pendant 30 minutes ;
+- perte d'annotation confirmée, fuite de contenu utilisateur dans les métriques, faille d'accès ou régression empêchant le fallback historique ;
+- incident bloquant reproductible sur un navigateur de la matrice.
+
+Le rollback change uniquement `VITE_READER_ROLLOUT` et, si besoin, l'allowlist : il ne supprime aucun artefact, ne relance aucune conversion et ne migre aucune annotation. Après retour arrière, conserver les logs et le rapport, corriger, rejouer les tests et l'audit, puis recommencer la durée minimale de la phase. Aucun changement ne doit interrompre le lecteur actuel pendant cette montée en charge.
 
 ## 16. Observabilité
 

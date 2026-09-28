@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import importlib.util
 import json
 import logging
 import os
@@ -62,6 +63,24 @@ def env_int(name: str, default: int, minimum: int = 0) -> int:
 def safe_error(error: BaseException, limit: int = 1200) -> str:
     message = f"{type(error).__name__}: {error}".replace("\x00", "")
     return message[:limit]
+
+
+def optional_dependency_failure(error: BaseException | str) -> bool:
+    """True for image-wide parser dependencies, never for malformed content."""
+    message = str(error).casefold()
+    return "odfdo" in message and (
+        "package is required" in message
+        or "no module named" in message
+        or "install it with" in message
+    )
+
+
+def resolved_environment_failure(entry: dict[str, Any]) -> bool:
+    """Retry capped failures automatically once their missing dependency exists."""
+    message = str(entry.get("lastError") or "").casefold()
+    if "odfdo" in message:
+        return importlib.util.find_spec("odfdo") is not None
+    return False
 
 
 def jsonable(value: Any) -> Any:
@@ -348,6 +367,12 @@ class ReaderPipeline:
                     # thousands of healthy sources as failed and hammer the Hub.
                     raise
                 except Exception as error:  # one bad document must not stop the corpus
+                    if optional_dependency_failure(error):
+                        # Une dépendance d’image absente concerne tout un format. Ne
+                        # jamais consommer les tentatives de centaines de documents.
+                        raise InfrastructureError(
+                            f"Dépendance Docling absente: {safe_error(error)}"
+                        ) from error
                     LOGGER.error("Conversion failed for %s: %s", source.path, error)
                     LOGGER.debug("Conversion traceback:\n%s", traceback.format_exc())
                     self._record_failure(catalog, source, error)
@@ -529,6 +554,7 @@ class ReaderPipeline:
                 unchanged
                 and entry.get("status") == "failed"
                 and not retry_failed
+                and not resolved_environment_failure(entry)
                 and int(entry.get("attempts", 0)) >= self.settings.max_attempts
             ):
                 self.state.increment("skipped")

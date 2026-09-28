@@ -23,6 +23,7 @@
     "appwrite:setup": "node scripts/appwrite-setup.mjs",
     "appwrite:status": "node scripts/appwrite-setup.mjs --status",
     "appwrite:ping": "node scripts/appwrite-setup.mjs --ping",
+    "reader:audit": "node scripts/reader-rollout-audit.mjs",
     "count:files": "node scripts/count-bucket-files.mjs",
     "check": "npm run lint && npm run test && npm run test:space && npm run build",
     "cf:typegen": "wrangler types",

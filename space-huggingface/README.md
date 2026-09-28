@@ -65,6 +65,8 @@ Le script `scripts/deploy-space.js` peut copier son `HF_TOKEN` de déploiement d
 
 Les formats Office historiques (`.doc`, `.xls`, `.ppt`, `.rtf`) ne sont pas dans l'allowlist : leur prise en charge Docling nécessiterait LibreOffice, volontairement absent. Ils sont à migrer une fois vers OOXML ou PDF avant ingestion.
 
+Les formats OpenDocument modernes (`.odt`, `.ods`, `.odp`) restent pris en charge sans LibreOffice grâce à `odfdo`, déclaré explicitement dans l'image. Une dépendance de format absente est traitée comme une erreur d'infrastructure : le passage s'arrête au lieu de consommer les trois tentatives de tous les documents concernés. Après correction de l'image, les échecs plafonnés portant cette signature sont automatiquement rouverts.
+
 ## Artefacts
 
 ```text
@@ -109,7 +111,7 @@ curl -X POST \
 - une seule synchronisation peut tourner dans le processus ;
 - le traitement est séquentiel et trié par taille croissante afin que les fichiers légers soient publiés en premier sur `cpu-basic` ;
 - la première vague ignore au-delà de 15 Mio et les inscrit `oversized`; le seuil pourra être relevé ensuite par paliers ;
-- une erreur de document est enregistrée puis le corpus continue ;
+- une erreur propre à un document est enregistrée puis le corpus continue ; une dépendance globale absente arrête au contraire le passage sans empoisonner le catalogue ;
 - les courses de cohérence « File not found in Xet storage » sont retentées avec backoff avant d'arrêter le passage ;
 - un arrêt brutal peut refaire au plus les éléments depuis le dernier checkpoint, sans publier d'artefact incomplet comme prêt ;
 - les artefacts plus anciens ne sont pas supprimés automatiquement : ils peuvent être purgés séparément après vérification du catalogue.
