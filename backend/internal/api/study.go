@@ -86,8 +86,8 @@ func (study *documentStudy) publicScope() map[string]any {
 	}
 	if study.Anchor != nil {
 		out["anchor"] = map[string]any{
-			"blockId": study.Anchor.BlockID,
-			"page":    study.Anchor.Page,
+			"blockId":  study.Anchor.BlockID,
+			"page":     study.Anchor.Page,
 			"verified": study.AnchorVerified,
 		}
 	}
