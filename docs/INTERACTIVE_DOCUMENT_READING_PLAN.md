@@ -410,6 +410,8 @@ La même règle vaut pour Office : `OFFICE_CONVERT_URL` reste vide sauf service 
 
 ## 12. Intégration future du lecteur
 
+La planification détaillée de l’interface plein écran inspirée d’alphaXiv — PDF.js, sélection, ancres robustes, IA contextuelle, citations, annotations et déploiement progressif — se trouve dans [`ALPHAXIV_INTERACTIVE_READER_PLAN.md`](./ALPHAXIV_INTERACTIVE_READER_PLAN.md).
+
 Le déploiement Docling prépare le contrat de lecture. L'intégration site se fait ensuite sans code de conversion.
 
 ### 12.1 Résolution
@@ -616,10 +618,11 @@ Tests Python :
 
 - [x] `ktongue/Rupture` n'est plus la valeur 3D par défaut.
 - [x] Aucun déclenchement de préconversion ajouté au navigateur.
-- [ ] Ajouter les routes de lecture du bucket dérivé.
-- [ ] Ajouter le lecteur React interactif.
-- [ ] Ajouter annotations Appwrite.
-- [ ] Brancher l'IA sur les chunks et les ancres.
+- [ ] Ajouter les routes de lecture paginée du bucket dérivé.
+- [ ] Ajouter le lecteur React interactif PDF.js/Docling.
+- [ ] Ajouter les annotations Appwrite.
+- [x] Brancher le mode d’étude IA sur les chunks et les citations Docling.
+- [ ] Brancher la sélection du lecteur sur les ancres IA.
 
 ### Exploitation distante
 
