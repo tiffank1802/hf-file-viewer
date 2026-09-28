@@ -29,7 +29,7 @@ function DownloadPrompt({ file }) {
   );
 }
 
-export default function PreviewModal({ file, onClose, favorite, onToggleFavorite, onStudy }) {
+export default function PreviewModal({ file, onClose, favorite, onToggleFavorite, onStudy, onRead }) {
   const [textContent, setTextContent] = useState('');
   const [textLoading, setTextLoading] = useState(false);
   const [textError, setTextError] = useState('');
@@ -159,15 +159,15 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
             </div>
           </div>
           <div className="preview-actions">
-            {canStudy && onStudy && (
+            {canStudy && (onStudy || (file.kind === 'pdf' && onRead)) && (
               <button
                 type="button"
                 className="preview-study"
-                onClick={() => onStudy(file)}
-                aria-label="Étudier ce document avec l’IA"
-                title="Étudier avec l’IA"
+                onClick={() => (file.kind === 'pdf' && onRead ? onRead(file) : onStudy?.(file))}
+                aria-label={file.kind === 'pdf' ? 'Ouvrir le lecteur interactif avec IA' : 'Étudier ce document avec l’IA'}
+                title={file.kind === 'pdf' ? 'Lecteur interactif' : 'Étudier avec l’IA'}
               >
-                <FiBookOpen aria-hidden="true" /><span>Étudier</span>
+                <FiBookOpen aria-hidden="true" /><span>{file.kind === 'pdf' ? 'Ouvrir dans le lecteur' : 'Étudier'}</span>
               </button>
             )}
             <button

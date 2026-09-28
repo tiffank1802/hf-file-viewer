@@ -46,9 +46,12 @@ func Retrieve(document *Document, query Query) Retrieval {
 	kind := "targeted"
 	if summary {
 		selected = selectForSummary(document.Chunks, maxChunks)
+		sort.Ints(selected)
 		kind = "representative-summary"
+	} else if query.AnchorBlockID != "" || strings.TrimSpace(query.AnchorQuote) != "" {
+		selected = prioritizeAnchor(document.Chunks, query, selected, maxChunks)
+		kind = "anchored"
 	}
-	sort.Ints(selected)
 
 	byID := make(map[string]*Block, len(document.Blocks))
 	for index := range document.Blocks {
@@ -121,6 +124,43 @@ func Retrieve(document *Document, query Query) Retrieval {
 		coverage.Kind = "whole-document"
 	}
 	return Retrieval{Evidence: evidence, Coverage: coverage}
+}
+
+func prioritizeAnchor(chunks []Chunk, query Query, selected []int, limit int) []int {
+	if limit <= 0 {
+		return nil
+	}
+	anchors := make([]int, 0, 2)
+	quote := comparable(query.AnchorQuote)
+	for index, chunk := range chunks {
+		matchesBlock := query.AnchorBlockID != "" && contains(chunk.BlockIDs, query.AnchorBlockID)
+		matchesQuote := quote != "" && strings.Contains(comparable(chunk.Text), quote)
+		matchesPage := query.AnchorPage > 0 && containsInt(chunk.Pages, query.AnchorPage)
+		if matchesBlock || matchesQuote || (query.AnchorBlockID == "" && quote == "" && matchesPage) {
+			anchors = append(anchors, index)
+		}
+	}
+	if len(anchors) == 0 {
+		return selected
+	}
+	out := make([]int, 0, limit)
+	appendIndex := func(index int) {
+		if index < 0 || index >= len(chunks) || len(out) >= limit || containsInt(out, index) {
+			return
+		}
+		out = append(out, index)
+	}
+	for _, index := range anchors {
+		appendIndex(index)
+	}
+	for _, index := range anchors {
+		appendIndex(index - 1)
+		appendIndex(index + 1)
+	}
+	for _, index := range selected {
+		appendIndex(index)
+	}
+	return out
 }
 
 func selectForSummary(chunks []Chunk, limit int) []int {

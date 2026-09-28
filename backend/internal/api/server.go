@@ -137,6 +137,10 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		err = s.allow(w, r, http.MethodGet, s.handleChatStatus)
 	case r.URL.Path == "/api/chat":
 		err = s.allow(w, r, http.MethodPost, s.handleChat)
+	case r.URL.Path == "/api/reader/document":
+		err = s.allow(w, r, http.MethodGet, s.handleReaderDocument)
+	case r.URL.Path == "/api/reader/page":
+		err = s.allow(w, r, http.MethodGet, s.handleReaderPage)
 	case r.URL.Path == "/api/chat/conversations" || strings.HasPrefix(r.URL.Path, "/api/chat/conversations/"):
 		err = s.handleChatHistory(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/auth/"):

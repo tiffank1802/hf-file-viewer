@@ -383,6 +383,36 @@ test('le chat sans origine Go répond 501 et n’appelle pas NVIDIA', async () =
   assert.equal(missing.status, 501);
 });
 
+test('les routes du lecteur sont relayées vers Go et restent en lecture seule', async () => {
+  let requested = '';
+  const server = http.createServer((req, res) => {
+    requested = req.url || '';
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{"schemaVersion":"reader-ui/v1","status":"structured-ready"}');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const response = await worker.fetch(
+      new Request('https://enise.test/api/reader/document?path=GM%2Fcours.pdf'),
+      { GO_API_ORIGIN: `http://127.0.0.1:${port}` },
+      {},
+    );
+    assert.equal(response.status, 200);
+    assert.equal(requested, '/api/reader/document?path=GM%2Fcours.pdf');
+    assert.equal((await response.json()).status, 'structured-ready');
+
+    const rejected = await worker.fetch(
+      new Request('https://enise.test/api/reader/document', { method: 'POST' }),
+      { GO_API_ORIGIN: `http://127.0.0.1:${port}` },
+      {},
+    );
+    assert.equal(rejected.status, 405);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('le compte sans origine Go répond 501', async () => {
   const response = await worker.fetch(new Request('https://enise.test/api/auth/session'), {}, {});
   assert.equal(response.status, 501);

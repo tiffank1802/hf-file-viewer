@@ -167,10 +167,13 @@ type Coverage struct {
 }
 
 type Query struct {
-	Text      string
-	Intent    string
-	MaxChunks int
-	MaxRunes  int
+	Text          string
+	Intent        string
+	AnchorBlockID string
+	AnchorQuote   string
+	AnchorPage    int
+	MaxChunks     int
+	MaxRunes      int
 }
 
 type Retrieval struct {

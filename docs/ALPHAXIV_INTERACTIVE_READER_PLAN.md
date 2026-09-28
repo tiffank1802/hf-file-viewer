@@ -2,7 +2,7 @@
 
 **Version : 28 septembre 2026**
 
-**Statut : planification proposée — à implémenter après validation**
+**Statut : première tranche R0–R3 implémentée — validation d’intégration et déploiement en cours (28 septembre 2026)**
 
 **Portée prioritaire : documents PDF déjà préconvertis par Docling**
 

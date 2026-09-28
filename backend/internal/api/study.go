@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"path"
 	"regexp"
@@ -35,10 +36,21 @@ type chatScope struct {
 }
 
 type chatAnchor struct {
-	BlockID string `json:"blockId,omitempty"`
-	Quote   string `json:"quote,omitempty"`
-	Start   int    `json:"start,omitempty"`
-	End     int    `json:"end,omitempty"`
+	BlockID string           `json:"blockId,omitempty"`
+	Quote   string           `json:"quote,omitempty"`
+	Prefix  string           `json:"prefix,omitempty"`
+	Suffix  string           `json:"suffix,omitempty"`
+	Start   int              `json:"start,omitempty"`
+	End     int              `json:"end,omitempty"`
+	Page    int              `json:"page,omitempty"`
+	Rects   []chatAnchorRect `json:"rects,omitempty"`
+}
+
+type chatAnchorRect struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	W float64 `json:"w"`
+	H float64 `json:"h"`
 }
 
 type documentStudy struct {
@@ -50,6 +62,9 @@ type documentStudy struct {
 	Title           string
 	Outline         []string
 	Retrieval       reader.Retrieval
+	Document        *reader.Document
+	Anchor          *chatAnchor
+	AnchorVerified  bool
 }
 
 func (study *documentStudy) ready() bool {
@@ -60,7 +75,7 @@ func (study *documentStudy) publicScope() map[string]any {
 	if study == nil {
 		return nil
 	}
-	return map[string]any{
+	out := map[string]any{
 		"type":            "document",
 		"sourcePath":      study.SourcePath,
 		"artifactId":      study.ArtifactID,
@@ -69,6 +84,14 @@ func (study *documentStudy) publicScope() map[string]any {
 		"status":          study.Status,
 		"title":           study.Title,
 	}
+	if study.Anchor != nil {
+		out["anchor"] = map[string]any{
+			"blockId": study.Anchor.BlockID,
+			"page":    study.Anchor.Page,
+			"verified": study.AnchorVerified,
+		}
+	}
+	return out
 }
 
 func (study *documentStudy) publicCitations() []reader.Evidence {
@@ -85,11 +108,15 @@ func (study *documentStudy) publicCitations() []reader.Evidence {
 }
 
 func (s *Server) prepareDocumentStudy(ctx context.Context, scope chatScope, message, intent string) (*documentStudy, error) {
+	if err := normalizeChatAnchor(scope.Anchor); err != nil {
+		return nil, err
+	}
 	study := &documentStudy{
 		SourcePath:      scope.SourcePath,
 		KnowledgeSource: "source-fallback",
 		Status:          "conversion-pending",
 		Title:           path.Base(scope.SourcePath),
+		Anchor:          scope.Anchor,
 	}
 	catalogPayload, err := s.readDerived(ctx, readerCatalogPath, readerCatalogMax, false)
 	if err != nil {
@@ -172,20 +199,128 @@ func (s *Server) prepareDocumentStudy(ctx context.Context, scope chatScope, mess
 		return study, nil
 	}
 	queryText := message
-	if scope.Anchor != nil && strings.TrimSpace(scope.Anchor.Quote) != "" {
+	if scope.Anchor != nil {
+		blockID, err := resolveDocumentAnchor(document, scope.Anchor)
+		if err != nil {
+			return nil, err
+		}
+		scope.Anchor.BlockID = blockID
+		study.Anchor = scope.Anchor
+		study.AnchorVerified = true
 		queryText += "\nPassage sélectionné : " + readerExcerpt(scope.Anchor.Quote, 1200)
 	}
 	study.Title = document.Title
 	study.Outline = append([]string(nil), document.Outline...)
+	study.Document = document
 	study.Retrieval = reader.Retrieve(document, reader.Query{
-		Text:      queryText,
-		Intent:    intent,
-		MaxChunks: readerChunkMax,
-		MaxRunes:  readerContextMax,
+		Text:          queryText,
+		Intent:        intent,
+		AnchorBlockID: anchorBlockID(scope.Anchor),
+		AnchorQuote:   anchorQuote(scope.Anchor),
+		AnchorPage:    anchorPage(scope.Anchor),
+		MaxChunks:     readerChunkMax,
+		MaxRunes:      readerContextMax,
 	})
 	study.KnowledgeSource = "docling"
 	study.Status = "structured-ready"
 	return study, nil
+}
+
+func normalizeChatAnchor(anchor *chatAnchor) error {
+	if anchor == nil {
+		return nil
+	}
+	anchor.BlockID = strings.TrimSpace(anchor.BlockID)
+	anchor.Quote = strings.TrimSpace(anchor.Quote)
+	anchor.Prefix = readerExcerpt(anchor.Prefix, 240)
+	anchor.Suffix = readerExcerpt(anchor.Suffix, 240)
+	quoteRunes := len([]rune(anchor.Quote))
+	if quoteRunes < 2 || quoteRunes > 2000 {
+		return catalog.Error(http.StatusBadRequest, "La sélection doit contenir entre 2 et 2 000 caractères.")
+	}
+	if len([]rune(anchor.BlockID)) > 160 || anchor.Page < 0 || anchor.Page > 100000 || anchor.Start < 0 || anchor.Start > 50_000_000 || anchor.End < 0 || anchor.End > 50_000_000 || (anchor.End > 0 && anchor.End < anchor.Start) {
+		return catalog.Error(http.StatusBadRequest, "L’ancre de sélection est invalide.")
+	}
+	if len(anchor.Rects) > 32 {
+		return catalog.Error(http.StatusBadRequest, "La sélection contient trop de zones.")
+	}
+	for _, rect := range anchor.Rects {
+		values := []float64{rect.X, rect.Y, rect.W, rect.H}
+		for _, value := range values {
+			if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 1 {
+				return catalog.Error(http.StatusBadRequest, "Les coordonnées de sélection sont invalides.")
+			}
+		}
+		if rect.W == 0 || rect.H == 0 || rect.X+rect.W > 1.01 || rect.Y+rect.H > 1.01 {
+			return catalog.Error(http.StatusBadRequest, "Les coordonnées de sélection sont hors page.")
+		}
+	}
+	return nil
+}
+
+func resolveDocumentAnchor(document *reader.Document, anchor *chatAnchor) (string, error) {
+	if document == nil || anchor == nil {
+		return "", catalog.Error(http.StatusBadRequest, "La sélection documentaire est invalide.")
+	}
+	quote := canonicalSelection(anchor.Quote)
+	if quote == "" {
+		return "", catalog.Error(http.StatusBadRequest, "La sélection documentaire est vide.")
+	}
+	matches := func(block reader.Block) bool {
+		if anchor.Page > 0 && block.Page != anchor.Page {
+			return false
+		}
+		content := strings.Join([]string{block.Text, block.Markdown, block.Caption}, "\n")
+		return strings.Contains(canonicalSelection(content), quote)
+	}
+	if anchor.BlockID != "" {
+		for _, block := range document.Blocks {
+			if block.ID == anchor.BlockID && matches(block) {
+				if anchor.Page == 0 {
+					anchor.Page = block.Page
+				}
+				return block.ID, nil
+			}
+		}
+	}
+	for _, block := range document.Blocks {
+		if block.ID != "" && matches(block) {
+			if anchor.Page == 0 {
+				anchor.Page = block.Page
+			}
+			return block.ID, nil
+		}
+	}
+	return "", catalog.Error(http.StatusBadRequest, "Le passage sélectionné est introuvable dans cette version structurée du document.")
+}
+
+var selectionHyphenSpacePattern = regexp.MustCompile(`-[[:space:]]*`)
+
+func canonicalSelection(value string) string {
+	value = strings.ReplaceAll(value, "\u00ad", "")
+	value = selectionHyphenSpacePattern.ReplaceAllString(value, "")
+	return strings.ToLower(strings.Join(strings.Fields(value), " "))
+}
+
+func anchorBlockID(anchor *chatAnchor) string {
+	if anchor == nil {
+		return ""
+	}
+	return anchor.BlockID
+}
+
+func anchorQuote(anchor *chatAnchor) string {
+	if anchor == nil {
+		return ""
+	}
+	return anchor.Quote
+}
+
+func anchorPage(anchor *chatAnchor) int {
+	if anchor == nil {
+		return 0
+	}
+	return anchor.Page
 }
 
 func artifactFile(prefix, filename string) (string, error) {

@@ -171,6 +171,11 @@ export default {
         return await handleSolidworksStep(request, env);
       }
 
+      if (url.pathname.startsWith('/api/reader/')) {
+        assertMethod(request, ['GET']);
+        return await proxyGoChat(request, env);
+      }
+
       if (url.pathname === '/api/chat/status' || url.pathname === '/api/chat') {
         assertMethod(request, url.pathname === '/api/chat' ? ['POST'] : ['GET']);
         return await proxyGoChat(request, env);

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -89,6 +90,41 @@ func TestDocumentScopedChatUsesDoclingAndEmitsCitations(t *testing.T) {
 	}
 	if !strings.Contains(prompt.String(), "<PREUVES>") || !strings.Contains(prompt.String(), "page=4") || !strings.Contains(prompt.String(), "[S1]") {
 		t.Fatalf("prompt non structuré: %s", prompt.String())
+	}
+
+	metadataRequest := httptest.NewRequest(http.MethodGet, "/api/reader/document?path=GM%2F3A%2Fcours.pdf", nil)
+	metadataResponse := httptest.NewRecorder()
+	server.ServeHTTP(metadataResponse, metadataRequest)
+	if metadataResponse.Code != http.StatusOK {
+		t.Fatalf("reader metadata: %d %s", metadataResponse.Code, metadataResponse.Body.String())
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(metadataResponse.Body.Bytes(), &metadata); err != nil {
+		t.Fatal(err)
+	}
+	outline, _ := metadata["outline"].([]any)
+	if metadata["artifactId"] != "artifact-1" || metadata["status"] != "structured-ready" || len(outline) != 1 {
+		t.Fatalf("reader metadata = %#v", metadata)
+	}
+
+	pageRequest := httptest.NewRequest(http.MethodGet, "/api/reader/page?path=GM%2F3A%2Fcours.pdf&artifactId=artifact-1&page=4", nil)
+	pageResponse := httptest.NewRecorder()
+	server.ServeHTTP(pageResponse, pageRequest)
+	if pageResponse.Code != http.StatusOK || !strings.Contains(pageResponse.Body.String(), "b-energy") {
+		t.Fatalf("reader page: %d %s", pageResponse.Code, pageResponse.Body.String())
+	}
+
+	anchored := postChat(t, server, `{"message":"Explique cette sélection","intent":"explain-selection","scope":{"type":"document","sourcePath":"GM/3A/cours.pdf","artifactId":"artifact-1","anchor":{"blockId":"b-energy","quote":"L'énergie cinétique dépend de la masse","page":4,"start":0,"end":40,"rects":[{"x":0.1,"y":0.2,"w":0.5,"h":0.04}]}}}`)
+	anchoredDone := eventObject(t, parseSSE(t, anchored.Body.String()), "done")
+	anchoredScope, _ := anchoredDone["scope"].(map[string]any)
+	anchoredAnchor, _ := anchoredScope["anchor"].(map[string]any)
+	if anchoredAnchor["blockId"] != "b-energy" || anchoredAnchor["verified"] != true {
+		t.Fatalf("ancre = %#v", anchoredAnchor)
+	}
+
+	invalidAnchor := postChat(t, server, `{"message":"Explique","intent":"explain-selection","scope":{"type":"document","sourcePath":"GM/3A/cours.pdf","artifactId":"artifact-1","anchor":{"quote":"passage inventé absent du document","page":4}}}`)
+	if invalidAnchor.Code != http.StatusBadRequest {
+		t.Fatalf("ancre inventée: status=%d body=%s", invalidAnchor.Code, invalidAnchor.Body.String())
 	}
 
 	conflict := postChat(t, server, `{"message":"Continue","intent":"explain","scope":{"type":"document","sourcePath":"GM/3A/cours.pdf","artifactId":"ancienne-revision"}}`)

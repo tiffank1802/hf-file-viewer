@@ -87,6 +87,27 @@ func TestRetrieveTargetsQuestionAndBuildsNavigableCitation(t *testing.T) {
 	}
 }
 
+func TestRetrievePrioritizesSelectedBlock(t *testing.T) {
+	document, err := Normalize("GM/cours.pdf", []byte(testDocumentJSON), []byte(testChunksJSONL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := Retrieve(document, Query{
+		Text:          "Explique cette sélection",
+		Intent:        "explain-selection",
+		AnchorBlockID: "b-energy",
+		AnchorQuote:   "L'énergie cinétique",
+		AnchorPage:    2,
+		MaxChunks:     2,
+	})
+	if len(result.Evidence) == 0 || result.Evidence[0].ChunkID != "c-000002" {
+		t.Fatalf("preuve ancrée non prioritaire: %#v", result.Evidence)
+	}
+	if result.Coverage.Kind != "anchored" {
+		t.Fatalf("couverture = %#v", result.Coverage)
+	}
+}
+
 func TestSummarySamplesEverySectionWhenBudgetAllows(t *testing.T) {
 	document, err := Normalize("GM/cours.pdf", []byte(testDocumentJSON), []byte(testChunksJSONL))
 	if err != nil {
