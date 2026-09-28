@@ -1,6 +1,7 @@
 # Plan d’évolution de l’IA vers un assistant d’étude documentaire
 
-**Date : 28 septembre 2026**  
+**Date : 28 septembre 2026**
+
 **Statut : plan d’architecture — compatible avec la conversion Docling en cours**
 
 ## 1. Décision proposée
