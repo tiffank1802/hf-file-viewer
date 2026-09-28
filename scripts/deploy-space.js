@@ -39,6 +39,11 @@ const SPACE_VARIABLES = {
   PIPELINE_VERSION: 'docling-2.130.0-enise-reader-v1',
   AUTO_SYNC_ON_START: '1',
   SYNC_INTERVAL_SECONDS: '21600',
+  // cpu-basic: clear the small-document queue first; larger files are reported
+  // and can be enabled later by increasing this variable deliberately.
+  MAX_SOURCE_BYTES: '15728640',
+  HUB_OPERATION_RETRIES: '5',
+  HUB_RETRY_BASE_SECONDS: '2',
 };
 
 function parseArgs(argv = process.argv.slice(2)) {

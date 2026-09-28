@@ -100,6 +100,9 @@ DERIVED_BUCKET_ID=ktongue/ENISE-SITE-DERIVED
 PIPELINE_VERSION=docling-2.130.0-enise-reader-v1
 AUTO_SYNC_ON_START=1
 SYNC_INTERVAL_SECONDS=21600
+MAX_SOURCE_BYTES=15728640
+HUB_OPERATION_RETRIES=5
+HUB_RETRY_BASE_SECONDS=2
 ```
 
 Les autres réglages utilisent les valeurs documentées dans [`../space-huggingface/README.md`](../space-huggingface/README.md).
@@ -144,4 +147,4 @@ La boucle (`SYNC_INTERVAL_SECONDS`) ne tourne que pendant que le Space est réve
 - le bouton/API d'administration peut réveiller un passage ;
 - aucun visiteur du site ne demande une conversion.
 
-Pour un traitement initial de plusieurs dizaines de gigaoctets, laisser le Space réveillé ou augmenter temporairement son matériel. Le pipeline traite un document à la fois, publie immédiatement, puis libère son espace temporaire.
+Pour un traitement initial de plusieurs dizaines de gigaoctets, le pipeline trie d'abord les sources par taille et limite la première vague à **15 Mio par fichier**. Les documents plus lourds restent visibles comme `oversized` et pourront être repris par paliers (par exemple 30, puis 60 Mio) après stabilisation. Chaque document est publié immédiatement puis retiré de l'espace temporaire.

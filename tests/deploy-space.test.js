@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import {
   DEFAULT_SPACE_ID,
   SPACE_FILES,
+  SPACE_VARIABLES,
   buildSyncOperations,
   createSpace,
   listRemoteSpaceFiles,
@@ -42,6 +43,8 @@ test('le déploiement cible Rupture et active le nettoyage par défaut', () => {
     configureVariables: true,
   });
   assert.equal(DEFAULT_SPACE_ID, 'ktongue/Rupture');
+  assert.equal(SPACE_VARIABLES.MAX_SOURCE_BYTES, '15728640');
+  assert.equal(SPACE_VARIABLES.HUB_OPERATION_RETRIES, '5');
   assert.deepEqual(
     parseArgs([
       '--space-id', 'org/indexer', '--private', '--skip-files', '--no-prune',

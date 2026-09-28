@@ -54,9 +54,11 @@ Le script `scripts/deploy-space.js` peut copier son `HF_TOKEN` de déploiement d
 | `AUTO_SYNC_ON_START` | `1` | scan au démarrage |
 | `SYNC_INTERVAL_SECONDS` | `21600` | intervalle entre scans, minimum 300 s |
 | `MAX_DOCUMENTS_PER_RUN` | `0` | limite par passage, 0 = totalité |
-| `MAX_SOURCE_BYTES` | `262144000` | taille maximale d'une source |
+| `MAX_SOURCE_BYTES` | `15728640` | première vague limitée à 15 Mio sur `cpu-basic` |
 | `MAX_ATTEMPTS` | `3` | tentatives automatiques pour un artefact inchangé |
 | `CATALOG_FLUSH_EVERY` | `10` | fréquence des checkpoints durables |
+| `HUB_OPERATION_RETRIES` | `5` | tentatives de publication lors d'une erreur Hub/Xet transitoire |
+| `HUB_RETRY_BASE_SECONDS` | `2` | base du backoff exponentiel de publication |
 | `DERIVED_BUCKET_PRIVATE` | `0` | visibilité lors de la création du bucket dérivé |
 | `IMAGE_SCALE` | `2.0` | résolution des figures extraites |
 | `SUPPORTED_EXTENSIONS` | voir `reader_pipeline.py` | allowlist de formats Docling |
@@ -105,8 +107,10 @@ curl -X POST \
 - aucune route n'accepte un document ou un chemin fourni par un visiteur ;
 - les secrets ne figurent jamais dans l'état public ni dans les artefacts ;
 - une seule synchronisation peut tourner dans le processus ;
-- le traitement est séquentiel afin de borner RAM et disque sur `cpu-basic` ;
+- le traitement est séquentiel et trié par taille croissante afin que les fichiers légers soient publiés en premier sur `cpu-basic` ;
+- la première vague ignore au-delà de 15 Mio et les inscrit `oversized`; le seuil pourra être relevé ensuite par paliers ;
 - une erreur de document est enregistrée puis le corpus continue ;
+- les courses de cohérence « File not found in Xet storage » sont retentées avec backoff avant d'arrêter le passage ;
 - un arrêt brutal peut refaire au plus les éléments depuis le dernier checkpoint, sans publier d'artefact incomplet comme prêt ;
 - les artefacts plus anciens ne sont pas supprimés automatiquement : ils peuvent être purgés séparément après vérification du catalogue.
 

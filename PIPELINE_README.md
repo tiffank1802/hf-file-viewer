@@ -46,17 +46,18 @@ tests/
 2. ouvrir ou créer le bucket dérivé ;
 3. charger `reader/v1/catalog.json` ;
 4. lister récursivement le bucket source ;
-5. ne garder que les extensions autorisées ;
-6. calculer une identité à partir du chemin, de la taille, de la date, du hash Xet et de `PIPELINE_VERSION` ;
-7. ignorer les artefacts prêts et identiques ;
-8. télécharger une source dans `/tmp` ;
-9. convertir avec Docling (OCR, structure, tableaux et figures) ;
-10. écrire le document normalisé et les chunks ;
-11. publier tous les payloads ;
-12. publier `manifest.json` en dernier ;
-13. pointer le catalogue vers l'artefact prêt ;
-14. supprimer les fichiers temporaires ;
-15. poursuivre même si un autre document échoue.
+5. ne garder que les extensions autorisées et trier les sources par taille croissante ;
+6. limiter la première vague à 15 Mio par fichier sur `cpu-basic` ;
+7. calculer une identité à partir du chemin, de la taille, de la date, du hash Xet et de `PIPELINE_VERSION` ;
+8. ignorer les artefacts prêts et identiques ;
+9. télécharger une source dans `/tmp` ;
+10. convertir avec Docling (OCR, structure, tableaux et figures) ;
+11. écrire le document normalisé et les chunks ;
+12. publier tous les payloads avec reprise exponentielle des erreurs Hub/Xet transitoires ;
+13. publier `manifest.json` en dernier ;
+14. pointer le catalogue vers l'artefact prêt ;
+15. supprimer les fichiers temporaires ;
+16. poursuivre même si un autre document échoue.
 
 Le catalogue est checkpointé régulièrement. Après une interruption, le dernier petit groupe peut être refait, mais les artefacts publiés gardent la même identité et aucun visiteur ne voit un artefact partiel comme prêt.
 

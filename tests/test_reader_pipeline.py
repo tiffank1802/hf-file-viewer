@@ -3,6 +3,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 MODULE_PATH = Path(__file__).parents[1] / "space-huggingface" / "reader_pipeline.py"
@@ -10,6 +11,30 @@ SPEC = importlib.util.spec_from_file_location("reader_pipeline", MODULE_PATH)
 reader_pipeline = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = reader_pipeline
 SPEC.loader.exec_module(reader_pipeline)
+
+
+def make_settings(**overrides):
+    values = {
+        "source_bucket_id": "ktongue/ENISE-SITE",
+        "derived_bucket_id": "ktongue/ENISE-SITE-DERIVED",
+        "hf_token": "secret",
+        "pipeline_version": "v1",
+        "workspace": Path("/tmp/test-reader"),
+        "supported_extensions": frozenset({".pdf"}),
+        "auto_sync_on_start": True,
+        "sync_interval_seconds": 3600,
+        "max_documents_per_run": 0,
+        "max_source_bytes": 1000,
+        "max_attempts": 3,
+        "catalog_flush_every": 10,
+        "hub_operation_retries": 5,
+        "hub_retry_base_seconds": 1,
+        "derived_bucket_private": False,
+        "image_scale": 2.0,
+        "sync_token": "",
+    }
+    values.update(overrides)
+    return reader_pipeline.Settings(**values)
 
 
 class ReaderPipelineHelpersTest(unittest.TestCase):
@@ -37,6 +62,7 @@ class ReaderPipelineHelpersTest(unittest.TestCase):
         names = [
             "SOURCE_BUCKET_ID", "DERIVED_BUCKET_ID", "HF_TOKEN", "PIPELINE_VERSION",
             "SUPPORTED_EXTENSIONS", "SYNC_INTERVAL_SECONDS", "IMAGE_SCALE",
+            "MAX_SOURCE_BYTES", "HUB_OPERATION_RETRIES", "HUB_RETRY_BASE_SECONDS",
         ]
         with patch.dict(os.environ, {name: "" for name in names}, clear=False):
             for name in names:
@@ -45,27 +71,12 @@ class ReaderPipelineHelpersTest(unittest.TestCase):
         self.assertEqual(settings.source_bucket_id, "ktongue/ENISE-SITE")
         self.assertEqual(settings.derived_bucket_id, "ktongue/ENISE-SITE-DERIVED")
         self.assertTrue(settings.auto_sync_on_start)
+        self.assertEqual(settings.max_source_bytes, 15 * 1024 * 1024)
         self.assertNotIn(".doc", settings.supported_extensions)
         self.assertNotIn("hf_token", settings.public_dict())
 
     def test_selection_skips_ready_and_caps_failed_retries(self):
-        settings = reader_pipeline.Settings(
-            source_bucket_id="ktongue/ENISE-SITE",
-            derived_bucket_id="ktongue/ENISE-SITE-DERIVED",
-            hf_token="secret",
-            pipeline_version="v1",
-            workspace=Path("/tmp/test-reader"),
-            supported_extensions=frozenset({".pdf"}),
-            auto_sync_on_start=True,
-            sync_interval_seconds=3600,
-            max_documents_per_run=0,
-            max_source_bytes=1000,
-            max_attempts=3,
-            catalog_flush_every=10,
-            derived_bucket_private=False,
-            image_scale=2.0,
-            sync_token="",
-        )
+        settings = make_settings()
         state = reader_pipeline.RuntimeState(settings)
         pipeline = reader_pipeline.ReaderPipeline(settings, state)
         ready = reader_pipeline.SourceObject("ready.pdf", 10, "date", "a")
@@ -87,6 +98,57 @@ class ReaderPipelineHelpersTest(unittest.TestCase):
         self.assertEqual([item.path for item in selected], ["fresh.pdf"])
         selected_retry = pipeline._select_sources([failed], catalog, retry_failed=True)
         self.assertEqual([item.path for item in selected_retry], ["failed.pdf"])
+
+    def test_source_listing_prioritizes_lightweight_files(self):
+        settings = make_settings()
+        pipeline = reader_pipeline.ReaderPipeline(
+            settings, reader_pipeline.RuntimeState(settings)
+        )
+
+        class FakeApi:
+            @staticmethod
+            def list_bucket_tree(_bucket_id, recursive):
+                self.assertTrue(recursive)
+                return [
+                    SimpleNamespace(
+                        type="file", path="large.pdf", size=900, mtime=None, xet_hash="l"
+                    ),
+                    SimpleNamespace(
+                        type="file", path="small.pdf", size=10, mtime=None, xet_hash="s"
+                    ),
+                    SimpleNamespace(
+                        type="file", path="medium.pdf", size=200, mtime=None, xet_hash="m"
+                    ),
+                ]
+
+        pipeline._api = FakeApi()
+        self.assertEqual(
+            [source.path for source in pipeline._list_sources()],
+            ["small.pdf", "medium.pdf", "large.pdf"],
+        )
+
+    def test_xet_publication_race_is_retried(self):
+        settings = make_settings(hub_operation_retries=3)
+        pipeline = reader_pipeline.ReaderPipeline(
+            settings, reader_pipeline.RuntimeState(settings)
+        )
+        bucket_error = type("BucketBatchError", (RuntimeError,), {})
+
+        class FakeApi:
+            def __init__(self):
+                self.calls = 0
+
+            def batch_bucket_files(self, **_kwargs):
+                self.calls += 1
+                if self.calls < 3:
+                    raise bucket_error("File not found in Xet storage")
+
+        api = FakeApi()
+        pipeline._api = api
+        with patch.object(reader_pipeline.time, "sleep") as sleep:
+            pipeline._add_bucket_files([(b"payload", "reader/v1/status.json")])
+        self.assertEqual(api.calls, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
 
 
 if __name__ == "__main__":

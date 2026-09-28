@@ -38,11 +38,12 @@ Cette décision remplace le scénario d'exécution locale sur le PC de l'adminis
 3. **Idempotence** : une source inchangée avec la même version pipeline n'est jamais recalculée.
 4. **Reprise durable** : l'état utile vit dans le bucket dérivé, pas seulement sur le disque éphémère du Space.
 5. **Publication atomique au niveau document** : le manifest prêt est publié après tous les payloads.
-6. **Isolation des erreurs** : un document défectueux n'arrête pas le corpus.
-7. **Mémoire bornée** : un document est téléchargé, converti, publié puis supprimé.
-8. **Versionnement explicite** : changer `PIPELINE_VERSION` invalide les artefacts sans modifier la source.
-9. **Séparation des responsabilités** : Docling produit ; le site lit et annote ; l'IA consomme des chunks.
-10. **Aucun héritage CAO dans le Space** : LibreOffice, FreeCAD, SolidWorks et les anciennes routes sont supprimés.
+6. **Publication résiliente** : les erreurs transitoires Hub/Xet sont retentées avec backoff exponentiel.
+7. **Isolation des erreurs** : un document défectueux n'arrête pas le corpus.
+8. **Mémoire bornée** : un document est téléchargé, converti, publié puis supprimé.
+9. **Versionnement explicite** : changer `PIPELINE_VERSION` invalide les artefacts sans modifier la source.
+10. **Séparation des responsabilités** : Docling produit ; le site lit et annote ; l'IA consomme des chunks.
+11. **Aucun héritage CAO dans le Space** : LibreOffice, FreeCAD, SolidWorks et les anciennes routes sont supprimés.
 
 ## 3. Portée des formats
 
@@ -296,7 +297,7 @@ Pour une identité artefact inchangée :
 
 ### 7.3 Sources volumineuses
 
-`MAX_SOURCE_BYTES` vaut 250 Mio par défaut. Une source plus grande est cataloguée `oversized` sans être téléchargée. Le seuil peut être ajusté après mesure de la RAM et du disque.
+`MAX_SOURCE_BYTES` vaut **15 Mio** pour la première vague sur `cpu-basic`. Les sources sont triées par taille croissante : les documents légers sont donc convertis avant les plus coûteux. Une source au-dessus du seuil est cataloguée `oversized` sans être téléchargée. Après stabilisation, le seuil peut être relevé par paliers contrôlés (par exemple 30 puis 60 Mio).
 
 ### 7.4 Concurrence
 

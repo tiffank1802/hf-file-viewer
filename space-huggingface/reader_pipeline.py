@@ -123,6 +123,8 @@ class Settings:
     max_source_bytes: int
     max_attempts: int
     catalog_flush_every: int
+    hub_operation_retries: int
+    hub_retry_base_seconds: int
     derived_bucket_private: bool
     image_scale: float
     sync_token: str
@@ -168,9 +170,13 @@ class Settings:
             auto_sync_on_start=env_bool("AUTO_SYNC_ON_START", True),
             sync_interval_seconds=env_int("SYNC_INTERVAL_SECONDS", 21600, 300),
             max_documents_per_run=env_int("MAX_DOCUMENTS_PER_RUN", 0),
-            max_source_bytes=env_int("MAX_SOURCE_BYTES", 250 * 1024 * 1024, 1),
+            # cpu-basic must clear the lightweight corpus first. Larger files are
+            # reported as oversized and can be enabled later in controlled waves.
+            max_source_bytes=env_int("MAX_SOURCE_BYTES", 15 * 1024 * 1024, 1),
             max_attempts=env_int("MAX_ATTEMPTS", 3, 1),
             catalog_flush_every=env_int("CATALOG_FLUSH_EVERY", 10, 1),
+            hub_operation_retries=env_int("HUB_OPERATION_RETRIES", 5, 1),
+            hub_retry_base_seconds=env_int("HUB_RETRY_BASE_SECONDS", 2, 1),
             derived_bucket_private=env_bool("DERIVED_BUCKET_PRIVATE", False),
             image_scale=image_scale,
             sync_token=os.getenv("SYNC_TOKEN", "").strip(),
@@ -186,6 +192,7 @@ class Settings:
             "syncIntervalSeconds": self.sync_interval_seconds,
             "maxDocumentsPerRun": self.max_documents_per_run,
             "maxSourceBytes": self.max_source_bytes,
+            "hubOperationRetries": self.hub_operation_retries,
             "configured": bool(self.hf_token),
             "manualSyncProtected": bool(self.sync_token),
         }
@@ -483,7 +490,9 @@ class ReaderPipeline:
                     content_hash=content_hash,
                 )
             )
-        sources.sort(key=lambda item: item.path.casefold())
+        # Lightweight-first is intentional on cpu-basic: useful documents are
+        # published quickly instead of being blocked behind a single large PDF.
+        sources.sort(key=lambda item: (item.size, item.path.casefold()))
         self.state.update(
             bucketFileCount=bucket_file_count,
             unsupportedCount=sum(unsupported.values()),
@@ -860,6 +869,48 @@ class ReaderPipeline:
             )
         return chunks
 
+    @staticmethod
+    def _retryable_bucket_error(error: BaseException) -> bool:
+        message = str(error).lower()
+        if type(error).__name__ == "BucketBatchError" or "xet storage" in message:
+            return True
+        status = getattr(getattr(error, "response", None), "status_code", None)
+        if status is not None:
+            return status in {408, 409, 425, 429} or status >= 500
+        return not isinstance(error, (TypeError, ValueError, FileNotFoundError))
+
+    def _add_bucket_files(self, additions: list[tuple[Any, str]]) -> None:
+        """Publish an idempotent batch, retrying transient Hub/Xet races.
+
+        Storage Bucket batches are non-transactional. Replaying additions is safe
+        because every destination is content-addressed or a replaceable state file.
+        In particular, the Hub can briefly report "File not found in Xet storage"
+        immediately after uploading a blob; exponential backoff lets Xet converge.
+        """
+        for attempt in range(1, self.settings.hub_operation_retries + 1):
+            try:
+                self.api.batch_bucket_files(
+                    bucket_id=self.settings.derived_bucket_id,
+                    add=additions,
+                )
+                return
+            except Exception as error:
+                final_attempt = attempt >= self.settings.hub_operation_retries
+                if final_attempt or not self._retryable_bucket_error(error):
+                    raise
+                delay = min(
+                    30,
+                    self.settings.hub_retry_base_seconds * (2 ** (attempt - 1)),
+                )
+                LOGGER.warning(
+                    "Transient bucket publication failure (%s/%s), retrying in %ss: %s",
+                    attempt,
+                    self.settings.hub_operation_retries,
+                    delay,
+                    safe_error(error, limit=500),
+                )
+                time.sleep(delay)
+
     def _upload_artifact(self, output_dir: Path, remote_prefix: str) -> None:
         files = sorted(path for path in output_dir.rglob("*") if path.is_file())
         manifest = output_dir / "manifest.json"
@@ -873,29 +924,19 @@ class ReaderPipeline:
                 (str(path), f"{remote_prefix}/{path.relative_to(output_dir).as_posix()}")
                 for path in batch
             ]
-            self.api.batch_bucket_files(
-                bucket_id=self.settings.derived_bucket_id,
-                add=additions,
-            )
-        self.api.batch_bucket_files(
-            bucket_id=self.settings.derived_bucket_id,
-            add=[(str(manifest), f"{remote_prefix}/manifest.json")],
+            self._add_bucket_files(additions)
+        self._add_bucket_files(
+            [(str(manifest), f"{remote_prefix}/manifest.json")]
         )
 
     def _publish_catalog(self, catalog: dict[str, Any]) -> None:
         catalog["updatedAt"] = utc_now()
         catalog["pipelineVersion"] = self.settings.pipeline_version
         payload = json.dumps(catalog, ensure_ascii=False, sort_keys=True, indent=2).encode("utf-8")
-        self.api.batch_bucket_files(
-            bucket_id=self.settings.derived_bucket_id,
-            add=[(payload, self.settings.catalog_key)],
-        )
+        self._add_bucket_files([(payload, self.settings.catalog_key)])
 
     def _publish_status(self) -> None:
         payload = json.dumps(
             self.state.snapshot(), ensure_ascii=False, sort_keys=True, indent=2
         ).encode("utf-8")
-        self.api.batch_bucket_files(
-            bucket_id=self.settings.derived_bucket_id,
-            add=[(payload, self.settings.status_key)],
-        )
+        self._add_bucket_files([(payload, self.settings.status_key)])

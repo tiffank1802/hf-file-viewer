@@ -45,6 +45,8 @@ except Exception as error:  # keep health diagnostics available on bad config
         "MAX_SOURCE_BYTES",
         "MAX_ATTEMPTS",
         "CATALOG_FLUSH_EVERY",
+        "HUB_OPERATION_RETRIES",
+        "HUB_RETRY_BASE_SECONDS",
     ):
         os.environ.pop(name, None)
     SETTINGS = Settings.from_env()
