@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -43,8 +42,17 @@ func TestDocumentScopedChatUsesDoclingAndEmitsCitations(t *testing.T) {
 
 	var prompt strings.Builder
 	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		payload, _ := io.ReadAll(r.Body)
-		prompt.Write(payload)
+		var payload struct {
+			Messages []nvidiaMessage `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "payload invalide", http.StatusBadRequest)
+			return
+		}
+		for _, message := range payload.Messages {
+			prompt.WriteString(message.Content)
+			prompt.WriteByte('\n')
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"La vitesse intervient dans l'énergie cinétique [S1].\"}}]}\n\ndata: [DONE]\n\n"))
 	}))

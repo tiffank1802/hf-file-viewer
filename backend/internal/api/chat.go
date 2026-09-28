@@ -292,7 +292,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) error {
 	header.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
-	if len(chat.Tokens(message)) == 0 {
+	// Dans un document explicitement ciblé, une question générique comme
+	// « Résume ce document » est suffisante : elle n'a pas besoin de mots-clés
+	// de recherche dans le catalogue.
+	if len(chat.Tokens(message)) == 0 && scopedItem == nil {
 		answer := "Formule une question avec une matière, une année (3A, 4A, 5A) ou TOEIC."
 		_ = writeSSE(w, "delta", map[string]string{"text": answer})
 		s.finishChat(w, r, body.ConversationID, message, chatDraft{answer: answer, engine: "local"}, contextPath, nil, study)
