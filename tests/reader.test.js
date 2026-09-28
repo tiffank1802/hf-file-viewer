@@ -7,20 +7,30 @@ import {
   listAnnotations,
   updateAnnotation,
 } from '../src/services/annotations.js';
-import { readerFileFromRoute } from '../src/reader/route.js';
+import { canOpenStructuredReader, readerFileFromRoute } from '../src/reader/route.js';
+import {
+  fetchReaderBlock,
+  fetchReaderBlocks,
+  readerAssetUrl,
+} from '../src/services/reader.js';
 import {
   buildSelectionAnchor,
+  buildStructuredSelectionAnchor,
   canonicalReaderText,
   findSelectionBlock,
   normalizedSelectionRects,
 } from '../src/reader/selectionAnchor.js';
+import { parseMarkdownTable } from '../src/reader/structured/structuredBlocks.js';
 
-test('la route /read accepte uniquement un PDF et conserve la page demandée', () => {
+test('la route /read accepte les formats Docling connus et conserve la page demandée', () => {
   const file = readerFileFromRoute('/read', '?path=Cours%2Fm%C3%A9canique.pdf&page=7');
   assert.equal(file.path, 'Cours/mécanique.pdf');
   assert.equal(file.kind, 'pdf');
   assert.equal(file.previewPage, 7);
-  assert.equal(readerFileFromRoute('/read', '?path=Cours%2Fnotes.docx'), null);
+  assert.equal(readerFileFromRoute('/read', '?path=Cours%2Fnotes.docx')?.kind, 'office');
+  assert.equal(readerFileFromRoute('/read', '?path=Cours%2Fnotes.epub')?.path, 'Cours/notes.epub');
+  assert.equal(canOpenStructuredReader('Cours/tableau.xlsx'), true);
+  assert.equal(readerFileFromRoute('/read', '?path=Cours%2Fscript.js'), null);
   assert.equal(readerFileFromRoute('/read', '?path=..%2Fsecret.pdf'), null);
   assert.equal(readerFileFromRoute('/', '?path=Cours%2Fmecanique.pdf'), null);
 });
@@ -61,6 +71,44 @@ test('les rectangles de sélection sont normalisés, bornés et limités', () =>
 test('une sélection vide ou démesurée ne produit aucune ancre', () => {
   assert.equal(buildSelectionAnchor({ quote: ' ' }), null);
   assert.equal(buildSelectionAnchor({ quote: 'x'.repeat(2001) }), null);
+});
+
+test('la sélection structurée conserve le blockId sans inventer de géométrie PDF', () => {
+  const anchor = buildStructuredSelectionAnchor({
+    quote: 'énergie cinétique',
+    blockId: 'b-energy',
+    blockText: 'Dans ce chapitre, l’énergie cinétique dépend de la vitesse.',
+  });
+  assert.equal(anchor.blockId, 'b-energy');
+  assert.equal(anchor.page, 0);
+  assert.deepEqual(anchor.rects, []);
+  assert.ok(anchor.prefix.endsWith('l’'));
+  assert.equal(buildStructuredSelectionAnchor({ quote: 'passage absent', blockId: 'b-energy', blockText: 'autre texte' }), null);
+});
+
+test('les tableaux Docling sont convertis en cellules textuelles sûres', () => {
+  const table = parseMarkdownTable('| Force | Valeur |\n|:---|---:|\n| Traction | 12 \\| 14 N |');
+  assert.deepEqual(table.headers, ['Force', 'Valeur']);
+  assert.deepEqual(table.rows, [['Traction', '12 | 14 N']]);
+});
+
+test('le client structuré borne les fenêtres et construit les URL d’assets', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url) => {
+    requests.push(String(url));
+    return new Response(JSON.stringify({ blocks: [], nextFrom: 0 }), { status: 200 });
+  };
+  try {
+    await fetchReaderBlocks('GM/cours.docx', 'artifact-2', 41, 40);
+    await fetchReaderBlock('GM/cours.docx', 'artifact-2', 'b-target');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.match(requests[0], /\/api\/reader\/blocks\?/);
+  assert.match(requests[0], /from=41/);
+  assert.match(requests[1], /blockId=b-target/);
+  assert.match(readerAssetUrl('GM/cours.docx', 'artifact-2', 'figure-1'), /asset=figure-1/);
 });
 
 test('le client d’annotations utilise le CRUD privé et encode le chemin', async () => {

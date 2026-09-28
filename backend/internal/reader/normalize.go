@@ -86,6 +86,34 @@ func Normalize(sourcePath string, documentJSON, chunksJSON []byte) (*Document, e
 	if document.Title == "" {
 		document.Title = baseName(sourcePath)
 	}
+	assetIDs := make(map[string]struct{}, len(raw.Assets))
+	for _, item := range raw.Assets {
+		id := strings.TrimSpace(item.ID)
+		assetPath := strings.Trim(strings.TrimSpace(item.Path), "/")
+		if id == "" || assetPath == "" {
+			continue
+		}
+		if _, duplicate := assetIDs[id]; duplicate {
+			continue
+		}
+		assetIDs[id] = struct{}{}
+		width, height := item.Width, item.Height
+		if width < 0 {
+			width = 0
+		}
+		if height < 0 {
+			height = 0
+		}
+		document.Assets = append(document.Assets, Asset{
+			ID:      id,
+			Kind:    strings.ToLower(strings.TrimSpace(item.Kind)),
+			Path:    assetPath,
+			Width:   width,
+			Height:  height,
+			BlockID: strings.TrimSpace(item.BlockID),
+			Caption: strings.TrimSpace(item.Caption),
+		})
+	}
 
 	byID := make(map[string]*Block, len(raw.Blocks))
 	byRef := make(map[string]string, len(raw.Blocks))

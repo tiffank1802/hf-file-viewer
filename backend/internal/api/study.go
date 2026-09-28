@@ -56,6 +56,7 @@ type chatAnchorRect struct {
 type documentStudy struct {
 	SourcePath      string
 	ArtifactID      string
+	ArtifactPrefix  string
 	PipelineVersion string
 	KnowledgeSource string
 	Status          string
@@ -135,6 +136,7 @@ func (s *Server) prepareDocumentStudy(ctx context.Context, scope chatScope, mess
 		return study, nil
 	}
 	study.ArtifactID = entry.ArtifactID
+	study.ArtifactPrefix = entry.ArtifactPrefix
 	study.PipelineVersion = entry.PipelineVersion
 	switch entry.Status {
 	case "ready":

@@ -50,7 +50,8 @@ func TestNormalizeEnrichesChunkWithTableAndFigureCaption(t *testing.T) {
   "blocks":[
     {"id":"b-table","ordinal":1,"type":"table","text":"Résultats","selfRef":"#/tables/0","markdown":"| Force | 12 N |","caption":"Mesures de traction","provenance":[{"page_no":3}]},
     {"id":"b-figure","ordinal":2,"type":"picture","text":"","selfRef":"#/pictures/0","caption":"Montage expérimental","assetId":"figure-00002","provenance":[{"page_no":4}]}
-  ]
+  ],
+  "assets":[{"id":"figure-00002","kind":"figure","path":"assets/figure-00002.webp","width":640,"height":480,"blockId":"b-figure","caption":"Montage expérimental"}]
 }`
 	chunks := `{"id":"c-1","text":"Résultats","blockIds":["b-table","b-figure"]}
 `
@@ -66,6 +67,9 @@ func TestNormalizeEnrichesChunkWithTableAndFigureCaption(t *testing.T) {
 	}
 	if len(document.Chunks[0].Pages) != 2 || document.Chunks[0].Pages[0] != 3 || document.Chunks[0].Pages[1] != 4 {
 		t.Fatalf("pages = %#v", document.Chunks[0].Pages)
+	}
+	if len(document.Assets) != 1 || document.Assets[0].ID != "figure-00002" || document.Assets[0].Path != "assets/figure-00002.webp" {
+		t.Fatalf("assets = %#v", document.Assets)
 	}
 }
 

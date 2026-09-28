@@ -141,6 +141,10 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		err = s.allow(w, r, http.MethodGet, s.handleReaderDocument)
 	case r.URL.Path == "/api/reader/page":
 		err = s.allow(w, r, http.MethodGet, s.handleReaderPage)
+	case r.URL.Path == "/api/reader/blocks":
+		err = s.allow(w, r, http.MethodGet, s.handleReaderBlocks)
+	case r.URL.Path == "/api/reader/asset":
+		err = s.allow(w, r, http.MethodGet, s.handleReaderAsset)
 	case r.URL.Path == "/api/annotations" || strings.HasPrefix(r.URL.Path, "/api/annotations/"):
 		err = s.handleAnnotations(w, r)
 	case r.URL.Path == "/api/chat/conversations" || strings.HasPrefix(r.URL.Path, "/api/chat/conversations/"):

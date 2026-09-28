@@ -31,18 +31,24 @@ func TestValidateAnnotationAnchorBoundsOffsetsAndRectangles(t *testing.T) {
 		Quote: "passage vérifié", Prefix: "avant", Suffix: "après", Start: 10, End: 26, Page: 2,
 		Rects: []chatAnchorRect{{X: 0.1, Y: 0.2, W: 0.4, H: 0.05}},
 	}
-	if err := validateAnnotationAnchor(&valid); err != nil {
+	if err := validateAnnotationAnchor(&valid, true); err != nil {
 		t.Fatalf("ancre valide refusée: %v", err)
 	}
 	invalid := valid
 	invalid.Rects = []chatAnchorRect{{X: 0.8, Y: 0.2, W: 0.4, H: 0.05}}
-	if err := validateAnnotationAnchor(&invalid); err == nil {
+	if err := validateAnnotationAnchor(&invalid, true); err == nil {
 		t.Fatal("rectangle hors page accepté")
 	}
 	invalid = valid
 	invalid.End = invalid.Start
-	if err := validateAnnotationAnchor(&invalid); err == nil {
+	if err := validateAnnotationAnchor(&invalid, true); err == nil {
 		t.Fatal("offsets vides acceptés")
+	}
+	structured := valid
+	structured.Page = 0
+	structured.Rects = nil
+	if err := validateAnnotationAnchor(&structured, false); err != nil {
+		t.Fatalf("ancre structurée sans géométrie PDF refusée: %v", err)
 	}
 }
 

@@ -190,7 +190,7 @@ En production Cloudflare, le Worker ne fait pas lui-même l’appel NVIDIA. Sans
 
 Le bouton **Se connecter** parle à Go (`/api/auth/*`). Go ouvre la session Appwrite et pose un cookie `enise_session` HttpOnly. Le mot de passe n’est pas écrit dans une table, et il ne revient jamais dans le JSON.
 
-Les favoris passent par `/api/favorites`. Les annotations privées du lecteur passent par le CRUD `/api/annotations` : Go vérifie le propriétaire, le PDF indexé, la révision Docling et le passage avant d’écrire. La base `enise_docs` et ses tables, dont `profiles`, `favorites`, `conversations`, `messages` et `annotations`, se créent une fois :
+Les favoris passent par `/api/favorites`. Les annotations privées du lecteur passent par le CRUD `/api/annotations` : Go vérifie le propriétaire, le document indexé, la révision Docling et le passage avant d’écrire. La lecture structurée utilise `/api/reader/blocks` pour des fenêtres bornées et `/api/reader/asset` uniquement pour les illustrations déclarées par l’artefact courant ; aucun chunk IA n’est envoyé au navigateur. La base `enise_docs` et ses tables, dont `profiles`, `favorites`, `conversations`, `messages` et `annotations`, se créent une fois :
 
 ```bash
 # APPWRITE_API_KEY dans .dev.vars, ou devant la commande

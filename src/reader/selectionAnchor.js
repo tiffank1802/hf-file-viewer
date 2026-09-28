@@ -49,6 +49,25 @@ export function buildSelectionAnchor({ quote, page, rects, pageText = '', blocks
   };
 }
 
+export function buildStructuredSelectionAnchor({ quote, blockId, blockText = '', page = 0 }) {
+  const exact = String(quote || '').replace(/\s+/g, ' ').trim();
+  const id = String(blockId || '').trim();
+  if (!id || exact.length < 2 || Array.from(exact).length > MAX_SELECTION_CHARS) return null;
+  const normalizedBlock = String(blockText || '').replace(/\s+/g, ' ').trim();
+  const start = normalizedBlock.indexOf(exact);
+  if (start < 0) return null;
+  return {
+    blockId: id,
+    quote: exact,
+    prefix: normalizedBlock.slice(Math.max(0, start - 120), start),
+    suffix: normalizedBlock.slice(start + exact.length, start + exact.length + 120),
+    start,
+    end: start + exact.length,
+    page: Math.max(0, Number(page) || 0),
+    rects: [],
+  };
+}
+
 function clamp(value) {
   if (!Number.isFinite(value)) return 0;
   return Math.min(1, Math.max(0, Math.round(value * 10000) / 10000));

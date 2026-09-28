@@ -1,4 +1,4 @@
-import { LibraryApiError } from './api';
+import { LibraryApiError } from './api.js';
 
 async function readerJson(url, signal) {
   let response;
@@ -32,4 +32,33 @@ export function fetchReaderPage(sourcePath, artifactId, page, signal) {
     page: String(page),
   });
   return readerJson(`/api/reader/page?${params}`, signal);
+}
+
+export function fetchReaderBlocks(sourcePath, artifactId, from = 1, limit = 40, signal) {
+  const params = new URLSearchParams({
+    path: sourcePath,
+    artifactId,
+    from: String(from),
+    limit: String(limit),
+  });
+  return readerJson(`/api/reader/blocks?${params}`, signal);
+}
+
+export function fetchReaderBlock(sourcePath, artifactId, blockId, signal) {
+  const params = new URLSearchParams({
+    path: sourcePath,
+    artifactId,
+    blockId,
+    limit: '8',
+  });
+  return readerJson(`/api/reader/blocks?${params}`, signal);
+}
+
+export function readerAssetUrl(sourcePath, artifactId, assetId) {
+  const params = new URLSearchParams({
+    path: sourcePath,
+    artifactId,
+    asset: assetId,
+  });
+  return `/api/reader/asset?${params}`;
 }

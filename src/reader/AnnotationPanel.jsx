@@ -57,7 +57,7 @@ function AnnotationItem({ item, saving, onOpen, onUpdate, onDelete }) {
   return (
     <article className={`reader-annotation-item color-${item.color || 'yellow'}${review ? ' needs-review' : ''}`}>
       <button type="button" className="reader-annotation-target" onClick={() => onOpen(item)}>
-        <span><FiMapPin aria-hidden="true" /> Page {item.page || '—'}</span>
+        <span><FiMapPin aria-hidden="true" /> {item.page ? `Page ${item.page}` : 'Passage structuré'}</span>
         <small>{review ? 'À vérifier après reconversion' : item.kind === 'note' ? 'Note privée' : 'Surlignage privé'}</small>
         <blockquote>{item.anchor?.quote || 'Passage ancré dans le document'}</blockquote>
       </button>

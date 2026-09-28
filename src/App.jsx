@@ -7,7 +7,7 @@ import Header from './components/Header';
 import Hero from './components/Hero';
 import LibraryChat from './components/LibraryChat';
 import PreviewModal from './components/PreviewModal';
-import { readerFileFromRoute } from './reader/route';
+import { canOpenStructuredReader, readerFileFromRoute } from './reader/route';
 import SearchPalette from './components/SearchPalette';
 import SideNav from './components/SideNav';
 import AuthPanel from './components/AuthPanel';
@@ -63,7 +63,7 @@ export default function App() {
   }, []);
   const openReader = useCallback((file) => {
     const item = normalizeBucketItem(file);
-    if (!item.path || item.kind !== 'pdf') return;
+    if (!item.path || !canOpenStructuredReader(item.path)) return;
     readerReturnUrl.current = `${window.location.pathname}${window.location.search}`;
     const params = new URLSearchParams({ path: item.path });
     if (Number(item.previewPage) > 1) params.set('page', String(item.previewPage));
@@ -125,6 +125,7 @@ export default function App() {
       <>
         <Suspense fallback={<div className="reader-route-loading">Préparation du lecteur interactif…</div>}>
           <DocumentWorkspace
+            key={readerFile.path}
             file={readerFile}
             initialPage={Number(params.get('page')) || Number(readerFile.previewPage) || 1}
             authenticated={auth.isAuthenticated}

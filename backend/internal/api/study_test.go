@@ -26,9 +26,12 @@ func TestDocumentScopedChatUsesDoclingAndEmitsCitations(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/manifest.json"):
 			_, _ = w.Write([]byte(`{"schemaVersion":"enise-reader/v1","sourcePath":"GM/3A/cours.pdf","artifactId":"artifact-1","artifactPrefix":"` + prefix + `","pipelineVersion":"docling-test","status":"ready","files":{"document":"document.json","chunks":"chunks.jsonl"}}`))
 		case strings.HasSuffix(r.URL.Path, "/document.json"):
-			_, _ = w.Write([]byte(`{"schemaVersion":"enise-reader/v1","artifactId":"artifact-1","pipelineVersion":"docling-test","title":"Cours de mécanique","blocks":[{"id":"b-title","ordinal":1,"level":1,"type":"section_header","text":"Énergie","selfRef":"#/texts/0","provenance":[{"page_no":4}]},{"id":"b-energy","ordinal":2,"level":1,"type":"text","text":"L'énergie cinétique dépend de la masse et de la vitesse.","selfRef":"#/texts/1","provenance":[{"page_no":4,"bbox":{"l":1,"t":8,"r":7,"b":2,"coord_origin":"BOTTOMLEFT"}}]}]}`))
+			_, _ = w.Write([]byte(`{"schemaVersion":"enise-reader/v1","artifactId":"artifact-1","pipelineVersion":"docling-test","title":"Cours de mécanique","blocks":[{"id":"b-title","ordinal":1,"level":1,"type":"section_header","text":"Énergie","selfRef":"#/texts/0","provenance":[{"page_no":4}]},{"id":"b-energy","ordinal":2,"level":1,"type":"text","text":"L'énergie cinétique dépend de la masse et de la vitesse.","selfRef":"#/texts/1","provenance":[{"page_no":4,"bbox":{"l":1,"t":8,"r":7,"b":2,"coord_origin":"BOTTOMLEFT"}}]}],"assets":[{"id":"figure-1","kind":"figure","path":"assets/figure-1.webp","width":2,"height":2,"blockId":"b-energy","caption":"Schéma"}]}`))
 		case strings.HasSuffix(r.URL.Path, "/chunks.jsonl"):
 			_, _ = w.Write([]byte("{\"id\":\"c-000001\",\"text\":\"L'énergie cinétique dépend de la masse et de la vitesse.\",\"meta\":{\"doc_items\":[{\"self_ref\":\"#/texts/1\"}],\"headings\":[\"Énergie\"]}}\n"))
+		case strings.HasSuffix(r.URL.Path, "/assets/figure-1.webp"):
+			w.Header().Set("Content-Type", "image/webp")
+			_, _ = w.Write([]byte("RIFF-test-webp"))
 		case strings.Contains(r.URL.Path, "/resolve/GM/3A/cours.pdf"):
 			sourceReads.Add(1)
 			_, _ = w.Write([]byte("raw pdf should not be read"))
@@ -112,6 +115,34 @@ func TestDocumentScopedChatUsesDoclingAndEmitsCitations(t *testing.T) {
 	server.ServeHTTP(pageResponse, pageRequest)
 	if pageResponse.Code != http.StatusOK || !strings.Contains(pageResponse.Body.String(), "b-energy") {
 		t.Fatalf("reader page: %d %s", pageResponse.Code, pageResponse.Body.String())
+	}
+
+	blocksRequest := httptest.NewRequest(http.MethodGet, "/api/reader/blocks?path=GM%2F3A%2Fcours.pdf&artifactId=artifact-1&from=1&limit=1", nil)
+	blocksResponse := httptest.NewRecorder()
+	server.ServeHTTP(blocksResponse, blocksRequest)
+	if blocksResponse.Code != http.StatusOK || !strings.Contains(blocksResponse.Body.String(), `"nextFrom":2`) || !strings.Contains(blocksResponse.Body.String(), "b-title") {
+		t.Fatalf("reader blocks: %d %s", blocksResponse.Code, blocksResponse.Body.String())
+	}
+
+	targetBlockRequest := httptest.NewRequest(http.MethodGet, "/api/reader/blocks?path=GM%2F3A%2Fcours.pdf&artifactId=artifact-1&blockId=b-energy&limit=8", nil)
+	targetBlockResponse := httptest.NewRecorder()
+	server.ServeHTTP(targetBlockResponse, targetBlockRequest)
+	if targetBlockResponse.Code != http.StatusOK || !strings.Contains(targetBlockResponse.Body.String(), `"targetBlockId":"b-energy"`) {
+		t.Fatalf("reader target block: %d %s", targetBlockResponse.Code, targetBlockResponse.Body.String())
+	}
+
+	assetRequest := httptest.NewRequest(http.MethodGet, "/api/reader/asset?path=GM%2F3A%2Fcours.pdf&artifactId=artifact-1&asset=figure-1", nil)
+	assetResponse := httptest.NewRecorder()
+	server.ServeHTTP(assetResponse, assetRequest)
+	if assetResponse.Code != http.StatusOK || assetResponse.Header().Get("Content-Type") != "image/webp" || assetResponse.Body.String() != "RIFF-test-webp" {
+		t.Fatalf("reader asset: %d %s %q", assetResponse.Code, assetResponse.Header().Get("Content-Type"), assetResponse.Body.String())
+	}
+
+	unknownAsset := httptest.NewRequest(http.MethodGet, "/api/reader/asset?path=GM%2F3A%2Fcours.pdf&artifactId=artifact-1&asset=unknown", nil)
+	unknownAssetResponse := httptest.NewRecorder()
+	server.ServeHTTP(unknownAssetResponse, unknownAsset)
+	if unknownAssetResponse.Code != http.StatusNotFound {
+		t.Fatalf("asset inconnu: %d %s", unknownAssetResponse.Code, unknownAssetResponse.Body.String())
 	}
 
 	anchored := postChat(t, server, `{"message":"Explique cette sélection","intent":"explain-selection","scope":{"type":"document","sourcePath":"GM/3A/cours.pdf","artifactId":"artifact-1","anchor":{"blockId":"b-energy","quote":"L'énergie cinétique dépend de la masse","page":4,"start":0,"end":40,"rects":[{"x":0.1,"y":0.2,"w":0.5,"h":0.04}]}}}`)

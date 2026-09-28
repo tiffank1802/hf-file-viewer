@@ -47,6 +47,7 @@ type RawDocument struct {
 	PipelineVersion string     `json:"pipelineVersion"`
 	Title           string     `json:"title"`
 	Blocks          []RawBlock `json:"blocks"`
+	Assets          []RawAsset `json:"assets"`
 }
 
 type RawBlock struct {
@@ -61,6 +62,16 @@ type RawBlock struct {
 	Markdown   string       `json:"markdown"`
 	AssetID    string       `json:"assetId"`
 	Provenance []Provenance `json:"provenance"`
+}
+
+type RawAsset struct {
+	ID      string `json:"id"`
+	Kind    string `json:"kind"`
+	Path    string `json:"path"`
+	Width   int    `json:"width"`
+	Height  int    `json:"height"`
+	BlockID string `json:"blockId"`
+	Caption string `json:"caption"`
 }
 
 type Provenance struct {
@@ -114,6 +125,7 @@ type Document struct {
 	PipelineVersion string
 	Title           string
 	Blocks          []Block
+	Assets          []Asset
 	Chunks          []Chunk
 	Outline         []string
 }
@@ -131,6 +143,16 @@ type Block struct {
 	HeadingPath []string
 	Page        int
 	BBox        *BBox
+}
+
+type Asset struct {
+	ID      string
+	Kind    string
+	Path    string
+	Width   int
+	Height  int
+	BlockID string
+	Caption string
 }
 
 type Chunk struct {

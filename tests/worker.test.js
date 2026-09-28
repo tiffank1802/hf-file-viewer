@@ -384,9 +384,9 @@ test('le chat sans origine Go répond 501 et n’appelle pas NVIDIA', async () =
 });
 
 test('les routes du lecteur sont relayées vers Go et restent en lecture seule', async () => {
-  let requested = '';
+  const requested = [];
   const server = http.createServer((req, res) => {
-    requested = req.url || '';
+    requested.push(req.url || '');
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end('{"schemaVersion":"reader-ui/v1","status":"structured-ready"}');
   });
@@ -399,8 +399,16 @@ test('les routes du lecteur sont relayées vers Go et restent en lecture seule',
       {},
     );
     assert.equal(response.status, 200);
-    assert.equal(requested, '/api/reader/document?path=GM%2Fcours.pdf');
+    assert.equal(requested[0], '/api/reader/document?path=GM%2Fcours.pdf');
     assert.equal((await response.json()).status, 'structured-ready');
+
+    const blocks = await worker.fetch(
+      new Request('https://enise.test/api/reader/blocks?path=GM%2Fcours.docx&artifactId=a1&from=1&limit=40'),
+      { GO_API_ORIGIN: `http://127.0.0.1:${port}` },
+      {},
+    );
+    assert.equal(blocks.status, 200);
+    assert.match(requested[1], /^\/api\/reader\/blocks\?/);
 
     const rejected = await worker.fetch(
       new Request('https://enise.test/api/reader/document', { method: 'POST' }),

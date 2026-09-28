@@ -118,7 +118,7 @@ func (s *Server) handleAnnotationCreate(w http.ResponseWriter, r *http.Request) 
 	if len([]rune(sourcePath)) > 1024 {
 		return catalog.Error(http.StatusBadRequest, "Le chemin du document est trop long pour les annotations.")
 	}
-	if err := validateAnnotationAnchor(&body.Anchor); err != nil {
+	if err := validateAnnotationAnchor(&body.Anchor, readerDocumentKind(sourcePath) == "pdf"); err != nil {
 		return err
 	}
 	query := r.Clone(r.Context())
@@ -150,7 +150,8 @@ func (s *Server) handleAnnotationCreate(w http.ResponseWriter, r *http.Request) 
 	if !study.ready() || !study.AnchorVerified || study.Anchor == nil {
 		return catalog.Error(http.StatusConflict, "Le passage ne peut pas être ancré dans l’artefact Docling courant.")
 	}
-	if len([]rune(study.Anchor.BlockID)) > 160 || study.Anchor.Page < 1 || study.Anchor.Page > 100000 {
+	if len([]rune(study.Anchor.BlockID)) > 160 || study.Anchor.Page < 0 || study.Anchor.Page > 100000 ||
+		(readerDocumentKind(sourcePath) == "pdf" && study.Anchor.Page < 1) {
 		return catalog.Error(http.StatusBadRequest, "Le bloc ou la page de l’ancre dépasse les limites autorisées.")
 	}
 	anchorJSON, err := json.Marshal(study.Anchor)
@@ -273,7 +274,7 @@ func (s *Server) annotationFail(err error) error {
 	return s.authFail(err)
 }
 
-func validateAnnotationAnchor(anchor *chatAnchor) error {
+func validateAnnotationAnchor(anchor *chatAnchor, requirePDFPosition bool) error {
 	if anchor == nil {
 		return catalog.Error(http.StatusBadRequest, "L’ancre de sélection est requise.")
 	}
@@ -285,11 +286,12 @@ func validateAnnotationAnchor(anchor *chatAnchor) error {
 	if len([]rune(anchor.BlockID)) > 160 || len([]rune(anchor.Prefix)) > 500 || len([]rune(anchor.Suffix)) > 500 {
 		return catalog.Error(http.StatusBadRequest, "Le contexte de l’ancre est trop volumineux.")
 	}
-	if anchor.Page < 1 || anchor.Page > 100000 || anchor.Start < 0 || anchor.End <= anchor.Start || anchor.End > 10_000_000 {
+	if anchor.Page < 0 || anchor.Page > 100000 || anchor.Start < 0 || anchor.End <= anchor.Start || anchor.End > 10_000_000 ||
+		(requirePDFPosition && anchor.Page < 1) {
 		return catalog.Error(http.StatusBadRequest, "La page ou les offsets de l’ancre sont invalides.")
 	}
-	if len(anchor.Rects) == 0 || len(anchor.Rects) > 32 {
-		return catalog.Error(http.StatusBadRequest, "L’ancre doit contenir entre 1 et 32 rectangles.")
+	if len(anchor.Rects) > 32 || (requirePDFPosition && len(anchor.Rects) == 0) {
+		return catalog.Error(http.StatusBadRequest, "Le nombre de rectangles de l’ancre est invalide.")
 	}
 	for _, rect := range anchor.Rects {
 		values := []float64{rect.X, rect.Y, rect.W, rect.H}

@@ -2,7 +2,7 @@
 
 **Version : 28 septembre 2026**
 
-**Statut : lots R0–R4 implémentés — provisioning Appwrite, validation Go et déploiement en cours (28 septembre 2026)**
+**Statut : lots R0–R5 implémentés — validation Go, provisioning Appwrite et déploiement en cours (28 septembre 2026)**
 
 **Portée prioritaire : documents PDF déjà préconvertis par Docling**
 
@@ -728,4 +728,4 @@ PreviewModal
   → retour page + highlight temporaire
 ```
 
-Cette tranche verticale a servi de base au lot R4 d’annotations privées. La vue structurée multi-format et les commentaires partagés restent différés jusqu’à la validation en production du rendu PDF, de l’ancrage Docling, des réponses IA vérifiables et de la restauration des annotations.
+Cette tranche verticale a servi de base aux lots R4 d’annotations privées et R5 de lecture structurée multi-format. Le durcissement R6 et les commentaires partagés restent différés jusqu’à la validation en production du rendu PDF/structuré, de l’ancrage Docling, des réponses IA vérifiables et de la restauration des annotations.

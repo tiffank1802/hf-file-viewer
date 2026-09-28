@@ -8,6 +8,7 @@ import {
   FiShare2,
   FiX,
 } from 'react-icons/fi';
+import { canOpenStructuredReader } from '../reader/route';
 import { fileProxyUrl, huggingFaceFileUrl } from '../services/api';
 import { formatBytes, getExtension } from '../utils/files';
 import { FileTypeIcon } from './Icons';
@@ -95,6 +96,7 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
   const proxyUrl = fileProxyUrl(file.path);
   const extension = getExtension(file.path).toUpperCase() || 'FICHIER';
   const canStudy = ['pdf', 'office', 'text', 'image'].includes(file.kind);
+  const canOpenReader = canOpenStructuredReader(file.path);
 
   const shareFile = async () => {
     const shareUrl = huggingFaceFileUrl(file.path);
@@ -159,15 +161,15 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
             </div>
           </div>
           <div className="preview-actions">
-            {canStudy && (onStudy || (file.kind === 'pdf' && onRead)) && (
+            {(canStudy || canOpenReader) && (onStudy || (canOpenReader && onRead)) && (
               <button
                 type="button"
                 className="preview-study"
-                onClick={() => (file.kind === 'pdf' && onRead ? onRead(file) : onStudy?.(file))}
-                aria-label={file.kind === 'pdf' ? 'Ouvrir le lecteur interactif avec IA' : 'Étudier ce document avec l’IA'}
-                title={file.kind === 'pdf' ? 'Lecteur interactif' : 'Étudier avec l’IA'}
+                onClick={() => (canOpenReader && onRead ? onRead(file) : onStudy?.(file))}
+                aria-label={canOpenReader ? 'Ouvrir le lecteur documentaire interactif' : 'Étudier ce document avec l’IA'}
+                title={canOpenReader ? 'Lecteur interactif' : 'Étudier avec l’IA'}
               >
-                <FiBookOpen aria-hidden="true" /><span>{file.kind === 'pdf' ? 'Ouvrir dans le lecteur' : 'Étudier'}</span>
+                <FiBookOpen aria-hidden="true" /><span>{canOpenReader ? 'Ouvrir dans le lecteur' : 'Étudier'}</span>
               </button>
             )}
             <button
