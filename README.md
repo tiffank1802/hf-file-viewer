@@ -499,6 +499,8 @@ Le Worker Cloudflare et le backend Go exposent les mêmes routes. L’en-tête `
 
 ### Assistant : ce qui se passe derrière une question
 
+L’évolution vers un assistant d’étude attaché à un document, fondé sur les artefacts Docling et compatible avec le futur lecteur interactif, est détaillée dans [`docs/DOCUMENT_AI_STUDY_PLAN.md`](docs/DOCUMENT_AI_STUDY_PLAN.md).
+
 1. **Classement local** de l’index en mémoire (aucun appel réseau). Les mots-outils (« se », « sa ») sont ignorés et un mot-clé doit correspondre à un mot entier : « ex » ne remonte plus « examen ».
 2. **Profil de la question** : une recherche ouvre deux documents, une synthèse (« structure », « annales », « déroulement », « compare »…) en ouvre jusqu’à huit du meilleur dossier et en lit cinq.
 3. **Lecture des extraits** (texte, PDF, docx, pptx, xlsx) puis rédaction par le moteur choisi (Cloudflare Workers AI, OpenRouter, NVIDIA ou OpenCode). Pour les PDF, seul le texte des pages (entre `BT` et `ET`) est lu : les noms de polices et les métadonnées sont ignorés, les morceaux d’un même mot sont recollés. Un PDF à polices encodées par glyphes donne du bruit (« ÿÿ A B D… ») : l’extrait est écarté et le modèle s’appuie alors sur le nom et le chemin du document. Le modèle choisi dans le menu ne s’applique qu’à son moteur ; si tous échouent, la note indique la raison de chacun (clé refusée, quota, délai…).

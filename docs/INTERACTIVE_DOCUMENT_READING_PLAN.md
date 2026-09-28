@@ -509,6 +509,8 @@ Quand l'artefact change :
 
 ## 14. IA contextuelle
 
+Le plan détaillé de l’assistant d’étude progressif — ciblage d’un document, fallback pendant la conversion, RAG Docling, résumés hiérarchiques et citations compatibles avec le futur lecteur — se trouve dans [`DOCUMENT_AI_STUDY_PLAN.md`](./DOCUMENT_AI_STUDY_PLAN.md).
+
 Le navigateur ne doit pas envoyer tout le document à chaque question.
 
 Contexte recommandé :
