@@ -17,6 +17,8 @@
     "deploy": "npm run build && wrangler deploy",
     "lint": "eslint .",
     "test": "node --test tests/*.test.js",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install --with-deps chromium firefox webkit",
     "test:space": "python3 -m unittest tests/test_reader_pipeline.py",
     "appwrite:setup": "node scripts/appwrite-setup.mjs",
     "appwrite:status": "node scripts/appwrite-setup.mjs --status",
@@ -42,6 +44,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "@huggingface/inference": "^4.13.28",
+    "@playwright/test": "^1.63.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.1.0",

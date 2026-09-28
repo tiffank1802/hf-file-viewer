@@ -2,7 +2,7 @@
 
 **Version : 28 septembre 2026**
 
-**Statut : lots R0–R5 implémentés — validation Go, provisioning Appwrite et déploiement en cours (28 septembre 2026)**
+**Statut : lots R0–R6 implémentés — validation navigateur/Go, provisioning Appwrite et déploiement progressif en cours (28 septembre 2026)**
 
 **Portée prioritaire : documents PDF déjà préconvertis par Docling**
 
@@ -639,6 +639,8 @@ Tester Chromium, Firefox et WebKit, plus un viewport mobile.
 - métriques sans contenu utilisateur ;
 - documentation et activation progressive.
 
+**Sortie implémentée :** les canvas et couches texte éloignés sont libérés puis recréés à proximité du viewport ; les appels structurés retentent seulement les erreurs transitoires ; PDF, structure, métadonnées, annotations et assistant exposent des reprises explicites. Les panneaux deviennent des tiroirs tactiles exclusifs sur mobile, les onglets et dialogues sont navigables au clavier, les annonces SSE sont atomiques et les préférences de mouvement, contraste élevé et couleurs forcées sont respectées. `POST /api/reader/metrics` n’accepte que des dimensions agrégées allowlistées, sans contenu ni identifiant utilisateur. Le rollout `off|pilot|pdf|all` et une matrice Playwright Chromium/Firefox/WebKit/mobile complètent l’activation progressive.
+
 **Estimation :** MVP R0–R3 en 3 à 4 semaines ; lecteur complet R0–R6 en 6 à 8 semaines pour une personne, hors correction d’artefacts Docling atypiques.
 
 ## 15. Déploiement progressif
@@ -728,4 +730,4 @@ PreviewModal
   → retour page + highlight temporaire
 ```
 
-Cette tranche verticale a servi de base aux lots R4 d’annotations privées et R5 de lecture structurée multi-format. Le durcissement R6 et les commentaires partagés restent différés jusqu’à la validation en production du rendu PDF/structuré, de l’ancrage Docling, des réponses IA vérifiables et de la restauration des annotations.
+Cette tranche verticale a servi de base aux lots R4 d’annotations privées, R5 de lecture structurée multi-format et R6 de durcissement. Les commentaires partagés restent différés jusqu’à la validation en production du rendu PDF/structuré, de l’ancrage Docling, des réponses IA vérifiables et de la restauration des annotations. Le code R6 est prêt pour un rollout `pilot`, mais l’élargissement à `pdf` puis `all` dépend des mesures et de la matrice navigateur exécutées dans l’environnement de déploiement.

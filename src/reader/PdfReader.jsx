@@ -3,9 +3,11 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from 'react';
+import { FiRefreshCw } from 'react-icons/fi';
 import { GlobalWorkerOptions, TextLayer, getDocument } from 'pdfjs-dist';
 import workerSource from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import 'pdfjs-dist/web/pdf_viewer.css';
@@ -18,17 +20,29 @@ const PdfReader = forwardRef(function PdfReader({
   highlights = [],
   targetPage = 1,
   onDocument,
+  onFirstPage,
   onPageChange,
   onError,
 }, ref) {
   const [pdf, setPdf] = useState(null);
   const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
   const pageElements = useRef(new Map());
+  const openedAt = useRef(0);
+  const firstPageReported = useRef(false);
 
   useEffect(() => {
     if (!url) return undefined;
-    const task = getDocument({ url, withCredentials: true });
+    const task = getDocument({
+      url,
+      withCredentials: true,
+      disableAutoFetch: true,
+      disableStream: true,
+      rangeChunkSize: 256 * 1024,
+    });
     let active = true;
+    openedAt.current = performance.now();
+    firstPageReported.current = false;
     setPdf(null);
     setError('');
     task.promise
@@ -45,25 +59,44 @@ const PdfReader = forwardRef(function PdfReader({
       });
     return () => {
       active = false;
-      task.destroy();
+      void task.destroy();
     };
-  }, [url, onDocument, onError]);
+  }, [attempt, onDocument, onError, url]);
 
   const scrollToPage = useCallback((page, behavior = 'smooth') => {
     const element = pageElements.current.get(Number(page));
-    element?.scrollIntoView({ behavior, block: 'start' });
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    element?.scrollIntoView({ behavior: reduced ? 'auto' : behavior, block: 'start' });
   }, []);
   const registerPage = useCallback((page, element) => {
     if (element) pageElements.current.set(page, element);
     else pageElements.current.delete(page);
   }, []);
+  const markFirstPage = useCallback((pageNumber) => {
+    if (firstPageReported.current) return;
+    firstPageReported.current = true;
+    onFirstPage?.({
+      page: pageNumber,
+      durationMs: Math.max(0, Math.round(performance.now() - openedAt.current)),
+    });
+  }, [onFirstPage]);
+  const highlightsByPage = useMemo(() => {
+    const grouped = new Map();
+    for (const item of highlights) {
+      const pageNumber = Number(item.page);
+      if (!(pageNumber > 0)) continue;
+      if (!grouped.has(pageNumber)) grouped.set(pageNumber, []);
+      grouped.get(pageNumber).push(item);
+    }
+    return grouped;
+  }, [highlights]);
 
   useImperativeHandle(ref, () => ({ scrollToPage }), [scrollToPage]);
 
   useEffect(() => {
-    if (pdf && targetPage > 1) {
-      window.setTimeout(() => scrollToPage(targetPage, 'auto'), 80);
-    }
+    if (!pdf || targetPage <= 1) return undefined;
+    const timeout = window.setTimeout(() => scrollToPage(targetPage, 'auto'), 80);
+    return () => window.clearTimeout(timeout);
   }, [pdf, scrollToPage, targetPage]);
 
   if (error) {
@@ -71,12 +104,17 @@ const PdfReader = forwardRef(function PdfReader({
       <div className="reader-pdf-error" role="alert">
         <strong>Le lecteur PDF interactif est indisponible.</strong>
         <p>{error}</p>
-        <a href={url} target="_blank" rel="noreferrer">Ouvrir le PDF original</a>
+        <span className="reader-recovery-actions">
+          <button type="button" onClick={() => setAttempt((value) => value + 1)}>
+            <FiRefreshCw aria-hidden="true" /> Réessayer
+          </button>
+          <a href={url} target="_blank" rel="noreferrer">Ouvrir le PDF original</a>
+        </span>
       </div>
     );
   }
   if (!pdf) {
-    return <div className="reader-pdf-loading"><span /><p>Préparation du document interactif…</p></div>;
+    return <div className="reader-pdf-loading" role="status"><span /><p>Préparation du document interactif…</p></div>;
   }
 
   return (
@@ -89,8 +127,9 @@ const PdfReader = forwardRef(function PdfReader({
             pdf={pdf}
             pageNumber={page}
             zoom={zoom}
-            highlights={highlights.filter((item) => item.page === page)}
+            highlights={highlightsByPage.get(page) || []}
             register={registerPage}
+            onRendered={markFirstPage}
             onVisible={onPageChange}
           />
         );
@@ -99,52 +138,68 @@ const PdfReader = forwardRef(function PdfReader({
   );
 });
 
-function PdfPage({ pdf, pageNumber, zoom, highlights, register, onVisible }) {
+function PdfPage({ pdf, pageNumber, zoom, highlights, register, onRendered, onVisible }) {
   const shellRef = useRef(null);
   const canvasRef = useRef(null);
   const textRef = useRef(null);
-  const [visible, setVisible] = useState(pageNumber <= 2);
-  const [size, setSize] = useState({ width: 700 * zoom, height: 990 * zoom });
+  const [nearViewport, setNearViewport] = useState(pageNumber <= 2);
+  const [baseSize, setBaseSize] = useState({ width: 700, height: 990 });
   const [renderError, setRenderError] = useState('');
+  const [renderAttempt, setRenderAttempt] = useState(0);
+  const [rendered, setRendered] = useState(false);
+  const size = useMemo(() => ({
+    width: baseSize.width * zoom,
+    height: baseSize.height * zoom,
+  }), [baseSize, zoom]);
 
   useEffect(() => {
     const element = shellRef.current;
     register(pageNumber, element);
     if (!element || typeof IntersectionObserver === 'undefined') {
-      setVisible(true);
+      setNearViewport(true);
+      onVisible?.(pageNumber);
       return () => register(pageNumber, null);
     }
-    const observer = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) setVisible(true);
-        if (entry.intersectionRatio >= 0.45) onVisible?.(pageNumber);
-      }
-    }, { rootMargin: '900px 0px', threshold: [0, 0.45] });
-    observer.observe(element);
+    const root = element.closest('.reader-document');
+    const renderObserver = new IntersectionObserver(([entry]) => {
+      setNearViewport(entry.isIntersecting);
+    }, { root, rootMargin: '1100px 0px', threshold: 0 });
+    const currentObserver = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) onVisible?.(pageNumber);
+    }, { root, rootMargin: '-42% 0px -42% 0px', threshold: 0 });
+    renderObserver.observe(element);
+    currentObserver.observe(element);
     return () => {
-      observer.disconnect();
+      renderObserver.disconnect();
+      currentObserver.disconnect();
       register(pageNumber, null);
     };
   }, [onVisible, pageNumber, register]);
 
   useEffect(() => {
-    if (!visible) return undefined;
+    if (!nearViewport) {
+      setRendered(false);
+      return undefined;
+    }
     let active = true;
     let renderTask;
     let textLayer;
+    setRenderError('');
+    setRendered(false);
     pdf.getPage(pageNumber).then(async (page) => {
       if (!active) return;
       const viewport = page.getViewport({ scale: zoom });
-      setSize({ width: viewport.width, height: viewport.height });
+      setBaseSize({ width: viewport.width / zoom, height: viewport.height / zoom });
       const canvas = canvasRef.current;
       const textContainer = textRef.current;
       if (!canvas || !textContainer) return;
-      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      const ratio = Math.min(window.devicePixelRatio || 1, window.innerWidth <= 760 ? 1.5 : 2);
       canvas.width = Math.floor(viewport.width * ratio);
       canvas.height = Math.floor(viewport.height * ratio);
       canvas.style.width = `${viewport.width}px`;
       canvas.style.height = `${viewport.height}px`;
       const context = canvas.getContext('2d', { alpha: false });
+      if (!context) throw new Error('Canvas indisponible.');
       renderTask = page.render({
         canvasContext: context,
         viewport,
@@ -159,6 +214,10 @@ function PdfPage({ pdf, pageNumber, zoom, highlights, register, onVisible }) {
         viewport,
       });
       await Promise.all([renderTask.promise, textLayer.render()]);
+      if (active) {
+        setRendered(true);
+        onRendered?.(pageNumber);
+      }
     }).catch((reason) => {
       if (active && reason?.name !== 'RenderingCancelledException') {
         setRenderError(reason?.message || 'Page illisible.');
@@ -169,7 +228,7 @@ function PdfPage({ pdf, pageNumber, zoom, highlights, register, onVisible }) {
       renderTask?.cancel();
       textLayer?.cancel();
     };
-  }, [pdf, pageNumber, visible, zoom]);
+  }, [nearViewport, onRendered, pageNumber, pdf, renderAttempt, zoom]);
 
   const positionedHighlights = highlights.flatMap((highlight, highlightIndex) => {
     const regions = highlight.rects?.length ? highlight.rects : (highlight.bbox ? [highlight.bbox] : []);
@@ -189,10 +248,11 @@ function PdfPage({ pdf, pageNumber, zoom, highlights, register, onVisible }) {
       className="reader-pdf-page"
       data-reader-page={pageNumber}
       aria-label={`Page ${pageNumber}`}
+      aria-busy={nearViewport && !rendered && !renderError}
       style={{ width: size.width, minHeight: size.height }}
     >
-      {visible && <canvas ref={canvasRef} className="reader-pdf-canvas" />}
-      {visible && <div ref={textRef} className="textLayer reader-pdf-text" />}
+      {nearViewport && <canvas ref={canvasRef} className="reader-pdf-canvas" aria-hidden="true" />}
+      {nearViewport && <div ref={textRef} className="textLayer reader-pdf-text" />}
       <div className="reader-highlight-layer" aria-hidden="true">
         {positionedHighlights.map((region) => (
           <span
@@ -211,7 +271,12 @@ function PdfPage({ pdf, pageNumber, zoom, highlights, register, onVisible }) {
         )}
       </div>
       <span className="reader-page-number">{pageNumber}</span>
-      {renderError && <p className="reader-page-error">{renderError}</p>}
+      {renderError && (
+        <p className="reader-page-error" role="alert">
+          <span>{renderError}</span>
+          <button type="button" onClick={() => setRenderAttempt((value) => value + 1)}>Réessayer</button>
+        </p>
+      )}
     </section>
   );
 }

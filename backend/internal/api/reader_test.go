@@ -1,6 +1,8 @@
 package api
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -37,6 +39,41 @@ func TestReaderAssetsRejectTraversalAndActiveContent(t *testing.T) {
 	}
 	if _, err := artifactFile(prefix, "../../secret.webp"); err == nil {
 		t.Fatal("traversée d’asset acceptée")
+	}
+}
+
+func TestReaderMetricsAcceptOnlyAggregateDimensions(t *testing.T) {
+	valid := readerMetricRequest{
+		Event:           "selection",
+		Kind:            "pdf",
+		Mode:            "pdf",
+		Outcome:         "anchored",
+		SelectionLength: "11-50",
+		DurationMS:      42,
+	}
+	if err := validateReaderMetric(valid); err != nil {
+		t.Fatalf("mesure agrégée refusée: %v", err)
+	}
+	invalid := valid
+	invalid.Action = "question-utilisateur"
+	if err := validateReaderMetric(invalid); err == nil {
+		t.Fatal("dimension arbitraire acceptée")
+	}
+	invalid = valid
+	invalid.SelectionLength = "citation secrète"
+	if err := validateReaderMetric(invalid); err == nil {
+		t.Fatal("texte libre accepté comme classe")
+	}
+	invalid.SelectionLength = "42-42"
+	if err := validateReaderMetric(invalid); err == nil {
+		t.Fatal("classe numérique non déclarée acceptée")
+	}
+
+	server := &Server{readerMetricHits: newReaderMetricLimiter()}
+	request := httptest.NewRequest(http.MethodPost, "/api/reader/metrics", strings.NewReader(`{"event":"open","sourcePath":"Cours/secret.pdf"}`))
+	response := httptest.NewRecorder()
+	if err := server.handleReaderMetric(response, request); err == nil {
+		t.Fatal("champ documentaire inconnu accepté")
 	}
 }
 

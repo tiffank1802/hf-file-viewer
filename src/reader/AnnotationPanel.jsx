@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { FiEdit3, FiLogIn, FiMapPin, FiTrash2 } from 'react-icons/fi';
+import { FiEdit3, FiLogIn, FiMapPin, FiRefreshCw, FiTrash2 } from 'react-icons/fi';
 
 export default function AnnotationPanel({
   items,
@@ -11,6 +11,7 @@ export default function AnnotationPanel({
   onOpen,
   onUpdate,
   onDelete,
+  onRetry,
 }) {
   if (!authenticated) {
     return (
@@ -25,7 +26,12 @@ export default function AnnotationPanel({
 
   return (
     <div className="reader-annotation-list">
-      {error && <p className="reader-annotation-error" role="alert">{error}</p>}
+      {error && (
+        <div className="reader-annotation-error" role="alert">
+          <p>{error}</p>
+          <button type="button" onClick={onRetry}><FiRefreshCw aria-hidden="true" /> Réessayer</button>
+        </div>
+      )}
       {items.length === 0 && !error && (
         <div className="reader-annotation-empty compact">
           <strong>Aucune annotation</strong>

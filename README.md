@@ -500,6 +500,7 @@ Le Worker Cloudflare et le backend Go exposent les mêmes routes. L’en-tête `
 | `GET /api/reader/page?path=...&artifactId=...&page=...` | blocs Docling de la page PDF demandée |
 | `GET /api/reader/blocks?path=...&artifactId=...&from=...&limit=...` | fenêtre bornée de blocs (`blockId` optionnel pour une navigation directe) |
 | `GET /api/reader/asset?path=...&artifactId=...&asset=...` | illustration déclarée par l’artefact courant, avec type et taille contrôlés |
+| `POST /api/reader/metrics` | mesure R6 agrégée et bornée, sans chemin, sélection, question, note ni identifiant utilisateur |
 | `GET/POST /api/annotations` | liste ou crée les annotations privées du document courant |
 | `PATCH/DELETE /api/annotations/<id>` | modifie ou supprime une annotation appartenant à la session |
 
@@ -507,7 +508,14 @@ Le Worker Cloudflare et le backend Go exposent les mêmes routes. L’en-tête `
 
 L’évolution vers un assistant d’étude attaché à un document, fondé sur les artefacts Docling et compatible avec le futur lecteur interactif, est détaillée dans [`docs/DOCUMENT_AI_STUDY_PLAN.md`](docs/DOCUMENT_AI_STUDY_PLAN.md). La première tranche est opérationnelle : depuis l’aperçu, **Étudier avec l’IA** cible un `sourcePath`, préfère `document.json` et `chunks.jsonl` lorsqu’ils sont prêts, affiche l’état Docling/fallback et rend les citations `[S1]` ouvrables à la page PDF correspondante.
 
-Le lecteur plein écran est implémenté jusqu’au lot R5 : PDF.js, sélection de texte, actions IA contextuelles, citations vers le passage, annotations privées persistantes et vue structurée accessible pour les formats déjà convertis par Docling. Le navigateur rend titres, paragraphes, listes, tableaux, figures, légendes et formules sans HTML non fiable ; l’architecture et le durcissement restant sont détaillés dans [`docs/ALPHAXIV_INTERACTIVE_READER_PLAN.md`](docs/ALPHAXIV_INTERACTIVE_READER_PLAN.md).
+Le lecteur plein écran est implémenté jusqu’au lot R6 : PDF.js virtualise les rendus éloignés, la sélection alimente des actions IA contextuelles, les citations reviennent au passage, les annotations privées persistent et la vue structurée reste accessible pour les formats déjà convertis par Docling. Le navigateur rend titres, paragraphes, listes, tableaux, figures, légendes et formules sans HTML non fiable. R6 ajoute aussi la reprise des lectures réseau, les tiroirs mobiles, les annonces d’accessibilité, les préférences de mouvement/contraste, des métriques strictement agrégées et les scénarios Playwright Chromium/Firefox/WebKit/mobile. Le détail reste dans [`docs/ALPHAXIV_INTERACTIVE_READER_PLAN.md`](docs/ALPHAXIV_INTERACTIVE_READER_PLAN.md).
+
+Le déploiement est contrôlé au build par `VITE_READER_ROLLOUT=off|pilot|pdf|all` (défaut : `all`). Le mode `pilot` exige `VITE_READER_PILOT_PATHS`, liste de chemins exacts séparés par des virgules. Ces variables sont publiques : elles ne doivent contenir aucun secret. Pour la matrice navigateur :
+
+```bash
+npm run test:e2e:install   # une fois sur la machine/CI
+npm run test:e2e
+```
 
 1. **Classement local** de l’index en mémoire (aucun appel réseau). Les mots-outils (« se », « sa ») sont ignorés et un mot-clé doit correspondre à un mot entier : « ex » ne remonte plus « examen ».
 2. **Profil de la question** : une recherche ouvre deux documents, une synthèse (« structure », « annales », « déroulement », « compare »…) en ouvre jusqu’à huit du meilleur dossier et en lit cinq.

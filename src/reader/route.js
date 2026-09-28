@@ -8,15 +8,36 @@ const STRUCTURED_READER_EXTENSIONS = new Set([
   'png', 'jpg', 'jpeg', 'tif', 'tiff', 'webp', 'bmp',
 ]);
 
-export function canOpenStructuredReader(path = '') {
-  return STRUCTURED_READER_EXTENSIONS.has(getExtension(path));
+/**
+ * Modes de déploiement : off, pilot (allowlist exacte), pdf, all.
+ * `all` reste la valeur par défaut afin de ne pas casser les liens existants.
+ */
+export function readerRolloutConfig(environment = import.meta.env) {
+  const mode = String(environment?.VITE_READER_ROLLOUT || 'all').trim().toLowerCase();
+  const pilotPaths = String(environment?.VITE_READER_PILOT_PATHS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return {
+    mode: ['off', 'pilot', 'pdf', 'all'].includes(mode) ? mode : 'all',
+    pilotPaths,
+  };
 }
 
-export function readerFileFromRoute(pathname, search = '') {
+export function canOpenStructuredReader(path = '', rollout = readerRolloutConfig()) {
+  const extension = getExtension(path);
+  if (!STRUCTURED_READER_EXTENSIONS.has(extension)) return false;
+  if (rollout.mode === 'off') return false;
+  if (rollout.mode === 'pdf') return extension === 'pdf';
+  if (rollout.mode === 'pilot') return rollout.pilotPaths.includes(String(path).trim());
+  return true;
+}
+
+export function readerFileFromRoute(pathname, search = '', rollout = readerRolloutConfig()) {
   if (pathname !== '/read') return null;
   const params = new URLSearchParams(search);
   const path = String(params.get('path') || '').trim();
-  if (!path || path.includes('..') || !canOpenStructuredReader(path)) return null;
+  if (!path || path.includes('..') || !canOpenStructuredReader(path, rollout)) return null;
   return normalizeBucketItem({
     type: 'file',
     path,

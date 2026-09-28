@@ -1,23 +1,27 @@
 import {
   forwardRef,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useRef,
   useState,
 } from 'react';
-import { FiArrowUp, FiLoader, FiMessageCircle } from 'react-icons/fi';
+import { FiArrowUp, FiLoader, FiMessageCircle, FiRefreshCw, FiX } from 'react-icons/fi';
 import CitationLink from '../components/CitationLink';
 import { streamChat } from '../services/chat';
+import { emitReaderMetric } from './readerMetrics';
 
 const ReaderAssistant = forwardRef(function ReaderAssistant({
   document,
   selection,
   onCitation,
+  onClose,
 }, ref) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [scope, setScope] = useState(null);
+  const [announcement, setAnnouncement] = useState('');
   const abortRef = useRef(null);
   const idRef = useRef(0);
   const ready = document?.status === 'structured-ready';
@@ -25,6 +29,8 @@ const ReaderAssistant = forwardRef(function ReaderAssistant({
   const ask = useCallback(async (question, intent = 'explain-selection', anchor = selection?.anchor) => {
     const text = String(question || '').trim();
     if (!text || busy || !ready || !document?.sourcePath) return;
+    const startedAt = performance.now();
+    setAnnouncement('Recherche des preuves dans le document.');
     idRef.current += 1;
     const userID = `reader-user-${idRef.current}`;
     idRef.current += 1;
@@ -75,6 +81,12 @@ const ReaderAssistant = forwardRef(function ReaderAssistant({
           }
           if (event === 'done') {
             if (data.scope) setScope(data.scope);
+            setAnnouncement('La réponse de l’assistant est prête.');
+            emitReaderMetric('assistant', {
+              action: intent,
+              outcome: 'success',
+              durationMs: performance.now() - startedAt,
+            });
             patch((message) => ({
               ...message,
               text: data.answer || message.text,
@@ -85,12 +97,19 @@ const ReaderAssistant = forwardRef(function ReaderAssistant({
             }));
           }
           if (event === 'error') {
+            setAnnouncement('La réponse a échoué. Vous pouvez réessayer.');
+            emitReaderMetric('assistant', {
+              action: intent,
+              outcome: 'error',
+              durationMs: performance.now() - startedAt,
+            });
             patch((message) => ({
               ...message,
               text: data.error || 'L’assistant n’a pas pu répondre.',
               pending: false,
               thinking: false,
               error: true,
+              retry: { question: text, intent, anchor },
             }));
           }
         },
@@ -98,12 +117,19 @@ const ReaderAssistant = forwardRef(function ReaderAssistant({
       patch((message) => (message.pending ? { ...message, pending: false } : message));
     } catch (error) {
       if (error.name !== 'AbortError') {
+        setAnnouncement('La réponse a échoué. Vous pouvez réessayer.');
+        emitReaderMetric('assistant', {
+          action: intent,
+          outcome: 'error',
+          durationMs: performance.now() - startedAt,
+        });
         patch((message) => ({
           ...message,
           text: error.message || 'L’assistant n’a pas pu répondre.',
           pending: false,
           thinking: false,
           error: true,
+          retry: { question: text, intent, anchor },
         }));
       }
     } finally {
@@ -113,22 +139,28 @@ const ReaderAssistant = forwardRef(function ReaderAssistant({
 
   useImperativeHandle(ref, () => ({ ask }), [ask]);
 
+  useEffect(() => () => abortRef.current?.abort(), []);
+
   return (
-    <aside className="reader-assistant" aria-label="Assistant du document">
+    <aside id="reader-assistant-panel" className="reader-assistant" aria-label="Assistant du document">
       <header className="reader-assistant-head">
         <div><FiMessageCircle aria-hidden="true" /></div>
         <span>
           <strong>Assistant du document</strong>
           <small>{scopeLabel(scope, ready)}</small>
         </span>
+        <button type="button" className="reader-panel-close" onClick={onClose} aria-label="Fermer l’assistant">
+          <FiX aria-hidden="true" />
+        </button>
+        <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</p>
       </header>
       {selection?.anchor?.quote && (
         <div className="reader-selection-card">
-          <span>Sélection · page {selection.anchor.page}</span>
+          <span>{selection.anchor.page > 0 ? `Sélection · page ${selection.anchor.page}` : 'Sélection · passage structuré'}</span>
           <blockquote>{selection.anchor.quote}</blockquote>
         </div>
       )}
-      <div className="reader-assistant-log" aria-live="polite">
+      <div className="reader-assistant-log">
         {messages.length === 0 && (
           <div className="reader-assistant-empty">
             <strong>{ready ? 'Sélectionnez un passage' : 'Assistant structuré indisponible'}</strong>
@@ -156,6 +188,16 @@ const ReaderAssistant = forwardRef(function ReaderAssistant({
                 ))}
               </div>
             )}
+            {message.retry && (
+              <button
+                type="button"
+                className="reader-assistant-retry"
+                disabled={busy}
+                onClick={() => void ask(message.retry.question, message.retry.intent, message.retry.anchor)}
+              >
+                <FiRefreshCw aria-hidden="true" /> Réessayer
+              </button>
+            )}
           </article>
         ))}
       </div>
@@ -169,6 +211,7 @@ const ReaderAssistant = forwardRef(function ReaderAssistant({
         <textarea
           rows={2}
           maxLength={2000}
+          aria-label="Question à l’assistant du document"
           value={input}
           disabled={!ready}
           placeholder={!ready ? 'Artefact Docling requis' : (selection ? 'Posez une question sur la sélection…' : 'Posez une question sur ce document…')}

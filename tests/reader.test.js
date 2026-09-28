@@ -7,11 +7,13 @@ import {
   listAnnotations,
   updateAnnotation,
 } from '../src/services/annotations.js';
-import { canOpenStructuredReader, readerFileFromRoute } from '../src/reader/route.js';
+import { canOpenStructuredReader, readerFileFromRoute, readerRolloutConfig } from '../src/reader/route.js';
+import { buildReaderMetric, metricBucket } from '../src/reader/readerMetrics.js';
 import {
   fetchReaderBlock,
   fetchReaderBlocks,
   readerAssetUrl,
+  retryAfterMs,
 } from '../src/services/reader.js';
 import {
   buildSelectionAnchor,
@@ -33,6 +35,16 @@ test('la route /read accepte les formats Docling connus et conserve la page dema
   assert.equal(readerFileFromRoute('/read', '?path=Cours%2Fscript.js'), null);
   assert.equal(readerFileFromRoute('/read', '?path=..%2Fsecret.pdf'), null);
   assert.equal(readerFileFromRoute('/', '?path=Cours%2Fmecanique.pdf'), null);
+});
+
+test('le déploiement progressif borne les formats par mode et allowlist pilote', () => {
+  assert.deepEqual(readerRolloutConfig({ VITE_READER_ROLLOUT: 'pdf' }), { mode: 'pdf', pilotPaths: [] });
+  assert.equal(canOpenStructuredReader('Cours/cours.pdf', { mode: 'off', pilotPaths: [] }), false);
+  assert.equal(canOpenStructuredReader('Cours/cours.docx', { mode: 'pdf', pilotPaths: [] }), false);
+  assert.equal(canOpenStructuredReader('Cours/cours.pdf', { mode: 'pdf', pilotPaths: [] }), true);
+  assert.equal(canOpenStructuredReader('Cours/pilote.md', { mode: 'pilot', pilotPaths: ['Cours/pilote.md'] }), true);
+  assert.equal(canOpenStructuredReader('Cours/autre.md', { mode: 'pilot', pilotPaths: ['Cours/pilote.md'] }), false);
+  assert.equal(readerFileFromRoute('/read', '?path=Cours%2Fautre.md', { mode: 'pilot', pilotPaths: [] }), null);
 });
 
 test('la sélection est canonicalisée et reliée à un bloc Docling', () => {
@@ -92,11 +104,36 @@ test('les tableaux Docling sont convertis en cellules textuelles sûres', () => 
   assert.deepEqual(table.rows, [['Traction', '12 | 14 N']]);
 });
 
-test('le client structuré borne les fenêtres et construit les URL d’assets', async () => {
+test('les métriques du lecteur excluent chemins et contenu utilisateur', () => {
+  assert.deepEqual(buildReaderMetric('selection', {
+    mode: 'pdf',
+    outcome: 'anchored',
+    sourcePath: 'Cours/secret.pdf',
+    quote: 'contenu sélectionné',
+    selectionLength: metricBucket(42, [10, 50, 200]),
+    durationMs: 12.7,
+  }), {
+    event: 'selection',
+    mode: 'pdf',
+    outcome: 'anchored',
+    selectionLength: '11-50',
+    durationMs: 13,
+  });
+  assert.equal(buildReaderMetric('événement-libre', { outcome: 'success' }), null);
+  assert.equal(retryAfterMs('0'), 0);
+  assert.equal(retryAfterMs('invalide'), null);
+});
+
+test('le client structuré borne les fenêtres, retente les erreurs transitoires et construit les URL d’assets', async () => {
   const originalFetch = globalThis.fetch;
   const requests = [];
+  let transient = true;
   globalThis.fetch = async (url) => {
     requests.push(String(url));
+    if (transient) {
+      transient = false;
+      return new Response(JSON.stringify({ error: 'indisponible' }), { status: 503, headers: { 'Retry-After': '0' } });
+    }
     return new Response(JSON.stringify({ blocks: [], nextFrom: 0 }), { status: 200 });
   };
   try {
@@ -105,9 +142,11 @@ test('le client structuré borne les fenêtres et construit les URL d’assets',
   } finally {
     globalThis.fetch = originalFetch;
   }
+  assert.equal(requests.length, 3);
   assert.match(requests[0], /\/api\/reader\/blocks\?/);
   assert.match(requests[0], /from=41/);
-  assert.match(requests[1], /blockId=b-target/);
+  assert.equal(requests[1], requests[0]);
+  assert.match(requests[2], /blockId=b-target/);
   assert.match(readerAssetUrl('GM/cours.docx', 'artifact-2', 'figure-1'), /asset=figure-1/);
 });
 

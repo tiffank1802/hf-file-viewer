@@ -172,7 +172,7 @@ export default {
       }
 
       if (url.pathname.startsWith('/api/reader/')) {
-        assertMethod(request, ['GET']);
+        assertMethod(request, url.pathname === '/api/reader/metrics' ? ['POST'] : ['GET']);
         return await proxyGoChat(request, env);
       }
 

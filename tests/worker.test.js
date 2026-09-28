@@ -383,7 +383,7 @@ test('le chat sans origine Go répond 501 et n’appelle pas NVIDIA', async () =
   assert.equal(missing.status, 501);
 });
 
-test('les routes du lecteur sont relayées vers Go et restent en lecture seule', async () => {
+test('les routes du lecteur relaient les lectures et la télémétrie agrégée vers Go', async () => {
   const requested = [];
   const server = http.createServer((req, res) => {
     requested.push(req.url || '');
@@ -410,12 +410,31 @@ test('les routes du lecteur sont relayées vers Go et restent en lecture seule',
     assert.equal(blocks.status, 200);
     assert.match(requested[1], /^\/api\/reader\/blocks\?/);
 
+    const metric = await worker.fetch(
+      new Request('https://enise.test/api/reader/metrics', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ event: 'open', kind: 'pdf' }),
+      }),
+      { GO_API_ORIGIN: `http://127.0.0.1:${port}` },
+      {},
+    );
+    assert.equal(metric.status, 200);
+    assert.equal(requested[2], '/api/reader/metrics');
+
     const rejected = await worker.fetch(
       new Request('https://enise.test/api/reader/document', { method: 'POST' }),
       { GO_API_ORIGIN: `http://127.0.0.1:${port}` },
       {},
     );
     assert.equal(rejected.status, 405);
+
+    const rejectedMetric = await worker.fetch(
+      new Request('https://enise.test/api/reader/metrics'),
+      { GO_API_ORIGIN: `http://127.0.0.1:${port}` },
+      {},
+    );
+    assert.equal(rejectedMetric.status, 405);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

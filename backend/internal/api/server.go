@@ -26,16 +26,17 @@ const staticCSP = "default-src 'self'; script-src 'self' https://static.cloudfla
 
 // Server sert le même contrat /api que le Worker, avec un cache chaud.
 type Server struct {
-	cfg           config.Config
-	cache         *cache.Store
-	client        *http.Client
-	llmClient     *http.Client
-	convertClient *http.Client
-	linkClient    *http.Client
-	tokens        *tokenCache
-	chatHits      *chatLimiter
-	authClient    *http.Client
-	authHits      *authLimiter
+	cfg              config.Config
+	cache            *cache.Store
+	client           *http.Client
+	llmClient        *http.Client
+	convertClient    *http.Client
+	linkClient       *http.Client
+	tokens           *tokenCache
+	chatHits         *chatLimiter
+	readerMetricHits *readerMetricLimiter
+	authClient       *http.Client
+	authHits         *authLimiter
 
 	// Une seule relecture de l’index à la fois, avec un délai minimal entre
 	// deux tentatives.
@@ -64,10 +65,11 @@ func New(cfg config.Config) *Server {
 			Transport:     convertTransport,
 			CheckRedirect: redirectPolicy,
 		},
-		linkClient: newLinkClient(),
-		tokens:     &tokenCache{},
-		chatHits:   newChatLimiter(),
-		authHits:   newAuthLimiter(),
+		linkClient:       newLinkClient(),
+		tokens:           &tokenCache{},
+		chatHits:         newChatLimiter(),
+		readerMetricHits: newReaderMetricLimiter(),
+		authHits:         newAuthLimiter(),
 		authClient: &http.Client{
 			Timeout:   12 * time.Second,
 			Transport: transport,
@@ -145,6 +147,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		err = s.allow(w, r, http.MethodGet, s.handleReaderBlocks)
 	case r.URL.Path == "/api/reader/asset":
 		err = s.allow(w, r, http.MethodGet, s.handleReaderAsset)
+	case r.URL.Path == "/api/reader/metrics":
+		err = s.allow(w, r, http.MethodPost, s.handleReaderMetric)
 	case r.URL.Path == "/api/annotations" || strings.HasPrefix(r.URL.Path, "/api/annotations/"):
 		err = s.handleAnnotations(w, r)
 	case r.URL.Path == "/api/chat/conversations" || strings.HasPrefix(r.URL.Path, "/api/chat/conversations/"):

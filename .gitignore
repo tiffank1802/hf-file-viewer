@@ -49,6 +49,10 @@ coverage/
 *.test.js
 *.spec.js
 !tests/*.test.js
+!tests/e2e/
+!tests/e2e/**/*.spec.js
+playwright-report/
+test-results/
 
 # Cache directories
 .cache/

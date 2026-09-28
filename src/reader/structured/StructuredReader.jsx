@@ -26,6 +26,7 @@ const StructuredReader = forwardRef(function StructuredReader({
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
   const shellRef = useRef(null);
   const nextRef = useRef(0);
   const requestRef = useRef(null);
@@ -72,11 +73,12 @@ const StructuredReader = forwardRef(function StructuredReader({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [loadWindow]);
+  }, [attempt, loadWindow]);
 
   const scrollToElement = useCallback((element) => {
     if (!element) return false;
-    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    element.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' });
     window.setTimeout(() => element.focus({ preventScroll: true }), 350);
     return true;
   }, []);
@@ -187,6 +189,9 @@ const StructuredReader = forwardRef(function StructuredReader({
         <FiBookOpen aria-hidden="true" />
         <strong>Lecture structurée indisponible</strong>
         <p>{error}</p>
+        <button type="button" onClick={() => setAttempt((value) => value + 1)}>
+          <FiRefreshCw aria-hidden="true" /> Réessayer
+        </button>
       </div>
     );
   }
