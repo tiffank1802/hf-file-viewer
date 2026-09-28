@@ -145,11 +145,14 @@ export function writeOrigin(root, origin) {
     throw new Error(`Configuration absente: ${file}`);
   }
   const content = readFileSync(file, 'utf8');
-  const updated = content.replace(/("GO_API_ORIGIN"\s*:\s*)"[^"]*"/, `$1"${origin}"`);
-  if (updated === content) {
+  const pattern = /("GO_API_ORIGIN"\s*:\s*)"[^"]*"/;
+  if (!pattern.test(content)) {
     throw new Error('GO_API_ORIGIN introuvable dans wrangler.jsonc');
   }
-  writeFileSync(file, updated);
+  const updated = content.replace(pattern, `$1"${origin}"`);
+  if (updated !== content) {
+    writeFileSync(file, updated);
+  }
   return origin;
 }
 

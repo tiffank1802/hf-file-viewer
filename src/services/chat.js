@@ -13,7 +13,7 @@ export async function fetchChatStatus(signal) {
   return payload;
 }
 
-export async function streamChat({ message, history, contextPath, conversationId, provider, model, catalog, signal, onEvent }) {
+export async function streamChat({ message, intent, scope, history, contextPath, conversationId, provider, model, catalog, signal, onEvent }) {
   const response = await fetch('/api/chat', {
     method: 'POST',
     signal,
@@ -21,7 +21,7 @@ export async function streamChat({ message, history, contextPath, conversationId
       Accept: 'text/event-stream',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ message, history, contextPath, conversationId, provider, model, catalog }),
+    body: JSON.stringify({ message, intent, scope, history, contextPath, conversationId, provider, model, catalog }),
   });
   const contentType = response.headers.get('Content-Type') || '';
   if (!response.ok || !contentType.includes('text/event-stream') || !response.body) {

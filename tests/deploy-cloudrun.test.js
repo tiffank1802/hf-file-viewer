@@ -61,6 +61,7 @@ export OPENCODE_API_KEY=oc-key
   assert.equal(env.CLOUDFLARE_API_TOKEN, 'cf-token');
   assert.equal(env.OPENCODE_API_KEY, 'oc-key');
   assert.equal(env.CHAT_TRUST_PROXY, FIXED_ENV.CHAT_TRUST_PROXY);
+  assert.equal(env.HF_DERIVED_BUCKET_ID, 'ktongue/ENISE-SITE-DERIVED');
   assert.ok(!('OPENROUTER_API_KEY' in env), 'valeur d’exemple transmise');
   assert.ok(!('NVIDIA_API_KEY' in env), 'valeur d’exemple transmise');
   assert.ok(!('HF_TOKEN' in env), 'HF_TOKEN transmis sans --with-hf-token');

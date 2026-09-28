@@ -31,6 +31,8 @@ services:
         value: "1"
       - key: HF_BUCKET_ID
         value: ktongue/ENISE-SITE
+      - key: HF_DERIVED_BUCKET_ID
+        value: ktongue/ENISE-SITE-DERIVED
       - key: CACHE_DIR
         value: /tmp/enise-docs-cache
       # Moteurs de rédaction : renseigner au moins un moteur.

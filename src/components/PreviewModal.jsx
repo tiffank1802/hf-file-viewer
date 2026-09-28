@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  FiBookOpen,
   FiCheck,
   FiDownload,
   FiExternalLink,
@@ -7,6 +8,7 @@ import {
   FiShare2,
   FiX,
 } from 'react-icons/fi';
+import { canOpenStructuredReader } from '../reader/route';
 import { fileProxyUrl, huggingFaceFileUrl } from '../services/api';
 import { formatBytes, getExtension } from '../utils/files';
 import { FileTypeIcon } from './Icons';
@@ -28,7 +30,7 @@ function DownloadPrompt({ file }) {
   );
 }
 
-export default function PreviewModal({ file, onClose, favorite, onToggleFavorite }) {
+export default function PreviewModal({ file, onClose, favorite, onToggleFavorite, onStudy, onRead }) {
   const [textContent, setTextContent] = useState('');
   const [textLoading, setTextLoading] = useState(false);
   const [textError, setTextError] = useState('');
@@ -93,6 +95,8 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
 
   const proxyUrl = fileProxyUrl(file.path);
   const extension = getExtension(file.path).toUpperCase() || 'FICHIER';
+  const canStudy = ['pdf', 'office', 'text', 'image'].includes(file.kind);
+  const canOpenReader = canOpenStructuredReader(file.path);
 
   const shareFile = async () => {
     const shareUrl = huggingFaceFileUrl(file.path);
@@ -111,7 +115,9 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
 
   const renderPreview = () => {
     if (file.kind === 'pdf') {
-      return <iframe className="pdf-frame" src={proxyUrl} title={`Aperçu de ${file.name}`} />;
+      const page = Number(file.previewPage);
+      const source = page > 0 ? `${proxyUrl}#page=${page}` : proxyUrl;
+      return <iframe className="pdf-frame" src={source} title={`Aperçu de ${file.name}`} />;
     }
     if (file.kind === 'image') {
       return <div className="image-preview"><img src={proxyUrl} alt={file.name} /></div>;
@@ -155,6 +161,17 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
             </div>
           </div>
           <div className="preview-actions">
+            {(canStudy || canOpenReader) && (onStudy || (canOpenReader && onRead)) && (
+              <button
+                type="button"
+                className="preview-study"
+                onClick={() => (canOpenReader && onRead ? onRead(file) : onStudy?.(file))}
+                aria-label={canOpenReader ? 'Ouvrir le lecteur documentaire interactif' : 'Étudier ce document avec l’IA'}
+                title={canOpenReader ? 'Lecteur interactif' : 'Étudier avec l’IA'}
+              >
+                <FiBookOpen aria-hidden="true" /><span>{canOpenReader ? 'Ouvrir dans le lecteur' : 'Étudier'}</span>
+              </button>
+            )}
             <button
               type="button"
               className={favorite ? 'is-favorite' : ''}

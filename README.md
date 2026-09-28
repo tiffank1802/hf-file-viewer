@@ -8,9 +8,9 @@ Bibliothèque étudiante moderne pour les ressources de **Centrale Lyon ENISE**,
 - identité blanche « liquid glass », verte, rouge et jaune ;
 - icônes React (`react-icons`) et logos locaux optimisés ;
 - navigation par dossier, fil d’Ariane, tri, grille/liste ;
-- aperçu PDF, image, audio, vidéo, texte et **visionneuse Office hybride** : rendu local (`.docx`, `.xlsx`/`.xls`, texte `.pptx`), conversion PDF serveur (LibreOffice) et **Viewer Office Web** (`.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`, `.odt`, `.ods`, `.odp`, ≤ 10 Mo) ;
+- aperçu PDF, image, audio, vidéo, texte et **visionneuse Office hybride** : rendu local (`.docx`, `.xlsx`/`.xls`, texte `.pptx`) et **Viewer Office Web** (`.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`, `.odt`, `.ods`, `.odp`, ≤ 10 Mo) ; la conversion PDF à la demande est désactivée sauf service distinct explicitement configuré ;
 - raccourcis **Microsoft OneNote** (`.url`) affichés avec leur cible ouvrable, blocs-notes `.one` disponibles au téléchargement ;
-- aperçu 3D hybride : conversion **GLB gratuite** (FreeCAD) pour `.step`, `.iges`, `.stl`, `.obj` avec rotation, zoom et déplacement, **Autodesk APS** (Model Derivative) pour les autres formats (`.dwg`, `.rvt`, `.sldprt`, `.ifc`, `.catpart`, … — FreeCAD ne lit pas les formats propriétaires), et plugin iframe **ShareCAD** en roue de secours gratuite sans conversion ;
+- aperçu 3D hybride : **Autodesk APS** (Model Derivative), plugin iframe **ShareCAD** et, uniquement si une URL distincte est configurée, conversion GLB ; `ktongue/Rupture` n'est plus un convertisseur 3D ;
 - téléchargement, partage et favoris enregistrés dans le navigateur ;
 - assistant bibliothèque : il retrouve un document, l’ouvre, le résume, et sait croiser plusieurs annales pour répondre à « comment se structure l’examen d’économie ? ». La rédaction reste côté serveur Go ; sans clé, les cartes de documents sont quand même proposées ;
 - **cartes d’espaces construites depuis le bucket** : l’index (`/api/index`) donne l’arborescence et les effectifs, l’en-tête du bucket (`/api/tree` racine) fait foi pour le premier niveau. Un dossier ajouté dans Hugging Face apparaît donc en quelques minutes — **même s’il est encore vide** — avec un badge « Nouveau » et une entrée « Autres dossiers » dans la barre latérale ;
@@ -41,6 +41,25 @@ Navigateur
 
 Le frontend et le Worker sont sur **le même domaine**. Le navigateur n’appelle donc jamais Hugging Face avec une clé secrète et il n’y a pas de problème CORS à gérer.
 
+### Prétraitement documentaire automatisé
+
+Le Space Docker existant [`ktongue/Rupture`](https://huggingface.co/spaces/ktongue/Rupture) est désormais entièrement réservé à Docling :
+
+```text
+ktongue/ENISE-SITE
+        │ scan au démarrage + passages périodiques
+        ▼
+ktongue/Rupture (Docling, traitement séquentiel et reprenable)
+        │ manifest publié en dernier
+        ▼
+ktongue/ENISE-SITE-DERIVED
+  └── reader/v1/{catalog.json,status.json,documents/...}
+```
+
+Les documents sont convertis **avant** consultation. Une signature de l'objet source et `PIPELINE_VERSION` rendent le traitement idempotent ; un catalogue durable reprend après mise en veille ou interruption. Les visiteurs ne déclenchent aucune conversion. Le Space ne contient plus LibreOffice, FreeCAD, SolidWorks ni les anciennes routes de conversion. Voir [`space-huggingface/README.md`](./space-huggingface/README.md) pour les artefacts et [`scripts/README_DEPLOYMENT.md`](./scripts/README_DEPLOYMENT.md) pour le remplacement atomique du Space.
+
+> Un Space gratuit dort lorsqu'il n'est pas utilisé : sa boucle périodique ne constitue pas un cron permanent. Le scan au démarrage reprend automatiquement le travail ; un endpoint administratif protégé permet aussi de réveiller explicitement un passage.
+
 ### Où se trouve chaque cache ?
 
 | Contenu | Cache navigateur | Cache Cloudflare | Origine |
@@ -50,8 +69,8 @@ Le frontend et le Worker sont sur **le même domaine**. Le navigateur n’appell
 | Index `/api/index` | 2 min | Cache API, servi aussitôt, relu après 10 min | API Hugging Face |
 | Comptage `/api/counts` | 2 min | idem index (JSON partagé) | JSON d’index (aucun appel HF) |
 | Fichier `/api/file` | 1 h | Cache API, 7 j | bucket Hugging Face |
-| PDF Office `/api/office/pdf` | 1 h | Cache API, 7 j | Space LibreOffice |
-| GLB 3D `/api/model3d/glb` | 1 h | Cache API, 7 j | Space FreeCAD |
+| PDF Office `/api/office/pdf` | 1 h | Cache API, 7 j | service optionnel distinct (désactivé par défaut) |
+| GLB 3D `/api/model3d/glb` | 1 h | Cache API, 7 j | service optionnel distinct (désactivé par défaut) |
 | Aperçu lien `/api/link/preview` | 1 h | Cache API, 24 h | page cible |
 
 Les fichiers ne sont ajoutés au Cache API que si une réponse complète possède une taille connue inférieure ou égale à **25 Mio**. Les requêtes `Range` et les fichiers plus grands sont transmis sans mise en cache par le Worker (`BYPASS-RANGE` ou `BYPASS-SIZE`) ; le CDN de Hugging Face peut néanmoins les optimiser.
@@ -140,7 +159,7 @@ npm run deploy
 
 Le script active les API Cloud Run / Cloud Build / Artifact Registry, construit l’image depuis [`backend/Dockerfile`](./backend/Dockerfile), déploie le service `enise-docs-api` (région `europe-west1`, public, délai 300 s, 0 à 3 instances), vérifie `/api/health` puis écrit `GO_API_ORIGIN` dans `wrangler.jsonc`. `npm run deploy` republie ensuite le Worker.
 
-Seules les clés utiles de `.dev.vars` sont transmises au service (moteurs de rédaction, modèles, Appwrite) ; `CHAT_TRUST_PROXY=1` est fixé d’office. `HF_TOKEN` n’est envoyé qu’avec `--with-hf-token` (bucket privé). Autres options : `--region`, `--service`, `--no-origin`, `--dry-run` (affiche la commande `gcloud` sans rien déployer). Le projet peut aussi venir de `GOOGLE_CLOUD_PROJECT` ou du `.firebaserc` (`firebase use --add`).
+Seules les clés utiles de `.dev.vars` sont transmises au service (moteurs de rédaction, modèles, Appwrite) ; `CHAT_TRUST_PROXY=1`, le bucket source et `HF_DERIVED_BUCKET_ID=ktongue/ENISE-SITE-DERIVED` sont fixés d’office. `HF_TOKEN` n’est envoyé qu’avec `--with-hf-token` (bucket privé). Autres options : `--region`, `--service`, `--no-origin`, `--dry-run` (affiche la commande `gcloud` sans rien déployer). Le projet peut aussi venir de `GOOGLE_CLOUD_PROJECT` ou du `.firebaserc` (`firebase use --add`).
 
 > Cloud Run s’arrête quand personne ne l’utilise ; une instance Go redémarre en une à deux secondes, et le cache repart à vide (l’index se recharge depuis Hugging Face).
 >
@@ -236,7 +255,7 @@ La modale d’aperçu propose jusqu’à **3 modes** (sélecteur en haut, préf�
 |---|---|---|---|---|
 | **Aperçu local** | `.docx`/`.docm`, `.xlsx`/`.xls`/`.xlsm` | `docx-preview`, `xlsx` (SheetJS CE) + grille maison | bonne | ≤ 15 Mo, ≤ 50 000 cellules |
 | **Texte local** | `.pptx`/`.pptm` | `jszip` (extraction du texte par diapo) | texte seul | ≤ 15 Mo |
-| **PDF** | `.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`, `.odt`, `.ods`, `.odp` | conversion LibreOffice côté serveur | très bonne | Space configuré (voir ci-dessous) |
+| **PDF** | formats Office | service distinct optionnel | très bonne | désactivé par défaut ; ne pas utiliser `ktongue/Rupture` |
 | **Microsoft** | `doc`, `docx`, `xls`, `xlsx`, `ppt`, `pptx`, `odt`, `ods`, `odp`, … | Viewer Office Web (`view.officeapps.live.com`) | maximale | site public, ≤ 10 Mo |
 
 - Les librairies locales sont chargées en `import()` dynamique : le bundle initial n’augmente pas, aucun CDN externe n’est utilisé (aucune modification CSP requise).
@@ -244,27 +263,18 @@ La modale d’aperçu propose jusqu’à **3 modes** (sélecteur en haut, préf�
 - Le mode Microsoft nécessite toujours une URL publique : en développement `localhost`, utiliser l’**Aperçu local** ou l’URL publique exposée par l’environnement (`npm run dev:worker`).
 - Les bases `.odb` (LibreOffice Base) affichent leur **structure lue localement** (tables, requêtes, formulaires, états + moteur source) : aucun service web ne sait afficher une base de données, les données restent consultables après téléchargement dans LibreOffice Base.
 
-### Conversion PDF via LibreOffice (mode « PDF »)
+### Conversion PDF à la demande (compatibilité optionnelle)
 
-Le Worker ne peut pas convertir lui-même (binaire natif, CPU limité) : il délègue au Space Docker [`space-huggingface/`](./space-huggingface/) (LibreOffice headless), puis met le PDF en cache (Cache API, 7 j) :
+`OFFICE_CONVERT_URL` est vide par défaut. Le Space de ce dépôt n'expose plus LibreOffice : il préconvertit le corpus avec Docling et publie les artefacts dans le bucket dérivé. Les aperçus locaux et Microsoft restent disponibles sans service.
 
-```text
-Navigateur
-   ├── GET /api/office/status   -> conversion configurée ou non
-   └── GET /api/office/pdf      -> Worker : HF (source) → Space → PDF caché
+Les routes historiques `/api/office/status` et `/api/office/pdf` sont conservées pour brancher, si nécessaire, **un service Office distinct** :
+
+```bash
+# wrangler.jsonc ou .dev.vars — ne pas utiliser ktongue/Rupture
+OFFICE_CONVERT_URL="https://<service-office-distinct>.example"
 ```
 
-1. Déployer le Space Docker (`space-huggingface/`, SDK `docker`, port `7860`).
-2. Renseigner son URL publique :
-   ```bash
-   # production (variable publique, affichée dans wrangler.jsonc)
-   # OFFICE_CONVERT_URL="https://<votre-space>.hf.space"
-   # développement local dans .dev.vars :
-   # OFFICE_CONVERT_URL="https://<votre-space>.hf.space"
-   ```
-3. Redéployer (`npm run deploy`). Sans cette variable, le mode « PDF » est masqué et les autres modes restent disponibles.
-
-Premier appel à froid : compter jusqu’à une minute si le Space gratuit dormait ; les appels suivants sont cachés côté Cloudflare.
+Sans cette variable, le mode PDF serveur est masqué. Cette compatibilité ne doit pas servir de chemin normal : les documents connus doivent être préparés par le pipeline batch.
 
 ### Raccourcis `.url` (dont liens OneNote)
 
@@ -282,38 +292,32 @@ Ce viewer remplace l’ancienne intégration ONLYOFFICE : aucun document server 
 
 Les fichiers modèles (`.dwg`, `.dxf`, `.dwf`, `.rvt`, `.rfa`, `.ifc`, `.ipt`, `.iam`, `.sldprt`, `.sldasm`, `.stp`, `.step`, `.igs`, `.iges`, `.obj`, `.stl`, `.sat`, `.x_t`, `.x_b`, `.3ds`, `.fbx`, `.dae`, `.skp`, …) sont ouverts dans la modale d’aperçu avec rotation, zoom et panoramique à la souris. Les modes disponibles (onglets, préférence mémorisée) sont :
 
-- **Aperçu Web** (défaut, gratuit) : les formats `.step`, `.stp`, `.iges`, `.igs`, `.stl` et `.obj` sont convertis en GLB par le Space FreeCAD puis affichés en WebGL (three.js), avec choix de la qualité du maillage (brouillon/standard/fin), rotation automatique et statistiques (triangles, dimensions, volume). FreeCAD ne lit pas les formats propriétaires : `.sldprt`, `.dwg`, assemblages… restent sur Autodesk ou ShareCAD.
+- **Aperçu Web** (compatibilité, désactivé par défaut) : les formats `.step`, `.stp`, `.iges`, `.igs`, `.stl` et `.obj` peuvent être convertis en GLB par un service 3D distinct puis affichés en WebGL (three.js). Le Space `ktongue/Rupture` ne remplit plus ce rôle.
 - **Export SolidWorks → STEP** (nouveau, configuration HOOPS requise) : pour `.sldprt` et `.sldasm`, le bouton « Exporter STEP » appelle le service HOOPS Converter, écrit le résultat sous `derived/step/` dans le bucket et conserve un manifest SHA-256. Le fichier source original n’est jamais écrasé.
 - **Autodesk** (fidélité maximale, configuration requise) : tous les formats via APS / Model Derivative.
 - **ShareCAD** (tiers gratuit, sans conversion) : `.dwg`, `.dxf`, `.dwf`, `.step`, `.iges`, `.stl`, `.sldprt`, `.sat`, `.x_t`, `.x_b` affichés via le plugin iframe `iframe.sharecad.org`, sans compte ni conversion. Le fichier est téléchargé et stocké sur les serveurs ShareCAD (limite 50 Mo) : chargement sur clic explicite uniquement, à réserver aux documents non confidentiels.
 
 Les formats sans conversion GLB ni support ShareCAD (`.rvt`, `.ifc`, `.catpart`, assemblages, …) n’affichent que l’onglet Autodesk ; si Autodesk APS n’est pas configuré, la modale conserve l’écran de téléchargement actuel.
 
-### Aperçu Web via FreeCAD (mode « Web »)
+### Aperçu Web via un service 3D distinct (mode « Web »)
 
-Le Worker exécute le pipeline **FreeCAD → GLB** (style 3Dfindit) :
+Les routes historiques restent disponibles pour un convertisseur GLB séparé :
 
 ```text
 Navigateur
-   ├── GET /api/model3d/status        -> conversion configurée ou non
-   ├── GET /api/model3d/glb?path=...  -> Worker : HF (source) → Space → GLB caché
-   └── three.js -> modèle 3D interactif (+ X-Model3D-Meta : triangles, bbox…)
+   ├── GET /api/model3d/status        -> service distinct configuré ou non
+   ├── GET /api/model3d/glb?path=...  -> Worker : HF → service 3D → GLB caché
+   └── three.js -> modèle interactif
 ```
 
-Le Space par défaut est `ktongue/Rupture` (public, aucun token côté Worker). Pour utiliser un autre Space, définir `MODEL3D_CONVERT_URL` (vide = mode Web désactivé) :
+Aucune URL n'est configurée par défaut. `ktongue/Rupture` est réservé au batch Docling et ne doit pas être renseigné ici :
 
 ```bash
-# wrangler.jsonc (vars) ou .dev.vars en local :
-MODEL3D_CONVERT_URL="https://<votre-space>.hf.space"
+# wrangler.jsonc ou .dev.vars, seulement avec un autre service
+MODEL3D_CONVERT_URL="https://<service-3d-distinct>.example"
 ```
 
-Déployer le Space depuis ce dépôt (sauvegarder l’éventuelle application existante du Space, l’upload écrase son contenu) :
-
-```bash
-HF_TOKEN="hf_..." npm run deploy:space -- --space-id <utilisateur>/<space>
-```
-
-Par défaut, les fichiers de plus de 25 Mo sont refusés (`MAX_MODEL3D_BYTES`) et les GLB sont mis en cache 7 jours (`MODEL3D_CACHE_TTL`). Le premier appel après une mise en veille du Space peut prendre jusqu’à une minute (réveil + conversion).
+Les fichiers de plus de 25 Mo sont refusés (`MAX_MODEL3D_BYTES`) et les GLB sont mis en cache 7 jours (`MODEL3D_CACHE_TTL`). Autodesk APS et ShareCAD restent les solutions 3D intégrées lorsque cette variable est vide.
 
 ### Export SolidWorks vers STEP et enregistrement dans le bucket
 
@@ -344,13 +348,7 @@ MAX_SOLIDWORKS_BUNDLE_BYTES="262144000"
 npx wrangler secret put SOLIDWORKS_CONVERTER_TOKEN
 ```
 
-C62144000"
-
-# secret partagé uniquement avec le service HOOPS
-npx wrangler secret put SOLIDWORKS_CONVERTER_TOKEN
-```
-
-Configuration du service (voir [`space-huggingface/README.md`](space-huggingface/README.md)) :
+Le service HOOPS doit rester distinct de `ktongue/Rupture`. Il reçoit
 `HOOPS_CONVERTER_PATH`, `HOOPS_LICENSE_FILE` ou `HOOPS_LICENSE_KEY`,
 `HF_BUCKET_ID`, `HF_TOKEN` avec permission d’écriture et
 `SOLIDWORKS_CONVERTER_TOKEN`. Le package propriétaire HOOPS n’est pas inclus
@@ -458,11 +456,11 @@ Règles importantes :
 
 Pour un déploiement CI GitHub, stocker `CLOUDFLARE_API_TOKEN` et `CLOUDFLARE_ACCOUNT_ID` dans les **GitHub Actions Secrets**, jamais dans le dépôt.
 
-## Compte et favoris
+## Compte, favoris et annotations privées
 
-La connexion et les favoris passent par le backend Go, pas par le SDK Appwrite dans le navigateur. Le projet est **Django objects** (`https://fra.cloud.appwrite.io/v1`, `69cedb12002acdd498e0`).
+La connexion, les favoris et les annotations privées passent par le backend Go, pas par le SDK Appwrite dans le navigateur. Le projet est **Django objects** (`https://fra.cloud.appwrite.io/v1`, `69cedb12002acdd498e0`).
 
-Le compte (email, mot de passe, nom) vit dans Appwrite Auth. La promotion, la filière, les favoris et les conversations de l’assistant vivent dans la base `enise_docs`, tables `profiles`, `favorites`, `conversations` et `messages`. Cette base se crée une fois, depuis ta machine, avec une clé serveur :
+Le compte (email, mot de passe, nom) vit dans Appwrite Auth. La promotion, la filière, les favoris, les conversations de l’assistant et les annotations du lecteur vivent dans la base `enise_docs`, tables `profiles`, `favorites`, `conversations`, `messages` et `annotations`. Cette base se crée une fois, depuis ta machine, avec une clé serveur :
 
 ```bash
 # Console Appwrite → API Keys → databases.write, puis dans .dev.vars :
@@ -471,7 +469,7 @@ npm run appwrite:setup
 npm run appwrite:status
 ```
 
-Sans cette clé, la connexion marche déjà. Les cœurs et le profil ne s’enregistrent qu’après le script. Les anciens favoris laissés dans le navigateur sont repris au premier compte connecté, puis la copie locale est effacée.
+Sans cette clé, la connexion marche déjà. Les cœurs, le profil et les annotations ne s’enregistrent qu’après le script. Les anciens favoris laissés dans le navigateur sont repris au premier compte connecté, puis la copie locale est effacée.
 
 ## API
 
@@ -489,21 +487,50 @@ Le Worker Cloudflare et le backend Go exposent les mêmes routes. L’en-tête `
 | `GET /api/aps/token` | jeton public Autodesk pour la visionneuse 3D |
 | `POST /api/aps/view?path=...` | prépare le fichier 3D : OSS + conversion SVF2 |
 | `GET /api/aps/status?path=...` | état et progression de la conversion 3D |
-| `GET /api/model3d/status` | conversion GLB FreeCAD configurée ou non |
-| `GET /api/model3d/glb?path=...&quality=...` | GLB converti via FreeCAD (mis en cache, métadonnées `X-Model3D-Meta`) |
+| `GET /api/model3d/status` | service GLB distinct configuré ou non (désactivé par défaut) |
+| `GET /api/model3d/glb?path=...&quality=...` | GLB via service distinct optionnel (cache, métadonnées `X-Model3D-Meta`) |
 | `GET /api/solidworks/status` | export SolidWorks → STEP configuré ou non |
 | `POST /api/solidworks/step?path=...&force=1` | convertit `.sldprt`/`.sldasm` avec HOOPS et enregistre le STEP dans le bucket |
 | `GET /api/office/status` | conversion PDF Office configurée ou non |
-| `GET /api/office/pdf?path=...` | PDF converti via LibreOffice (mis en cache) |
+| `GET /api/office/pdf?path=...` | PDF via service Office distinct optionnel (désactivé par défaut) |
 | `GET /api/link/preview?url=...` | aperçu enrichi d’un lien `.url` (Open Graph, mis en cache) |
 | `GET /api/chat/status` | assistant prêt, local, ou non configuré. Jamais de clé dans la réponse |
 | `POST /api/chat` | question en JSON, réponse en flux (`text/event-stream`) : documents, réflexion éventuelle, puis texte |
+| `GET /api/reader/document?path=...` | métadonnées, capacités et plan Docling du lecteur interactif |
+| `GET /api/reader/page?path=...&artifactId=...&page=...` | blocs Docling de la page PDF demandée |
+| `GET /api/reader/blocks?path=...&artifactId=...&from=...&limit=...` | fenêtre bornée de blocs (`blockId` optionnel pour une navigation directe) |
+| `GET /api/reader/asset?path=...&artifactId=...&asset=...` | illustration déclarée par l’artefact courant, avec type et taille contrôlés |
+| `POST /api/reader/metrics` | mesure R6 agrégée et bornée, sans chemin, sélection, question, note ni identifiant utilisateur |
+| `GET/POST /api/annotations` | liste ou crée les annotations privées du document courant |
+| `PATCH/DELETE /api/annotations/<id>` | modifie ou supprime une annotation appartenant à la session |
 
 ### Assistant : ce qui se passe derrière une question
 
+L’évolution vers un assistant d’étude attaché à un document, fondé sur les artefacts Docling et compatible avec le futur lecteur interactif, est détaillée dans [`docs/DOCUMENT_AI_STUDY_PLAN.md`](docs/DOCUMENT_AI_STUDY_PLAN.md). La première tranche est opérationnelle : depuis l’aperçu, **Étudier avec l’IA** cible un `sourcePath`, préfère `document.json` et `chunks.jsonl` lorsqu’ils sont prêts, affiche l’état Docling/fallback et rend les citations `[S1]` ouvrables à la page PDF correspondante.
+
+Le lecteur plein écran est implémenté jusqu’au lot R6 : PDF.js virtualise les rendus éloignés, la sélection alimente des actions IA contextuelles, les citations reviennent au passage, les annotations privées persistent et la vue structurée reste accessible pour les formats déjà convertis par Docling. Le navigateur rend titres, paragraphes, listes, tableaux, figures, légendes et formules sans HTML non fiable. R6 ajoute aussi la reprise des lectures réseau, les tiroirs mobiles, les annonces d’accessibilité, les préférences de mouvement/contraste, des métriques strictement agrégées et les scénarios Playwright Chromium/Firefox/WebKit/mobile. Le détail reste dans [`docs/ALPHAXIV_INTERACTIVE_READER_PLAN.md`](docs/ALPHAXIV_INTERACTIVE_READER_PLAN.md).
+
+Le déploiement est contrôlé au build par `VITE_READER_ROLLOUT=off|pilot|pdf|all` (défaut : `all`). Le mode `pilot` exige `VITE_READER_PILOT_PATHS`, liste de chemins exacts séparés par des virgules. Ces variables sont publiques : elles ne doivent contenir aucun secret. Pour la matrice navigateur :
+
+```bash
+npm run test:e2e:install   # une fois sur la machine/CI
+npm run test:e2e
+```
+
+Avant de passer de `off` à `pilot`, l’audit opérationnel choisit des artefacts `ready` légers et variés dans le catalogue, puis vérifie santé API, métadonnées, fenêtres de blocs, navigation directe et requêtes Range PDF. Il est strictement en lecture seule : il n’appelle ni le Space, ni `/api/sync`, ni une route de conversion.
+
+```bash
+npm run reader:audit -- \
+  --origin https://votre-api-go.example \
+  --limit 8 \
+  --json reader-rollout-report.json
+```
+
+Le rapport affiche uniquement chemins et métadonnées techniques, puis produit l’allowlist `VITE_READER_PILOT_PATHS` avec les documents ayant passé tous les contrôles. La sélection automatique écarte les rares chemins impossibles à représenter sans ambiguïté dans la liste séparée par des virgules. Un code de sortie non nul interdit l’activation pilote.
+
 1. **Classement local** de l’index en mémoire (aucun appel réseau). Les mots-outils (« se », « sa ») sont ignorés et un mot-clé doit correspondre à un mot entier : « ex » ne remonte plus « examen ».
 2. **Profil de la question** : une recherche ouvre deux documents, une synthèse (« structure », « annales », « déroulement », « compare »…) en ouvre jusqu’à huit du meilleur dossier et en lit cinq.
-3. **Lecture des extraits** (texte, PDF, docx, pptx, xlsx) puis rédaction par le moteur choisi (Cloudflare Workers AI, OpenRouter, NVIDIA ou OpenCode). Pour les PDF, seul le texte des pages (entre `BT` et `ET`) est lu : les noms de polices et les métadonnées sont ignorés, les morceaux d’un même mot sont recollés. Un PDF à polices encodées par glyphes donne du bruit (« ÿÿ A B D… ») : l’extrait est écarté et le modèle s’appuie alors sur le nom et le chemin du document. Le modèle choisi dans le menu ne s’applique qu’à son moteur ; si tous échouent, la note indique la raison de chacun (clé refusée, quota, délai…).
+3. **Lecture structurée ou fallback**, puis rédaction par le moteur choisi (Cloudflare Workers AI, OpenRouter, NVIDIA ou OpenCode). Pour un document ciblé et `ready`, Go relie les chunks Docling aux titres, blocs et pages, mesure la couverture et injecte des preuves citées ; sinon il conserve l’extraction locale historique. Pour les PDF en fallback, seul le texte des pages (entre `BT` et `ET`) est lu : un encodage par glyphes peut donc rester illisible. Le modèle choisi dans le menu ne s’applique qu’à son moteur ; si tous échouent, la note indique la raison de chacun (clé refusée, quota, délai…).
 4. **Réflexion des modèles** : leur raisonnement arrive dans `reasoning_content`. Il est lu (et annoncé au navigateur par un événement `thinking`) au lieu d’être pris pour un flux vide.
 5. **Robustesse** : budget de jetons élargi (`CHAT_MAX_TOKENS`, `CHAT_DEEP_MAX_TOKENS`), délai porté à `CHAT_ANSWER_TIMEOUT`, une seconde tentative si le budget a été épuisé par la réflexion, repli sur le modèle par défaut si le modèle choisi est introuvable, puis le moteur suivant s’il existe. En dernier recours : les documents trouvés, avec la raison réelle de l’échec, le moteur et le modèle essayés.
 

@@ -1,302 +1,161 @@
-# ⚠️ Document obsolète — Pipeline de conversion et visualisation web CAO
+# Pipeline documentaire ENISE
 
-> **Ce document n'est plus à jour et n'est conservé qu'à titre d'archive.**
-> La documentation de référence est [`README.md`](README.md) (site + Worker)
-> et [`space-huggingface/README.md`](space-huggingface/README.md) (Space).
->
-> Prémisse devenue fausse : **FreeCAD ne sait pas lire les fichiers
-> SolidWorks (`.sldprt`)** — aucun importeur n'existe pour ce format
-> propriétaire (vérifié : `Import.insert()` répond `File format not
-> supported`, aucun module SolidWorks dans le paquet Debian). Le pipeline
-> GLB gratuit couvre `.step`, `.iges`, `.stl`, `.obj` ; les `.sldprt`
-> passent par la visionneuse Autodesk (ou un export STEP préalable).
+> **Architecture active depuis le 28 septembre 2026** : le Space `ktongue/Rupture` est un préprocesseur batch Docling. Les anciennes instructions FreeCAD / LibreOffice de ce document ont été retirées : elles ne correspondent plus au Space déployé.
 
-Ancien contenu ci-dessous (exemples `gradio_client` / `/process_file` et
-mentions `.sldprt` : ne plus utiliser) :
+## Objectif
 
-## 📁 Structure du projet
+Tous les documents étant déjà connus dans `ktongue/ENISE-SITE`, ils sont préparés avant la visite. L'utilisateur final lit les résultats et ajoute ses annotations ; il ne déclenche jamais de conversion.
 
-```
-/workspace/
-├── space-huggingface/          # Hugging Face Space (moteur de conversion)
-│   ├── Dockerfile              # Configuration Docker avec FreeCAD
-│   ├── requirements.txt        # Dépendances Python
-│   ├── app.py                  # Application Gradio (API de conversion)
-│   ├── freecad_convert.py      # Script de conversion FreeCAD
-│   └── README.md               # Documentation du Space
-│
-├── client-examples/            # Exemples d'intégration client
-│   ├── python-client.py        # Client Python (gradio_client)
-│   ├── javascript-client.js    # Client JavaScript (@gradio/client)
-│   └── model-viewer-integration.html  # Viewer HTML avec model-viewer
-│
-├── scripts/                    # Scripts de déploiement
-│   ├── deploy-space.js         # Script de déploiement automatique
-│   └── README_DEPLOYMENT.md    # Documentation du déploiement
-│
-└── PIPELINE_README.md          # Ce fichier
+```text
+Storage Bucket source
+ktongue/ENISE-SITE (~55 Go)
+        │
+        │ inventaire récursif + comparaison au catalogue
+        ▼
+Docker Space ktongue/Rupture
+Docling 2.130.0 · traitement séquentiel
+        │
+        │ artefacts immuables, manifest publié en dernier
+        ▼
+Storage Bucket dérivé
+ktongue/ENISE-SITE-DERIVED
 ```
 
-## 🏗️ Architecture
+## Composants
 
+```text
+space-huggingface/
+├── Dockerfile             # Python + Docling, sans LibreOffice/FreeCAD
+├── requirements.txt       # versions du runtime
+├── app.py                 # API, planificateur, verrou, tableau de bord
+├── reader_pipeline.py     # scan, conversion, reprise et publication
+└── README.md              # variables et exploitation
+
+scripts/
+├── deploy-space.js        # remplacement atomique du Space + pruning distant
+└── README_DEPLOYMENT.md   # procédure opérateur
+
+tests/
+├── deploy-space.test.js   # commit NDJSON et suppressions
+└── test_reader_pipeline.py# signatures, sélection incrémentale et réglages
 ```
-┌─────────────────┐     ┌─────────────────────────────┐     ┌──────────────────┐
-│  Utilisateur    │     │  Hugging Face Space         │     │  Site Web        │
-│  upload .sldprt │────▶│  (Docker + FreeCAD)         │────▶│  <model-viewer>  │
-│                 │     │                             │     │                  │
-│                 │     │  1. freecadcmd: .sldprt     │     │  Affichage GLB   │
-│                 │     │           → .stl            │     │  interactif      │
-│                 │     │  2. trimesh: .stl → .glb    │     │                  │
-│                 │     │     (échelle: 0.001)        │     │                  │
-└─────────────────┘     └─────────────────────────────┘     └──────────────────┘
+
+## Cycle d'une synchronisation
+
+1. vérifier le secret `HF_TOKEN` ;
+2. ouvrir ou créer le bucket dérivé ;
+3. charger `reader/v1/catalog.json` ;
+4. lister récursivement le bucket source ;
+5. ne garder que les extensions autorisées et trier les sources par taille croissante ;
+6. limiter la première vague à 15 Mio par fichier sur `cpu-basic` ;
+7. calculer une identité à partir du chemin, de la taille, de la date, du hash Xet et de `PIPELINE_VERSION` ;
+8. ignorer les artefacts prêts et identiques ;
+9. télécharger une source dans `/tmp` ;
+10. convertir avec Docling (OCR, structure, tableaux et figures) ;
+11. écrire le document normalisé et les chunks ;
+12. publier tous les payloads avec reprise exponentielle des erreurs Hub/Xet transitoires ;
+13. publier `manifest.json` en dernier ;
+14. pointer le catalogue vers l'artefact prêt ;
+15. supprimer les fichiers temporaires ;
+16. poursuivre même si un autre document échoue.
+
+Le catalogue est checkpointé régulièrement. Après une interruption, le dernier petit groupe peut être refait, mais les artefacts publiés gardent la même identité et aucun visiteur ne voit un artefact partiel comme prêt.
+
+## Formats
+
+Allowlist par défaut :
+
+```text
+.pdf .docx .pptx .xlsx .odt .ods .odp
+.html .htm .md .txt .csv .adoc .asciidoc .tex .epub
+.eml .msg .vtt
+.png .jpg .jpeg .tif .tiff .webp .bmp
 ```
 
-## 🚀 Déploiement du Space Hugging Face
+Les formats Office historiques `.doc`, `.xls`, `.ppt` et `.rtf` sont exclus : les prendre en charge imposerait LibreOffice, volontairement supprimé du Space. Ils doivent être migrés une fois vers PDF ou OOXML.
 
-### Option A : Déploiement automatique (recommandé)
+Les fichiers CAO/3D ne sont pas traités par Docling. La visualisation 3D du site repose sur Autodesk APS, ShareCAD ou un éventuel service distinct configuré explicitement. `MODEL3D_CONVERT_URL` est vide par défaut.
 
-Un script Node.js est fourni pour créer et déployer automatiquement le Space.
+## Contrat d'artefact
 
-**Prérequis :**
-- Token Hugging Face avec permissions `write` et `repo.create`
-- Node.js >= 20.19.0 installé
+```text
+reader/v1/documents/<slug>/<artifact-id>/
+├── manifest.json
+├── document.json
+├── docling.json
+├── content.md
+├── chunks.jsonl
+└── assets/figure-*.webp
+```
 
-**Commande :**
+- `docling.json` conserve la structure riche native ;
+- `document.json` propose des blocs stables, provenance, tableaux et liens vers les figures ;
+- `chunks.jsonl` prépare la recherche et l'IA contextuelle ;
+- les figures WebP servent au futur lecteur interactif ;
+- `manifest.json` contient les versions, empreintes, chemins et compteurs.
+
+L'identité de l'artefact change lorsque la source ou le pipeline change. Les anciens préfixes restent immuables tant qu'une politique de rétention séparée ne les purge pas.
+
+## Automatisation
+
+- scan au démarrage : `AUTO_SYNC_ON_START=1` ;
+- boucle pendant l'éveil : `SYNC_INTERVAL_SECONDS=21600` ;
+- commande protégée : `POST /api/sync`, secret `SYNC_TOKEN` ;
+- arrêt coopératif : `POST /api/stop` ;
+- exclusion mutuelle : une seule synchronisation par processus ;
+- serveur Uvicorn : un seul worker pour éviter plusieurs planificateurs.
+
+Un Space gratuit endormi n'exécute rien. Le scan de démarrage et l'état durable offrent une reprise fiable, mais pas une horloge permanente.
+
+## Déploiement
 
 ```bash
-# Installation des dépendances (une seule fois)
-npm install
-
-# Déploiement automatique
-HF_TOKEN=votre_token_huggingface npm run deploy:space
+export HF_TOKEN="hf_..."
+export SYNC_TOKEN="..." # facultatif
+npm run deploy:space
 ```
 
-**Options avancées :**
+Le script cible `ktongue/Rupture`, configure le runtime, inventorie l'arbre distant et pousse **un seul commit** contenant :
+
+- les cinq fichiers utiles ;
+- les suppressions de tous les autres chemins, sauf `.gitattributes`.
+
+C'est ce mécanisme qui retire réellement les anciens `CAL_IA.py`, fichiers de calcul, helpers FreeCAD, configurations et caches Python distants.
+
+## Tests
 
 ```bash
-# Space avec un nom personnalisé
-HF_TOKEN=votre_token npm run deploy:space -- --space-id mon-org/mon-space
-
-# Créer un Space privé
-HF_TOKEN=votre_token npm run deploy:space -- --private
-
-# Seulement créer le Space (sans uploader les fichiers)
-HF_TOKEN=votre_token npm run deploy:space -- --skip-files
-
-# Aide complète
-npm run deploy:space -- --help
+npm test
+python3 -m unittest tests/test_reader_pipeline.py
+python3 -m py_compile space-huggingface/app.py space-huggingface/reader_pipeline.py
 ```
 
-Le script va automatiquement :
-1. Récupérer votre username Hugging Face
-2. Créer le Space en mode Docker
-3. Uploader tous les fichiers (`Dockerfile`, `app.py`, etc.)
-4. Attendre le déploiement complet
-5. Vous fournir l'URL finale
-
-📖 **Documentation complète** : Voir [`scripts/README_DEPLOYMENT.md`](scripts/README_DEPLOYMENT.md)
-
----
-
-### Option B : Déploiement manuel
-
-Si vous préférez déployer manuellement via l'interface web.
-
-#### Étape 1 : Créer un nouveau Space
-
-1. Allez sur https://huggingface.co/spaces
-2. Cliquez sur "Create new Space"
-3. Remplissez :
-   - **Space name**: `sldprt-to-glb` (ou votre choix)
-   - **License**: MIT
-   - **SDK**: **Docker** (important !)
-   - **Visibility**: Public ou Private selon vos besoins
-
-#### Étape 2 : Pousser les fichiers
+Un test Docker complet est recommandé avant le premier déploiement :
 
 ```bash
-cd /workspace/space-huggingface
+docker build -t enise-docling-indexer space-huggingface
 
-# Initialiser le repo Git si nécessaire
-git init
-git add .
-git commit -m "Initial commit: SolidWorks to GLB converter"
-
-# Ajouter le remote Hugging Face
-git remote add origin https://huggingface.co/spaces/YOUR_USERNAME/sldprt-to-glb
-
-# Pousser
-git push -u origin main
+docker run --rm -p 7860:7860 \
+  -e HF_TOKEN \
+  -e AUTO_SYNC_ON_START=0 \
+  enise-docling-indexer
 ```
 
-#### Étape 3 : Attendre le build
+Puis :
 
-- Le Space va construire l'image Docker (~5-10 minutes)
-- Une fois prêt, l'interface Gradio sera accessible
-- Notez l'URL du Space : `https://huggingface.co/spaces/YOUR_USERNAME/sldprt-to-glb`
-
-## 📡 Appel de l'API depuis votre site
-
-### Option A : Backend Python
-
-```python
-from gradio_client import Client
-
-# Initialiser le client
-client = Client("YOUR_USERNAME/sldprt-to-glb")
-
-# Convertir un fichier
-result = client.predict(
-    uploaded_file="/chemin/vers/fichier.sldprt",
-    api_name="/process_file"
-)
-
-print(f"Fichier GLB généré : {result}")
+```bash
+curl http://localhost:7860/api/health
+curl http://localhost:7860/api/status
 ```
 
-Voir `/workspace/client-examples/python-client.py` pour un exemple complet avec Flask.
+## Suite côté application
 
-### Option B : Backend Node.js/JavaScript
+Le Space ne doit plus recevoir de fonctionnalités visiteurs. La suite se trouve dans le site et le backend :
 
-```javascript
-import { Client } from "@gradio/client";
+1. lire `catalog.json`, `document.json` et les assets ;
+2. afficher pages, blocs, figures et provenance ;
+3. enregistrer des annotations ancrées sur les identifiants de blocs ;
+4. fournir à l'IA les chunks proches du passage sélectionné ;
+5. gérer la migration d'une annotation lorsque `artifact-id` change.
 
-const client = new Client("YOUR_USERNAME/sldprt-to-glb");
-
-const result = await client.predict("/process_file", {
-    uploaded_file: fileInput.files[0]
-});
-
-console.log("GLB file:", result.data);
-```
-
-Voir `/workspace/client-examples/javascript-client.js` pour un exemple complet avec Express.
-
-### ⚠️ Important : Sécurité
-
-- **Toujours appeler le Space depuis votre backend**, jamais directement depuis le navigateur
-- Stockez `HF_TOKEN` dans les variables d'environnement (jamais dans le code client)
-- Pour un Space public, le token n'est pas requis pour la lecture
-
-## 🎨 Intégration du viewer 3D
-
-### Utilisation de `<model-viewer>`
-
-```html
-<script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js"></script>
-
-<model-viewer
-    src="URL_DE_VOTRE_FICHIER_GLB.glb"
-    camera-controls
-    auto-rotate
-    shadow-intensity="1"
-    style="width: 100%; height: 500px;">
-</model-viewer>
-```
-
-Voir `/workspace/client-examples/model-viewer-integration.html` pour une implémentation complète avec :
-- Contrôles interactifs (rotation, zoom, panoramique)
-- Bouton AR pour mobile
-- Indicateurs de chargement
-- Interface responsive
-
-## ⚠️ Limites et considérations
-
-### Limitations techniques
-
-| Aspect | Préservé ? | Notes |
-|--------|-----------|-------|
-| Géométrie | ✅ Oui | Maillage tessellé |
-| Couleurs | ❌ Non | Perdu dans la conversion |
-| Matériaux | ❌ Non | Perdu dans la conversion |
-| Historique paramétrique | ❌ Non | Format maillé uniquement |
-| Assemblages | ⚠️ Partiel | Tester au cas par cas |
-
-### Fiabilité de lecture .sldprt
-
-Le module d'import `.sldprt` de FreeCAD est **expérimental** :
-
-- ✅ **Fonctionne bien** : Pièces simples, géométrie basique
-- ⚠️ **Peut échouer** : Surfaces complexes, features récentes
-- ❌ **Non supporté** : Certaines fonctionnalités SolidWorks avancées
-
-### Cold Start
-
-Les Spaces gratuits se mettent en veille après inactivité :
-- **Premier appel** : 30-60 secondes (cold start)
-- **Appels suivants** : ~5-10 secondes
-
-Prévoyez un état de chargement dans votre UI.
-
-## 🔧 Personnalisation
-
-### Modifier l'échelle de conversion
-
-Dans `app.py`, ligne ~85 :
-```python
-geom.apply_scale(0.001)  # mm → mètres
-```
-
-Ajustez selon vos besoins (certaines pièces peuvent être dans une autre unité).
-
-### Augmenter le timeout FreeCAD
-
-Dans `app.py`, ligne ~55 :
-```python
-timeout=120  # secondes
-```
-
-Augmentez pour des pièces très complexes.
-
-### Changer la qualité du maillage
-
-Dans `freecad_convert.py`, ligne ~45 :
-```python
-mesh = Mesh.Mesh(obj.Shape.tessellate(0.1)[0])
-```
-
-Valeur plus petite = maillage plus fin (mais fichier plus lourd).
-
-## 📊 Cas d'usage recommandés
-
-| Usage | Recommandé | Alternative |
-|-------|-----------|-------------|
-| Portfolio personnel | ✅ Oui | - |
-| Prototype / MVP | ✅ Oui | - |
-| Visualisation client simple | ✅ Oui | - |
-| Assemblages complexes | ⚠️ Tester | HOOPS Exchange |
-| Tolérances critiques | ❌ Non | CAD Exchanger |
-| Conservation couleurs | ❌ Non | SDK commercial |
-
-## 🆘 Dépannage
-
-### Erreur : "freecadcmd not found"
-→ Vérifiez que le Space utilise bien le SDK Docker (pas Gradio natif)
-
-### Erreur : "Failed to open document"
-→ Le fichier .sldprt utilise des features non supportées par FreeCAD
-→ Essayez d'exporter depuis SolidWorks en STEP ou IGES, puis convertissez
-
-### Timeout de conversion
-→ La pièce est trop complexe
-→ Augmentez le timeout dans `app.py` ou simplifiez le maillage
-
-### Fichier GLB vide ou corrompu
-→ Vérifiez que le fichier STL intermédiaire a été créé
-→ Consultez les logs du Space Hugging Face
-
-## 📄 Licences
-
-- **Code source** : MIT License
-- **FreeCAD** : LGPL-2.0-or-later
-- **trimesh** : MIT License
-- **model-viewer** : Apache 2.0
-- **Gradio** : Apache 2.0
-
-## 🔗 Ressources
-
-- [Documentation FreeCAD](https://wiki.freecad.org/)
-- [Documentation trimesh](https://trimsh.org/)
-- [Documentation model-viewer](https://modelviewer.dev/)
-- [Documentation Gradio Client](https://www.gradio.app/guides/getting-started-with-the-python-client)
-- [Hugging Face Spaces Docker](https://huggingface.co/docs/hub/spaces-sdks-docker)
+Le plan détaillé est dans [`docs/INTERACTIVE_DOCUMENT_READING_PLAN.md`](docs/INTERACTIVE_DOCUMENT_READING_PLAN.md).

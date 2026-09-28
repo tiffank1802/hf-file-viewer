@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FiHeart, FiHome, FiSearch } from 'react-icons/fi';
 import CategoryGrid from './components/CategoryGrid';
 import Explorer from './components/Explorer';
@@ -7,6 +7,7 @@ import Header from './components/Header';
 import Hero from './components/Hero';
 import LibraryChat from './components/LibraryChat';
 import PreviewModal from './components/PreviewModal';
+import { canOpenStructuredReader, readerFileFromRoute } from './reader/route';
 import SearchPalette from './components/SearchPalette';
 import SideNav from './components/SideNav';
 import AuthPanel from './components/AuthPanel';
@@ -16,7 +17,10 @@ import { useIndexCatalog } from './hooks/useIndexCatalog';
 import { buildHomeCards } from './utils/spaces';
 import { useAuth } from './hooks/useAuth';
 import { useFavorites } from './hooks/useFavorites';
+import { normalizeBucketItem } from './utils/files';
 import './index.css';
+
+const DocumentWorkspace = lazy(() => import('./reader/DocumentWorkspace'));
 
 export default function App() {
   const library = useLibrary();
@@ -29,6 +33,10 @@ export default function App() {
     [catalog, library.path, library.items],
   );
   const [selectedFile, setSelectedFile] = useState(null);
+  const [studyFile, setStudyFile] = useState(null);
+  const [readerFile, setReaderFile] = useState(() => readerFileFromRoute(window.location.pathname, window.location.search));
+  const readerReturnUrl = useRef('/');
+  const readerOpenedHere = useRef(false);
   const [searchState, setSearchState] = useState({ open: false, mode: 'search' });
   const [authPanel, setAuthPanel] = useState({ open: false, mode: 'signin' });
   const [dismissedAlertKey, setDismissedAlertKey] = useState(null);
@@ -49,6 +57,33 @@ export default function App() {
     setSearchState((current) => ({ ...current, open: false }));
   }, []);
   const closePreview = useCallback(() => setSelectedFile(null), []);
+  const studySelectedFile = useCallback((file) => {
+    setSelectedFile(null);
+    setStudyFile(file);
+  }, []);
+  const openReader = useCallback((file) => {
+    const item = normalizeBucketItem(file);
+    if (!item.path || !canOpenStructuredReader(item.path)) return;
+    readerReturnUrl.current = `${window.location.pathname}${window.location.search}`;
+    const params = new URLSearchParams({ path: item.path });
+    if (Number(item.previewPage) > 1) params.set('page', String(item.previewPage));
+    window.history.pushState({ reader: true }, '', `/read?${params}`);
+    readerOpenedHere.current = true;
+    setSelectedFile(null);
+    setReaderFile(item);
+  }, []);
+  const closeReader = useCallback(() => {
+    setReaderFile(null);
+    if (readerOpenedHere.current) {
+      readerOpenedHere.current = false;
+      window.history.back();
+      return;
+    }
+    const target = readerReturnUrl.current && !readerReturnUrl.current.startsWith('/read')
+      ? readerReturnUrl.current
+      : '/';
+    window.history.replaceState({}, '', target);
+  }, []);
 
   const toggleFavorite = favorites.toggle;
 
@@ -57,6 +92,12 @@ export default function App() {
     if (params.get('recover') === '1') openAuth('recover');
     else if (params.get('verify') === '1') openAuth('signin');
   }, [openAuth]);
+
+  useEffect(() => {
+    const onPopState = () => setReaderFile(readerFileFromRoute(window.location.pathname, window.location.search));
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -77,6 +118,30 @@ export default function App() {
   }, [openSearch]);
 
   const selectedIsFavorite = selectedFile ? favoritePaths.includes(selectedFile.path) : false;
+
+  if (readerFile) {
+    const params = new URLSearchParams(window.location.search);
+    return (
+      <>
+        <Suspense fallback={<div className="reader-route-loading">Préparation du lecteur interactif…</div>}>
+          <DocumentWorkspace
+            key={readerFile.path}
+            file={readerFile}
+            initialPage={Number(params.get('page')) || Number(readerFile.previewPage) || 1}
+            authenticated={auth.isAuthenticated}
+            onRequireAuth={() => openAuth('signin')}
+            onClose={closeReader}
+          />
+        </Suspense>
+        <AuthPanel
+          open={authPanel.open}
+          mode={authPanel.mode}
+          onModeChange={(mode) => setAuthPanel({ open: true, mode })}
+          onClose={closeAuth}
+        />
+      </>
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -195,6 +260,8 @@ export default function App() {
         onNavigate={library.navigate}
         onOpenFile={setSelectedFile}
         onOpenAuth={openAuth}
+        studyDocument={studyFile}
+        onClearStudy={() => setStudyFile(null)}
       />
       <CloudflareAnalytics />
       <PreviewModal
@@ -202,6 +269,8 @@ export default function App() {
         onClose={closePreview}
         favorite={selectedIsFavorite}
         onToggleFavorite={toggleFavorite}
+        onStudy={studySelectedFile}
+        onRead={openReader}
       />
     </div>
   );

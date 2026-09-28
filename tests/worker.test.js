@@ -383,6 +383,102 @@ test('le chat sans origine Go répond 501 et n’appelle pas NVIDIA', async () =
   assert.equal(missing.status, 501);
 });
 
+test('les routes du lecteur relaient les lectures et la télémétrie agrégée vers Go', async () => {
+  const requested = [];
+  const server = http.createServer((req, res) => {
+    requested.push(req.url || '');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{"schemaVersion":"reader-ui/v1","status":"structured-ready"}');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const response = await worker.fetch(
+      new Request('https://enise.test/api/reader/document?path=GM%2Fcours.pdf'),
+      { GO_API_ORIGIN: `http://127.0.0.1:${port}` },
+      {},
+    );
+    assert.equal(response.status, 200);
+    assert.equal(requested[0], '/api/reader/document?path=GM%2Fcours.pdf');
+    assert.equal((await response.json()).status, 'structured-ready');
+
+    const blocks = await worker.fetch(
+      new Request('https://enise.test/api/reader/blocks?path=GM%2Fcours.docx&artifactId=a1&from=1&limit=40'),
+      { GO_API_ORIGIN: `http://127.0.0.1:${port}` },
+      {},
+    );
+    assert.equal(blocks.status, 200);
+    assert.match(requested[1], /^\/api\/reader\/blocks\?/);
+
+    const metric = await worker.fetch(
+      new Request('https://enise.test/api/reader/metrics', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ event: 'open', kind: 'pdf' }),
+      }),
+      { GO_API_ORIGIN: `http://127.0.0.1:${port}` },
+      {},
+    );
+    assert.equal(metric.status, 200);
+    assert.equal(requested[2], '/api/reader/metrics');
+
+    const rejected = await worker.fetch(
+      new Request('https://enise.test/api/reader/document', { method: 'POST' }),
+      { GO_API_ORIGIN: `http://127.0.0.1:${port}` },
+      {},
+    );
+    assert.equal(rejected.status, 405);
+
+    const rejectedMetric = await worker.fetch(
+      new Request('https://enise.test/api/reader/metrics'),
+      { GO_API_ORIGIN: `http://127.0.0.1:${port}` },
+      {},
+    );
+    assert.equal(rejectedMetric.status, 405);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('les annotations privées relaient GET, POST, PATCH et DELETE avec la session', async () => {
+  const preflight = await worker.fetch(new Request('https://enise.test/api/annotations/row-1', { method: 'OPTIONS' }), {}, {});
+  assert.equal(preflight.status, 204);
+  assert.match(preflight.headers.get('access-control-allow-methods') || '', /PATCH/);
+  assert.match(preflight.headers.get('access-control-allow-methods') || '', /DELETE/);
+
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    seen.push({ method: req.method, url: req.url, cookie: req.headers.cookie || '' });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{"ok":true,"items":[]}');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const env = { GO_API_ORIGIN: `http://127.0.0.1:${port}` };
+  try {
+    for (const [method, path, body] of [
+      ['GET', '/api/annotations?path=GM%2Fcours.pdf&artifactId=a1'],
+      ['POST', '/api/annotations', '{}'],
+      ['PATCH', '/api/annotations/row-1', '{}'],
+      ['DELETE', '/api/annotations/row-1'],
+    ]) {
+      const response = await worker.fetch(new Request(`https://enise.test${path}`, {
+        method,
+        headers: { cookie: 'enise_session=private', ...(body ? { 'content-type': 'application/json' } : {}) },
+        body,
+      }), env, {});
+      assert.equal(response.status, 200, `${method} ${path}`);
+    }
+    assert.deepEqual(seen.map((item) => item.method), ['GET', 'POST', 'PATCH', 'DELETE']);
+    assert.ok(seen.every((item) => item.cookie === 'enise_session=private'));
+
+    const rejected = await worker.fetch(new Request('https://enise.test/api/annotations/row-1', { method: 'POST' }), env, {});
+    assert.equal(rejected.status, 405);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('le compte sans origine Go répond 501', async () => {
   const response = await worker.fetch(new Request('https://enise.test/api/auth/session'), {}, {});
   assert.equal(response.status, 501);

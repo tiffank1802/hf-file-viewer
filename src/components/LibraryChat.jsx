@@ -1,14 +1,22 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { FiMessageCircle, FiSend, FiX } from 'react-icons/fi';
+import { FiBookOpen, FiMessageCircle, FiSend, FiX } from 'react-icons/fi';
 import { catalogHint, fetchChatStatus, listConversations, loadConversation, streamChat } from '../services/chat';
 import { useAuth } from '../hooks/useAuth';
 import { getFileKind, normalizeBucketItem, parentPath } from '../utils/files';
+import CitationLink from './CitationLink';
 
 const SUGGESTIONS = [
   'Où sont les polys de mécanique en 3A ?',
   'Je cherche les tutos SolidWorks',
   'Quels documents pour le TOEIC ?',
   'Résume un cours d’anglais',
+];
+
+const STUDY_ACTIONS = [
+  { label: 'Résumer le document', intent: 'summary', question: 'Résume ce document en couvrant toutes les sections représentées.' },
+  { label: 'Faire une fiche de révision', intent: 'study-guide', question: 'Crée une fiche de révision structurée de ce document, avec notions, définitions et méthodes importantes.' },
+  { label: 'Afficher le plan', intent: 'outline', question: 'Présente le plan détaillé du document et explique brièvement le rôle de chaque partie.' },
+  { label: 'Notions essentielles', intent: 'explain', question: 'Quelles sont les notions essentielles à comprendre dans ce document ?' },
 ];
 
 const KIND_LABEL = {
@@ -24,7 +32,15 @@ const KIND_LABEL = {
   file: 'Fichier',
 };
 
-export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile, onOpenAuth }) {
+export default function LibraryChat({
+  path = '',
+  catalog,
+  onNavigate,
+  onOpenFile,
+  onOpenAuth,
+  studyDocument,
+  onClearStudy,
+}) {
   const auth = useAuth();
   const userId = auth.user?.id ?? null;
   const [open, setOpen] = useState(false);
@@ -38,6 +54,8 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
   const [sessionReady, setSessionReady] = useState(false);
   const [status, setStatus] = useState(null);
   const [statusError, setStatusError] = useState('');
+  const [activeDocument, setActiveDocument] = useState(null);
+  const [scopeStatus, setScopeStatus] = useState(null);
   const [selectedProvider, setSelectedProvider] = useState(() => {
     try {
       return window.localStorage.getItem('enise-chat-provider') || '';
@@ -63,6 +81,22 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
 
   useEffect(() => () => abortRef.current?.abort(), []);
   useEffect(() => { conversationRef.current = conversationId; }, [conversationId]);
+
+  useEffect(() => {
+    if (!studyDocument?.path) return;
+    const item = normalizeBucketItem(studyDocument);
+    if (!item.path || item.type === 'directory') return;
+    abortRef.current?.abort();
+    conversationRef.current = '';
+    setActiveDocument(item);
+    setScopeStatus(null);
+    setConversationId('');
+    setMessages([]);
+    setHistoryNote('');
+    setPane('chat');
+    setBusy(false);
+    setOpen(true);
+  }, [studyDocument]);
 
   useEffect(() => {
     conversationRef.current = '';
@@ -136,12 +170,22 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
     setConversationId('');
     setMessages([]);
     setHistoryNote('');
+    setScopeStatus(null);
     setBusy(false);
     setPane('chat');
   }
 
+  function leaveDocumentStudy() {
+    startFresh();
+    setActiveDocument(null);
+    onClearStudy?.();
+  }
+
   async function openStored(id) {
     if (!id || busy) return;
+    setActiveDocument(null);
+    setScopeStatus(null);
+    onClearStudy?.();
     setHistoryNote('');
     setBusy(true);
     try {
@@ -158,18 +202,25 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
     }
   }
 
-  function openDocument(doc) {
+  function openDocument(doc, citation) {
     const item = normalizeBucketItem(doc);
     if (!item.path) return;
     if (item.type === 'directory') {
       onNavigate(item.path);
       return;
     }
+    const page = Number(citation?.page);
     onNavigate(parentPath(item.path));
-    onOpenFile(item);
+    onOpenFile(page > 0 ? { ...item, previewPage: page, citationBlockId: citation?.blockIds?.[0] || '' } : item);
   }
 
-  async function ask(text) {
+  function openCitation(citation) {
+    const doc = activeDocument
+      || (citation?.sourcePath && { path: citation.sourcePath, type: 'file', name: citation.sourcePath.split('/').pop() });
+    if (doc) openDocument(doc, citation);
+  }
+
+  async function ask(text, intent = '') {
     const question = text.trim();
     if (!question || busy) return;
     const history = messages
@@ -178,12 +229,12 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
       .map((item) => ({ role: item.role, content: item.text }));
     const currentConversation = conversationRef.current;
     idRef.current += 1;
-    const userId = `m${idRef.current}`;
+    const userMessageId = `m${idRef.current}`;
     idRef.current += 1;
     const assistantId = `m${idRef.current}`;
     setMessages((current) => [
       ...current,
-      { id: userId, role: 'user', text: question },
+      { id: userMessageId, role: 'user', text: question },
       { id: assistantId, role: 'assistant', text: '', documents: [], pending: true, question },
     ]);
     setInput('');
@@ -197,18 +248,34 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
     try {
       await streamChat({
         message: question,
+        intent,
+        scope: activeDocument ? {
+          type: 'document',
+          sourcePath: activeDocument.path,
+          artifactId: scopeStatus?.artifactId || undefined,
+        } : undefined,
         history,
         conversationId: currentConversation,
-        contextPath: path,
+        contextPath: activeDocument ? parentPath(activeDocument.path) : path,
         provider: activeOption?.id || selectedProvider,
         model: selectedModel || activeOption?.model || '',
         catalog: catalogHint(catalog, status),
         signal: controller.signal,
         onEvent: ({ event, data }) => {
+          if (event === 'scope') {
+            setScopeStatus(data);
+            patch((item) => ({ ...item, scope: data }));
+          }
           if (event === 'sources') patch((item) => ({ ...item, documents: data.documents || [] }));
+          if (event === 'citations') patch((item) => ({
+            ...item,
+            citations: data.citations || [],
+            coverage: data.coverage || null,
+          }));
           if (event === 'thinking') patch((item) => ({ ...item, thinking: true }));
           if (event === 'delta') patch((item) => ({ ...item, text: `${item.text}${data.text || ''}` }));
           if (event === 'done') {
+            if (data.scope) setScopeStatus(data.scope);
             if (data.conversationId) {
               rememberSession(userId, data.conversationId);
               setConversationId(data.conversationId);
@@ -232,6 +299,10 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
               attempted: data.attempted || '',
               notice: data.notice || '',
               degraded: Boolean(data.degraded),
+              scope: data.scope || item.scope,
+              citations: data.citations || item.citations || [],
+              coverage: data.coverage || item.coverage || null,
+              knowledgeSource: data.knowledgeSource || item.knowledgeSource || '',
               thinking: false,
               pending: false,
             }));
@@ -307,8 +378,8 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
         <section className="library-chat-panel" id={panelId} role="dialog" aria-labelledby={titleId}>
           <header className="library-chat-head">
             <div>
-              <strong id={titleId}>Assistant bibliothèque</strong>
-              <p>{path ? `Dossier ouvert : ${path}` : 'Toute la bibliothèque'}</p>
+              <strong id={titleId}>{activeDocument ? 'Étudier avec l’IA' : 'Assistant bibliothèque'}</strong>
+              <p>{activeDocument?.name || (path ? `Dossier ouvert : ${path}` : 'Toute la bibliothèque')}</p>
             </div>
             {statusError ? (
               <span className="library-chat-pill">{statusError ? 'Hors ligne' : engineLabel}</span>
@@ -400,6 +471,16 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
             </div>
           ) : (
           <>
+          {activeDocument && (
+            <div className="library-chat-scope">
+              <FiBookOpen aria-hidden="true" />
+              <div>
+                <strong>{activeDocument.name}</strong>
+                <span>{scopeStatusLabel(scopeStatus)}</span>
+              </div>
+              <button type="button" onClick={leaveDocumentStudy} disabled={busy}>Quitter</button>
+            </div>
+          )}
           {conversationId && (
             <div className="library-chat-session-bar">
               <span>Session en cours</span>
@@ -410,17 +491,25 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
           <div className="library-chat-log" role="tabpanel" aria-live="polite">
             {messages.length === 0 && (
               <article className="library-chat-bubble assistant">
-                <AnswerText text="Je parcours la bibliothèque pour te proposer un document, le résumer et t’y emmener. Pose une question sur un cours, une année ou TOEIC." />
+                <AnswerText text={activeDocument
+                  ? `Je vais étudier **${activeDocument.name}**. Si sa conversion Docling est prête, mes réponses utiliseront ses sections, pages, tableaux et citations ; sinon je signalerai une lecture partielle.`
+                  : 'Je parcours la bibliothèque pour te proposer un document, le résumer et t’y emmener. Pose une question sur un cours, une année ou TOEIC.'} />
               </article>
             )}
             {statusError && <p className="library-chat-note">{statusError}</p>}
             {messages.length === 0 && (
               <div className="library-chat-suggestions">
-                {SUGGESTIONS.map((suggestion) => (
-                  <button key={suggestion} type="button" disabled={busy} onClick={() => ask(suggestion)}>
-                    {suggestion}
-                  </button>
-                ))}
+                {activeDocument
+                  ? STUDY_ACTIONS.map((action) => (
+                    <button key={action.intent} type="button" disabled={busy} onClick={() => ask(action.question, action.intent)}>
+                      {action.label}
+                    </button>
+                  ))
+                  : SUGGESTIONS.map((suggestion) => (
+                    <button key={suggestion} type="button" disabled={busy} onClick={() => ask(suggestion)}>
+                      {suggestion}
+                    </button>
+                  ))}
               </div>
             )}
             {messages.map((message) => (
@@ -435,7 +524,20 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
                   <p className="library-chat-engine">Lecture des documents…</p>
                 )}
                 {message.text && (
-                  <AnswerText text={message.text} documents={message.documents} onOpen={openDocument} />
+                  <AnswerText
+                    text={message.text}
+                    documents={message.documents}
+                    citations={message.citations}
+                    onOpen={openDocument}
+                    onOpenCitation={openCitation}
+                  />
+                )}
+                {message.citations?.length > 0 && (
+                  <div className="library-chat-citations" aria-label="Citations du document">
+                    {message.citations.map((citation) => (
+                      <CitationLink key={citation.citationId} citation={citation} onOpen={openCitation} />
+                    ))}
+                  </div>
                 )}
                 {message.documents?.length > 0 && (
                   <div className="library-chat-docs">
@@ -450,7 +552,7 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
                       ? (message.degraded && message.attempted
                         ? `Rédaction automatique indisponible avec ${engineName(message.attempted)} · ${modelName(message.model)}.`
                         : 'Recherche dans la bibliothèque.')
-                      : `Rédigé avec ${engineName(message.engine)}, à partir des documents de la bibliothèque.`}
+                      : `Rédigé avec ${engineName(message.engine)}, à partir ${message.knowledgeSource === 'docling' ? 'de la structure Docling et des citations du document' : 'des documents de la bibliothèque'}.`}
                     {!message.degraded && message.model ? ` Modèle : ${modelName(message.model)}.` : ''}
                   </p>
                 )}
@@ -487,7 +589,7 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
               rows={2}
               maxLength={2000}
               value={input}
-              placeholder="Un cours, une année, un examen…"
+              placeholder={activeDocument ? 'Une question sur ce document…' : 'Un cours, une année, un examen…'}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {
@@ -504,7 +606,7 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
             {userId
               ? 'Cette session est enregistrée dans ton compte.'
               : 'Connecte-toi pour garder cette session dans ton compte.'}
-            {' '}Les cartes viennent de la bibliothèque.
+            {' '}{activeDocument ? 'Les réponses structurées indiquent leurs pages et blocs sources.' : 'Les cartes viennent de la bibliothèque.'}
           </p>
           </>
           )}
@@ -512,6 +614,23 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
       )}
     </>
   );
+}
+
+function scopeStatusLabel(scope) {
+  switch (scope?.status) {
+    case 'structured-ready':
+      return 'Analyse structurée Docling';
+    case 'artifact-failed':
+      return 'Conversion structurée en échec · lecture partielle';
+    case 'artifact-oversized':
+      return 'Document lourd · lecture partielle';
+    case 'artifact-unavailable':
+      return 'Artefact indisponible · lecture partielle';
+    case 'conversion-pending':
+      return 'Conversion en préparation · lecture partielle';
+    default:
+      return 'Vérification de la version structurée…';
+  }
 }
 
 function sessionKeyFor(userId) {
@@ -599,22 +718,22 @@ function DocumentCard({ doc, onOpen }) {
   );
 }
 
-function AnswerText({ text, documents = [], onOpen }) {
+function AnswerText({ text, documents = [], citations = [], onOpen, onOpenCitation }) {
   return parseAnswer(text).map((block, index) => {
     if (block.type === 'h') {
-      return <h3 key={index}>{renderInline(block.text, documents, onOpen)}</h3>;
+      return <h3 key={index}>{renderInline(block.text, documents, citations, onOpen, onOpenCitation)}</h3>;
     }
     if (block.type === 'ul' || block.type === 'ol') {
       const List = block.type === 'ol' ? 'ol' : 'ul';
       return (
         <List key={index}>
           {block.items.map((item, itemIndex) => (
-            <li key={itemIndex}>{renderInline(item, documents, onOpen)}</li>
+            <li key={itemIndex}>{renderInline(item, documents, citations, onOpen, onOpenCitation)}</li>
           ))}
         </List>
       );
     }
-    return <p key={index}>{renderInline(block.text, documents, onOpen)}</p>;
+    return <p key={index}>{renderInline(block.text, documents, citations, onOpen, onOpenCitation)}</p>;
   });
 }
 
@@ -650,9 +769,15 @@ function parseAnswer(text) {
   return blocks;
 }
 
-function renderInline(line, documents, onOpen) {
-  const parts = line.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+function renderInline(line, documents, citations, onOpen, onOpenCitation) {
+  const parts = line.split(/(\*\*[^*]+\*\*|`[^`]+`|\[S\d+\])/g);
   return parts.map((part, index) => {
+    if (/^\[S\d+\]$/.test(part)) {
+      const citation = citations.find((item) => `[${item.citationId}]` === part);
+      if (citation) {
+        return <CitationLink key={index} citation={citation} onOpen={onOpenCitation} compact />;
+      }
+    }
     if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
       return <strong key={index}>{part.slice(2, -2)}</strong>;
     }
