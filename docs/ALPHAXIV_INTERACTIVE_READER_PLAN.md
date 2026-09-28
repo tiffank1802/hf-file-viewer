@@ -2,7 +2,7 @@
 
 **Version : 28 septembre 2026**
 
-**Statut : première tranche R0–R3 implémentée — validation d’intégration et déploiement en cours (28 septembre 2026)**
+**Statut : lots R0–R4 implémentés — provisioning Appwrite, validation Go et déploiement en cours (28 septembre 2026)**
 
 **Portée prioritaire : documents PDF déjà préconvertis par Docling**
 
@@ -728,4 +728,4 @@ PreviewModal
   → retour page + highlight temporaire
 ```
 
-Ne commencer les notes persistantes, la vue structurée multi-format et les commentaires partagés qu’après validation de cette tranche. Elle teste les trois risques principaux avec un périmètre borné : rendu PDF, ancrage Docling et réponse IA vérifiable.
+Cette tranche verticale a servi de base au lot R4 d’annotations privées. La vue structurée multi-format et les commentaires partagés restent différés jusqu’à la validation en production du rendu PDF, de l’ancrage Docling, des réponses IA vérifiables et de la restauration des annotations.

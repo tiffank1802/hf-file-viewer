@@ -84,8 +84,8 @@ export default {
         status: 204,
         headers: {
           ...API_SECURITY_HEADERS,
-          Allow: 'GET, HEAD, POST, OPTIONS',
-          'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
+          Allow: 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
+          'Access-Control-Allow-Methods': 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
           'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
           'Access-Control-Max-Age': '86400',
         },
@@ -179,6 +179,12 @@ export default {
       if (url.pathname === '/api/chat/status' || url.pathname === '/api/chat') {
         assertMethod(request, url.pathname === '/api/chat' ? ['POST'] : ['GET']);
         return await proxyGoChat(request, env);
+      }
+
+      if (url.pathname === '/api/annotations' || url.pathname.startsWith('/api/annotations/')) {
+        const root = url.pathname === '/api/annotations';
+        assertMethod(request, root ? ['GET', 'POST'] : ['PATCH', 'DELETE']);
+        return await proxyGoAuth(request, env);
       }
 
       if (url.pathname.startsWith('/api/auth/') || url.pathname === '/api/favorites' || url.pathname.startsWith('/api/favorites/')) {

@@ -73,6 +73,9 @@ APS_CLIENT_SECRET="your_aps_client_secret"
 # Clé serveur Appwrite, uniquement pour `npm run appwrite:setup`.
 # Console → API Keys, scope databases.write (et tablesdb.write). Jamais en VITE_.
 # APPWRITE_API_KEY=""
+# Optionnel : les identifiants par défaut sont profiles, favorites,
+# conversations, messages et annotations.
+# APPWRITE_ANNOTATIONS_TABLE_ID="annotations"
 
 # MAX_SOLIDWORKS_BYTES="104857600"
 # MAX_SOLIDWORKS_DEPENDENCY_FILES="64"

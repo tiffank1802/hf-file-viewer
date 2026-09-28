@@ -102,6 +102,18 @@ test('API héritée : collections/attributs/documentSecurity dans le vocabulaire
   assert.deepEqual(index.body, { key: 'uniq_favorite_user_path', attributes: ['userId', 'pathKey'] });
 });
 
+test('la table annotations reste privée, bornée et indexée par révision', () => {
+  const table = TABLES.find((item) => item.id === 'annotations');
+  assert.ok(table);
+  assert.equal(table.rowSecurity, true);
+  assert.deepEqual(table.permissions, ['create("users")']);
+  assert.deepEqual(table.columns.find((column) => column.key === 'kind').elements, ['highlight', 'note', 'question', 'bookmark']);
+  assert.deepEqual(table.columns.find((column) => column.key === 'status').elements, ['active', 'needs-review', 'archived']);
+  assert.deepEqual(table.indexes.find((index) => index.key === 'idx_annotation_document').columns, ['documentKey', '$updatedAt']);
+  assert.deepEqual(table.indexes.find((index) => index.key === 'idx_annotation_revision').columns, ['documentKey', 'artifactId', '$updatedAt']);
+  assert.equal(table.indexes.some((index) => index.type === 'unique' && index.columns.includes('sourcePath')), false);
+});
+
 test('aucun index unique ne porte une colonne longue', () => {
   // Un index unique sur 1024 caractères est refusé par le moteur : on passe
   // par la clé de empreinte `pathKey`.
@@ -239,6 +251,11 @@ test('le modèle respecte les règles que le serveur applique', () => {
   assert.deepEqual(
     TABLES.flatMap((table) => table.columns.filter((c) => c.required).map((c) => `${table.id}.${c.key}`)).sort(),
     [
+      'annotations.anchorJson',
+      'annotations.artifactId',
+      'annotations.documentKey',
+      'annotations.sourcePath',
+      'annotations.userId',
       'conversations.userId',
       'favorites.filePath',
       'favorites.pathKey',

@@ -456,11 +456,11 @@ Règles importantes :
 
 Pour un déploiement CI GitHub, stocker `CLOUDFLARE_API_TOKEN` et `CLOUDFLARE_ACCOUNT_ID` dans les **GitHub Actions Secrets**, jamais dans le dépôt.
 
-## Compte et favoris
+## Compte, favoris et annotations privées
 
-La connexion et les favoris passent par le backend Go, pas par le SDK Appwrite dans le navigateur. Le projet est **Django objects** (`https://fra.cloud.appwrite.io/v1`, `69cedb12002acdd498e0`).
+La connexion, les favoris et les annotations privées passent par le backend Go, pas par le SDK Appwrite dans le navigateur. Le projet est **Django objects** (`https://fra.cloud.appwrite.io/v1`, `69cedb12002acdd498e0`).
 
-Le compte (email, mot de passe, nom) vit dans Appwrite Auth. La promotion, la filière, les favoris et les conversations de l’assistant vivent dans la base `enise_docs`, tables `profiles`, `favorites`, `conversations` et `messages`. Cette base se crée une fois, depuis ta machine, avec une clé serveur :
+Le compte (email, mot de passe, nom) vit dans Appwrite Auth. La promotion, la filière, les favoris, les conversations de l’assistant et les annotations du lecteur vivent dans la base `enise_docs`, tables `profiles`, `favorites`, `conversations`, `messages` et `annotations`. Cette base se crée une fois, depuis ta machine, avec une clé serveur :
 
 ```bash
 # Console Appwrite → API Keys → databases.write, puis dans .dev.vars :
@@ -469,7 +469,7 @@ npm run appwrite:setup
 npm run appwrite:status
 ```
 
-Sans cette clé, la connexion marche déjà. Les cœurs et le profil ne s’enregistrent qu’après le script. Les anciens favoris laissés dans le navigateur sont repris au premier compte connecté, puis la copie locale est effacée.
+Sans cette clé, la connexion marche déjà. Les cœurs, le profil et les annotations ne s’enregistrent qu’après le script. Les anciens favoris laissés dans le navigateur sont repris au premier compte connecté, puis la copie locale est effacée.
 
 ## API
 
@@ -496,12 +496,16 @@ Le Worker Cloudflare et le backend Go exposent les mêmes routes. L’en-tête `
 | `GET /api/link/preview?url=...` | aperçu enrichi d’un lien `.url` (Open Graph, mis en cache) |
 | `GET /api/chat/status` | assistant prêt, local, ou non configuré. Jamais de clé dans la réponse |
 | `POST /api/chat` | question en JSON, réponse en flux (`text/event-stream`) : documents, réflexion éventuelle, puis texte |
+| `GET /api/reader/document?path=...` | métadonnées, capacités et plan Docling du lecteur interactif |
+| `GET /api/reader/page?path=...&artifactId=...&page=...` | blocs Docling de la page demandée |
+| `GET/POST /api/annotations` | liste ou crée les annotations privées du document courant |
+| `PATCH/DELETE /api/annotations/<id>` | modifie ou supprime une annotation appartenant à la session |
 
 ### Assistant : ce qui se passe derrière une question
 
 L’évolution vers un assistant d’étude attaché à un document, fondé sur les artefacts Docling et compatible avec le futur lecteur interactif, est détaillée dans [`docs/DOCUMENT_AI_STUDY_PLAN.md`](docs/DOCUMENT_AI_STUDY_PLAN.md). La première tranche est opérationnelle : depuis l’aperçu, **Étudier avec l’IA** cible un `sourcePath`, préfère `document.json` et `chunks.jsonl` lorsqu’ils sont prêts, affiche l’état Docling/fallback et rend les citations `[S1]` ouvrables à la page PDF correspondante.
 
-Le lecteur plein écran avec PDF.js, sélection de texte, actions IA contextuelles, citations vers le passage et annotations privées est planifié dans [`docs/ALPHAXIV_INTERACTIVE_READER_PLAN.md`](docs/ALPHAXIV_INTERACTIVE_READER_PLAN.md).
+Le lecteur plein écran avec PDF.js, sélection de texte, actions IA contextuelles, citations vers le passage et annotations privées persistantes est implémenté jusqu’au lot R4 ; l’architecture et les étapes suivantes restent détaillées dans [`docs/ALPHAXIV_INTERACTIVE_READER_PLAN.md`](docs/ALPHAXIV_INTERACTIVE_READER_PLAN.md).
 
 1. **Classement local** de l’index en mémoire (aucun appel réseau). Les mots-outils (« se », « sa ») sont ignorés et un mot-clé doit correspondre à un mot entier : « ex » ne remonte plus « examen ».
 2. **Profil de la question** : une recherche ouvre deux documents, une synthèse (« structure », « annales », « déroulement », « compare »…) en ouvre jusqu’à huit du meilleur dossier et en lit cinq.

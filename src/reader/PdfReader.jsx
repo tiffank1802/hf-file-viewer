@@ -178,6 +178,7 @@ function PdfPage({ pdf, pageNumber, zoom, highlights, register, onVisible }) {
         ...normalizedHighlightRect(region, size, zoom),
         key: `${highlightIndex}-${rectIndex}`,
         kind: highlight.kind || 'selection',
+        color: highlight.color || '',
       }))
       .filter((region) => region.w > 0 && region.h > 0);
   });
@@ -196,7 +197,7 @@ function PdfPage({ pdf, pageNumber, zoom, highlights, register, onVisible }) {
         {positionedHighlights.map((region) => (
           <span
             key={region.key}
-            className={`reader-highlight ${region.kind}`}
+            className={`reader-highlight ${region.kind}${region.color ? ` color-${region.color}` : ''}`}
             style={{
               left: `${region.x * 100}%`,
               top: `${region.y * 100}%`,

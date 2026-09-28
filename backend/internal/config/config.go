@@ -117,6 +117,7 @@ type Config struct {
 	AppwriteFavoritesTable     string
 	AppwriteConversationsTable string
 	AppwriteMessagesTable      string
+	AppwriteAnnotationsTable   string
 	AppwriteFlavor             string
 	AppwritePublicOrigin       string
 }
@@ -209,6 +210,7 @@ func Load(root string) Config {
 	cfg.AppwriteFavoritesTable = firstNonEmpty(get("APPWRITE_FAVORITES_TABLE_ID"), get("VITE_APPWRITE_FAVORITES_TABLE_ID"), "favorites")
 	cfg.AppwriteConversationsTable = firstNonEmpty(get("APPWRITE_CONVERSATIONS_TABLE_ID"), "conversations")
 	cfg.AppwriteMessagesTable = firstNonEmpty(get("APPWRITE_MESSAGES_TABLE_ID"), "messages")
+	cfg.AppwriteAnnotationsTable = firstNonEmpty(get("APPWRITE_ANNOTATIONS_TABLE_ID"), "annotations")
 	cfg.AppwritePublicOrigin = strings.TrimSpace(get("APPWRITE_PUBLIC_ORIGIN"))
 	cfg.AppwriteFlavor = "tablesdb"
 	if strings.EqualFold(firstNonEmpty(get("APPWRITE_FLAVOR"), get("VITE_APPWRITE_FLAVOR")), "databases") {

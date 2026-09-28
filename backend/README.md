@@ -190,7 +190,7 @@ En production Cloudflare, le Worker ne fait pas lui-même l’appel NVIDIA. Sans
 
 Le bouton **Se connecter** parle à Go (`/api/auth/*`). Go ouvre la session Appwrite et pose un cookie `enise_session` HttpOnly. Le mot de passe n’est pas écrit dans une table, et il ne revient jamais dans le JSON.
 
-Les favoris du compte passent par `/api/favorites`. Ils ne sont plus gardés dans le navigateur. La base `enise_docs` et les tables `profiles` et `favorites` se créent une fois :
+Les favoris passent par `/api/favorites`. Les annotations privées du lecteur passent par le CRUD `/api/annotations` : Go vérifie le propriétaire, le PDF indexé, la révision Docling et le passage avant d’écrire. La base `enise_docs` et ses tables, dont `profiles`, `favorites`, `conversations`, `messages` et `annotations`, se créent une fois :
 
 ```bash
 # APPWRITE_API_KEY dans .dev.vars, ou devant la commande
@@ -198,7 +198,7 @@ npm run appwrite:setup
 npm run appwrite:status
 ```
 
-Le Worker relaie `/api/auth/*` et `/api/favorites` vers `GO_API_ORIGIN` en transmettant le cookie. Sans cette origine, ces routes répondent 501 et le bouton reste masqué.
+Le Worker relaie `/api/auth/*`, `/api/favorites` et `/api/annotations` vers `GO_API_ORIGIN` en transmettant le cookie HttpOnly. Sans cette origine, ces routes répondent 501.
 
 ## Tests
 

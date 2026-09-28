@@ -82,7 +82,7 @@ func (s *Server) handleReaderDocument(w http.ResponseWriter, r *http.Request) er
 			"pdf":         true,
 			"structured":  ready,
 			"selectionAI": ready,
-			"annotations": false,
+			"annotations": ready && s.authReady() && s.appwrite().HasAnnotations(),
 		},
 	}, "no-store", nil)
 	return nil

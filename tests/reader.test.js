@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import {
+  createAnnotation,
+  deleteAnnotation,
+  listAnnotations,
+  updateAnnotation,
+} from '../src/services/annotations.js';
 import { readerFileFromRoute } from '../src/reader/route.js';
 import {
   buildSelectionAnchor,
@@ -55,4 +61,28 @@ test('les rectangles de sélection sont normalisés, bornés et limités', () =>
 test('une sélection vide ou démesurée ne produit aucune ancre', () => {
   assert.equal(buildSelectionAnchor({ quote: ' ' }), null);
   assert.equal(buildSelectionAnchor({ quote: 'x'.repeat(2001) }), null);
+});
+
+test('le client d’annotations utilise le CRUD privé et encode le chemin', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url: String(url), ...options });
+    return new Response(JSON.stringify(options.method === 'DELETE' ? { ok: true } : { ok: true, items: [], item: { id: 'ann-1' } }), {
+      status: options.method === 'POST' ? 201 : 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    await listAnnotations('GM/énergie & vitesse.pdf', 'artifact-1');
+    await createAnnotation({ sourcePath: 'GM/cours.pdf', artifactId: 'artifact-1', anchor: { quote: 'énergie', page: 2 } });
+    await updateAnnotation('ann-1', { body: 'À relire' });
+    await deleteAnnotation('ann-1');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.match(requests[0].url, /path=GM%2F%C3%A9nergie\+%26\+vitesse.pdf/);
+  assert.deepEqual(requests.map((request) => request.method || 'GET'), ['GET', 'POST', 'PATCH', 'DELETE']);
+  assert.ok(requests.every((request) => request.credentials === 'same-origin'));
+  assert.match(requests[1].body, /artifact-1/);
 });

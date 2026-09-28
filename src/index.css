@@ -1257,6 +1257,7 @@
 /* Lecteur documentaire interactif */
 body.reader-open { overflow: hidden; }
 .reader-route-loading { position: fixed; z-index: 5000; inset: 0; display: grid; place-items: center; background: #edf2ef; color: var(--green-deep); font-size: 0.78rem; font-weight: 750; }
+.document-workspace ~ .auth-backdrop { z-index: 5300; }
 .document-workspace { position: fixed; z-index: 5000; inset: 0; display: grid; grid-template-rows: 54px minmax(0, 1fr); background: #edf2ef; color: var(--ink); }
 .reader-header { display: grid; grid-template-columns: 40px minmax(220px, 1fr) auto auto; align-items: center; gap: 10px; padding: 0 12px; border-bottom: 1px solid rgba(29, 58, 48, 0.12); background: rgba(255, 255, 255, 0.96); box-shadow: 0 1px 12px rgba(24, 58, 46, 0.08); }
 .reader-header button { display: inline-flex; width: 34px; height: 34px; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: 9px; background: white; color: var(--ink-soft); cursor: pointer; }
@@ -1283,6 +1284,10 @@ body.reader-open { overflow: hidden; }
 .reader-docling-state span { display: grid; min-width: 0; gap: 2px; }
 .reader-docling-state strong { font-size: 0.64rem; }
 .reader-docling-state small { color: var(--ink-faint); font-size: 0.54rem; line-height: 1.35; }
+.reader-sidebar-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 0 10px 8px; padding: 3px; border-radius: 9px; background: #eef2f0; }
+.reader-sidebar-tabs > button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 30px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-faint); font: inherit; font-size: 0.58rem; font-weight: 750; cursor: pointer; }
+.reader-sidebar-tabs > button.active { background: white; color: var(--green-deep); box-shadow: 0 1px 5px rgba(24,58,46,.1); }
+.reader-sidebar-tabs > button i { display: inline-grid; min-width: 16px; height: 16px; place-items: center; border-radius: 999px; background: var(--green-pale); color: var(--green-deep); font-size: .5rem; font-style: normal; }
 .reader-sidebar nav { display: grid; gap: 2px; padding: 4px 10px 24px; }
 .reader-sidebar h2 { margin: 8px 5px; color: var(--ink-faint); font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase; }
 .reader-sidebar nav > button { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; width: 100%; padding: 7px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--ink-soft); font: inherit; font-size: 0.62rem; text-align: left; cursor: pointer; }
@@ -1299,6 +1304,10 @@ body.reader-open { overflow: hidden; }
 .reader-highlight-layer { position: absolute; z-index: 3; inset: 0; pointer-events: none; }
 .reader-highlight { position: absolute; border-radius: 2px; background: rgba(255, 214, 64, 0.32); box-shadow: inset 0 0 0 1px rgba(188, 132, 0, 0.12); mix-blend-mode: multiply; }
 .reader-highlight.saved { background: rgba(255, 205, 48, 0.42); }
+.reader-highlight.annotation { background: rgba(255, 205, 48, 0.42); }
+.reader-highlight.annotation.color-green { background: rgba(64, 190, 128, 0.34); }
+.reader-highlight.annotation.color-blue { background: rgba(80, 155, 236, 0.3); }
+.reader-highlight.annotation.color-pink { background: rgba(235, 105, 165, 0.3); }
 .reader-highlight.citation { background: rgba(39, 174, 130, 0.3); animation: reader-citation-pulse 1.2s ease 2; }
 .reader-highlight-page { position: absolute; inset: 5px; border: 3px solid rgba(0, 122, 94, 0.62); border-radius: 5px; animation: reader-citation-pulse 1.2s ease 2; }
 .reader-page-number { position: absolute; z-index: 4; right: 8px; bottom: 6px; padding: 2px 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.84); color: #66746f; font-size: 0.54rem; pointer-events: none; }
@@ -1337,7 +1346,56 @@ body.reader-open { overflow: hidden; }
 .reader-assistant-form textarea:disabled { color: var(--ink-faint); cursor: not-allowed; }
 .reader-assistant-form button { display: grid; width: 32px; height: 32px; place-items: center; align-self: end; border: 0; border-radius: 9px; background: var(--green-deep); color: white; cursor: pointer; }
 .reader-assistant-form button:disabled { opacity: 0.38; cursor: default; }
-.reader-selection-toolbar { position: fixed; z-index: 5100; display: flex; gap: 3px; padding: 5px; border: 1px solid rgba(29, 58, 48, 0.15); border-radius: 10px; background: #173f34; box-shadow: 0 8px 28px rgba(19, 46, 38, 0.28); }
+.reader-annotation-list { display: grid; align-content: start; gap: 8px; padding: 2px 10px 24px; }
+.reader-annotation-message, .reader-annotation-error { margin: 8px 12px; color: var(--ink-faint); font-size: .62rem; line-height: 1.45; }
+.reader-annotation-error { padding: 8px; border-radius: 8px; background: var(--red-pale); color: var(--red); }
+.reader-annotation-empty { display: grid; justify-items: center; gap: 7px; margin: 18px 12px; color: var(--ink-faint); text-align: center; }
+.reader-annotation-empty.compact { margin: 10px 2px; }
+.reader-annotation-empty strong { color: var(--green-deep); font-size: .68rem; }
+.reader-annotation-empty p { font-size: .6rem; line-height: 1.5; }
+.reader-annotation-empty > button { display: inline-flex; align-items: center; gap: 5px; padding: 7px 10px; border: 0; border-radius: 8px; background: var(--green-deep); color: white; font: inherit; font-size: .58rem; font-weight: 750; cursor: pointer; }
+.reader-annotation-item { position: relative; overflow: hidden; border: 1px solid var(--line); border-left: 4px solid #edbd28; border-radius: 10px; background: white; }
+.reader-annotation-item.color-green { border-left-color: #42a977; }
+.reader-annotation-item.color-blue { border-left-color: #4e91da; }
+.reader-annotation-item.color-pink { border-left-color: #d96b9d; }
+.reader-annotation-item.needs-review { border-left-color: #b87515; background: #fffbf2; }
+.reader-annotation-target { display: grid; gap: 5px; width: 100%; padding: 9px 9px 6px; border: 0; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.reader-annotation-target > span { display: inline-flex; align-items: center; gap: 4px; color: var(--green-deep); font-size: .56rem; font-weight: 800; }
+.reader-annotation-target > small { color: var(--ink-faint); font-size: .52rem; }
+.reader-annotation-target blockquote { display: -webkit-box; overflow: hidden; margin: 0; color: var(--ink-soft); font-size: .6rem; line-height: 1.4; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.reader-annotation-body { margin: 3px 9px 7px; padding: 7px; border-radius: 7px; background: #f5f7f6; color: var(--ink-soft); font-size: .59rem; line-height: 1.45; white-space: pre-wrap; }
+.reader-annotation-item > footer { display: flex; justify-content: flex-end; gap: 4px; padding: 0 6px 6px; }
+.reader-annotation-item > footer button { display: inline-flex; align-items: center; gap: 3px; padding: 4px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-faint); font: inherit; font-size: .52rem; cursor: pointer; }
+.reader-annotation-item > footer button:hover { background: var(--green-pale); color: var(--green-deep); }
+.reader-annotation-edit { display: grid; gap: 5px; padding: 3px 8px 8px; }
+.reader-annotation-edit textarea { resize: vertical; padding: 7px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); font: inherit; font-size: .59rem; }
+.reader-annotation-edit > label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--ink-faint); font-size: .55rem; font-weight: 700; }
+.reader-annotation-edit select { min-width: 100px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px; background: white; color: var(--ink-soft); font: inherit; font-size: .55rem; }
+.reader-annotation-edit > div { display: flex; justify-content: flex-end; gap: 5px; }
+.reader-annotation-edit button { padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px; background: white; color: var(--ink-soft); font: inherit; font-size: .53rem; cursor: pointer; }
+.reader-annotation-edit button[type='submit'] { border-color: var(--green-deep); background: var(--green-deep); color: white; }
+.reader-note-backdrop { position: fixed; z-index: 5200; inset: 0; display: grid; place-items: center; padding: 18px; background: rgba(12,31,25,.38); backdrop-filter: blur(3px); }
+.reader-note-composer { display: grid; gap: 12px; width: min(480px, 100%); max-height: min(720px, 90dvh); overflow: auto; padding: 16px; border: 1px solid rgba(255,255,255,.4); border-radius: 16px; background: white; box-shadow: 0 20px 60px rgba(15,43,34,.3); }
+.reader-note-composer > header { display: flex; align-items: center; justify-content: space-between; }
+.reader-note-composer > header span { display: inline-flex; align-items: center; gap: 8px; color: var(--green-deep); font-size: .74rem; }
+.reader-note-composer > header button { display: grid; width: 30px; height: 30px; place-items: center; border: 0; border-radius: 8px; background: #f1f4f2; color: var(--ink-soft); cursor: pointer; }
+.reader-note-composer blockquote { margin: 0; padding: 9px 10px; border-left: 3px solid #e3b51f; border-radius: 0 8px 8px 0; background: #fff9df; color: var(--ink-soft); font-size: .63rem; line-height: 1.45; }
+.reader-note-composer > label { display: grid; gap: 5px; color: var(--ink-soft); font-size: .6rem; font-weight: 750; }
+.reader-note-composer textarea { resize: vertical; min-height: 110px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); font: inherit; font-size: .68rem; line-height: 1.45; }
+.reader-note-composer > label small { justify-self: end; color: var(--ink-faint); font-weight: 500; }
+.reader-note-composer fieldset { display: flex; gap: 8px; padding: 0; border: 0; }
+.reader-note-composer legend { margin-bottom: 6px; color: var(--ink-soft); font-size: .58rem; font-weight: 750; }
+.reader-color input { position: absolute; opacity: 0; pointer-events: none; }
+.reader-color span { display: grid; width: 34px; height: 28px; overflow: hidden; place-items: center; border: 2px solid transparent; border-radius: 8px; background: #f2ca45; color: transparent; font-size: 0; cursor: pointer; }
+.reader-color.color-green span { background: #65c791; }
+.reader-color.color-blue span { background: #6ea9e9; }
+.reader-color.color-pink span { background: #e787b3; }
+.reader-color input:checked + span { border-color: var(--green-deep); box-shadow: 0 0 0 2px white inset; }
+.reader-note-composer > footer { display: flex; justify-content: flex-end; gap: 7px; }
+.reader-note-composer > footer button { padding: 8px 11px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink-soft); font: inherit; font-size: .61rem; font-weight: 750; cursor: pointer; }
+.reader-note-composer > footer button:last-child { border-color: var(--green-deep); background: var(--green-deep); color: white; }
+.reader-note-composer > footer button:disabled { opacity: .45; cursor: default; }
+.reader-selection-toolbar { position: fixed; z-index: 5100; display: flex; gap: 3px; max-width: calc(100vw - 24px); overflow-x: auto; padding: 5px; border: 1px solid rgba(29, 58, 48, 0.15); border-radius: 10px; background: #173f34; box-shadow: 0 8px 28px rgba(19, 46, 38, 0.28); }
 .reader-selection-toolbar button { padding: 6px 8px; border: 0; border-radius: 7px; background: transparent; color: white; font: inherit; font-size: 0.58rem; font-weight: 750; cursor: pointer; }
 .reader-selection-toolbar button:hover { background: rgba(255, 255, 255, 0.14); }
 .reader-selection-toolbar button:disabled { color: rgba(255, 255, 255, 0.36); cursor: not-allowed; }

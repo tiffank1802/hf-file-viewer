@@ -22,6 +22,9 @@ func TestAppwriteFallsBackToViteNamesAndCanBeDisabled(t *testing.T) {
 	if cfg.DerivedBucketID != "ktongue/ENISE-SITE-DERIVED" {
 		t.Fatalf("bucket dérivé = %q", cfg.DerivedBucketID)
 	}
+	if cfg.AppwriteAnnotationsTable != "annotations" {
+		t.Fatalf("table annotations = %q", cfg.AppwriteAnnotationsTable)
+	}
 }
 
 func TestNVIDIAPlaceholderIsUnset(t *testing.T) {

@@ -122,13 +122,23 @@ export default function App() {
   if (readerFile) {
     const params = new URLSearchParams(window.location.search);
     return (
-      <Suspense fallback={<div className="reader-route-loading">Préparation du lecteur interactif…</div>}>
-        <DocumentWorkspace
-          file={readerFile}
-          initialPage={Number(params.get('page')) || Number(readerFile.previewPage) || 1}
-          onClose={closeReader}
+      <>
+        <Suspense fallback={<div className="reader-route-loading">Préparation du lecteur interactif…</div>}>
+          <DocumentWorkspace
+            file={readerFile}
+            initialPage={Number(params.get('page')) || Number(readerFile.previewPage) || 1}
+            authenticated={auth.isAuthenticated}
+            onRequireAuth={() => openAuth('signin')}
+            onClose={closeReader}
+          />
+        </Suspense>
+        <AuthPanel
+          open={authPanel.open}
+          mode={authPanel.mode}
+          onModeChange={(mode) => setAuthPanel({ open: true, mode })}
+          onClose={closeAuth}
         />
-      </Suspense>
+      </>
     );
   }
 
