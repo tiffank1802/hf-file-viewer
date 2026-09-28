@@ -29,6 +29,7 @@ export default function App() {
     [catalog, library.path, library.items],
   );
   const [selectedFile, setSelectedFile] = useState(null);
+  const [studyFile, setStudyFile] = useState(null);
   const [searchState, setSearchState] = useState({ open: false, mode: 'search' });
   const [authPanel, setAuthPanel] = useState({ open: false, mode: 'signin' });
   const [dismissedAlertKey, setDismissedAlertKey] = useState(null);
@@ -49,6 +50,10 @@ export default function App() {
     setSearchState((current) => ({ ...current, open: false }));
   }, []);
   const closePreview = useCallback(() => setSelectedFile(null), []);
+  const studySelectedFile = useCallback((file) => {
+    setSelectedFile(null);
+    setStudyFile(file);
+  }, []);
 
   const toggleFavorite = favorites.toggle;
 
@@ -195,6 +200,8 @@ export default function App() {
         onNavigate={library.navigate}
         onOpenFile={setSelectedFile}
         onOpenAuth={openAuth}
+        studyDocument={studyFile}
+        onClearStudy={() => setStudyFile(null)}
       />
       <CloudflareAnalytics />
       <PreviewModal
@@ -202,6 +209,7 @@ export default function App() {
         onClose={closePreview}
         favorite={selectedIsFavorite}
         onToggleFavorite={toggleFavorite}
+        onStudy={studySelectedFile}
       />
     </div>
   );

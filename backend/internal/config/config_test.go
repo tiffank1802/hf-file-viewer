@@ -19,6 +19,9 @@ func TestAppwriteFallsBackToViteNamesAndCanBeDisabled(t *testing.T) {
 	if cfg.AppwriteProjectID != "69cedb12002acdd498e0" {
 		t.Fatalf("projet = %q", cfg.AppwriteProjectID)
 	}
+	if cfg.DerivedBucketID != "ktongue/ENISE-SITE-DERIVED" {
+		t.Fatalf("bucket dérivé = %q", cfg.DerivedBucketID)
+	}
 }
 
 func TestNVIDIAPlaceholderIsUnset(t *testing.T) {

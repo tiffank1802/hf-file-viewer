@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  FiBookOpen,
   FiCheck,
   FiDownload,
   FiExternalLink,
@@ -28,7 +29,7 @@ function DownloadPrompt({ file }) {
   );
 }
 
-export default function PreviewModal({ file, onClose, favorite, onToggleFavorite }) {
+export default function PreviewModal({ file, onClose, favorite, onToggleFavorite, onStudy }) {
   const [textContent, setTextContent] = useState('');
   const [textLoading, setTextLoading] = useState(false);
   const [textError, setTextError] = useState('');
@@ -93,6 +94,7 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
 
   const proxyUrl = fileProxyUrl(file.path);
   const extension = getExtension(file.path).toUpperCase() || 'FICHIER';
+  const canStudy = ['pdf', 'office', 'text', 'image'].includes(file.kind);
 
   const shareFile = async () => {
     const shareUrl = huggingFaceFileUrl(file.path);
@@ -111,7 +113,9 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
 
   const renderPreview = () => {
     if (file.kind === 'pdf') {
-      return <iframe className="pdf-frame" src={proxyUrl} title={`Aperçu de ${file.name}`} />;
+      const page = Number(file.previewPage);
+      const source = page > 0 ? `${proxyUrl}#page=${page}` : proxyUrl;
+      return <iframe className="pdf-frame" src={source} title={`Aperçu de ${file.name}`} />;
     }
     if (file.kind === 'image') {
       return <div className="image-preview"><img src={proxyUrl} alt={file.name} /></div>;
@@ -155,6 +159,17 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
             </div>
           </div>
           <div className="preview-actions">
+            {canStudy && onStudy && (
+              <button
+                type="button"
+                className="preview-study"
+                onClick={() => onStudy(file)}
+                aria-label="Étudier ce document avec l’IA"
+                title="Étudier avec l’IA"
+              >
+                <FiBookOpen aria-hidden="true" /><span>Étudier</span>
+              </button>
+            )}
             <button
               type="button"
               className={favorite ? 'is-favorite' : ''}

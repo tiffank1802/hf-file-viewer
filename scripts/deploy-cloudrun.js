@@ -35,6 +35,7 @@ export const DEFAULTS = {
 export const FIXED_ENV = {
   CHAT_TRUST_PROXY: '1',
   HF_BUCKET_ID: 'ktongue/ENISE-SITE',
+  HF_DERIVED_BUCKET_ID: 'ktongue/ENISE-SITE-DERIVED',
   CACHE_DIR: '/tmp/enise-docs-cache',
 };
 

@@ -15,8 +15,9 @@ import (
 // au bucket doit apparaître en quelques minutes, côté site comme côté
 // Assistant.
 const (
-	defaultBucketID       = "ktongue/ENISE-SITE"
-	defaultHFOrigin       = "https://huggingface.co"
+	defaultBucketID        = "ktongue/ENISE-SITE"
+	defaultDerivedBucketID = "ktongue/ENISE-SITE-DERIVED"
+	defaultHFOrigin        = "https://huggingface.co"
 	// ktongue/Rupture est désormais le préprocesseur Docling. La conversion
 	// 3D à la demande exige un service distinct explicitement configuré.
 	defaultModel3DURL     = ""
@@ -55,17 +56,18 @@ const (
 // Config rassemble les mêmes variables que le Worker Cloudflare.
 // Les secrets restent côté processus : le navigateur ne les voit jamais.
 type Config struct {
-	Addr       string
-	Root       string
-	StaticDir  string
-	CacheDir   string
-	HFOrigin   string
-	BucketID   string
-	HFToken    string
-	TreeTTL    time.Duration
-	IndexTTL   time.Duration
-	FileTTL    time.Duration
-	StaleGrace time.Duration
+	Addr            string
+	Root            string
+	StaticDir       string
+	CacheDir        string
+	HFOrigin        string
+	BucketID        string
+	DerivedBucketID string
+	HFToken         string
+	TreeTTL         time.Duration
+	IndexTTL        time.Duration
+	FileTTL         time.Duration
+	StaleGrace      time.Duration
 
 	MaxCacheableFileBytes int64
 	OfficeConvertURL      string
@@ -143,6 +145,7 @@ func Load(root string) Config {
 		CacheDir:              firstNonEmpty(get("CACHE_DIR"), filepath.Join(root, ".cache", "go-api")),
 		HFOrigin:              firstNonEmpty(get("HF_ORIGIN"), defaultHFOrigin),
 		BucketID:              firstNonEmpty(get("HF_BUCKET_ID"), defaultBucketID),
+		DerivedBucketID:       firstNonEmpty(get("HF_DERIVED_BUCKET_ID"), defaultDerivedBucketID),
 		HFToken:               unsetPlaceholder(get("HF_TOKEN")),
 		TreeTTL:               durationSeconds(get("TREE_CACHE_TTL"), defaultTreeTTL),
 		IndexTTL:              durationSeconds(get("INDEX_CACHE_TTL"), defaultIndexTTL),
@@ -177,6 +180,9 @@ func Load(root string) Config {
 	}
 	if !catalog.ValidBucketID(cfg.BucketID) {
 		cfg.BucketID = defaultBucketID
+	}
+	if !catalog.ValidBucketID(cfg.DerivedBucketID) {
+		cfg.DerivedBucketID = defaultDerivedBucketID
 	}
 	cfg.NvidiaAPIKey = unsetPlaceholder(firstNonEmpty(get("NVIDIA_API_KEY"), get("NVIDIA_NIM_API_KEY")))
 	cfg.NvidiaAPIBase = catalog.TrimTrailingSlashes(firstNonEmpty(get("NVIDIA_API_BASE"), defaultNvidiaBase))

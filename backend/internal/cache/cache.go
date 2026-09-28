@@ -176,6 +176,21 @@ func (s *Store) PutBlob(key string, entry Entry) {
 	if len(entry.Body) == 0 {
 		return
 	}
+	s.putMemoryBlob(key, entry)
+	s.writeBlob(key, entry)
+}
+
+// PutMemoryBlob garde les artefacts volumineux et reproductibles uniquement
+// dans le LRU : les milliers de document.json Docling ne doivent pas remplir
+// le disque éphémère de Cloud Run.
+func (s *Store) PutMemoryBlob(key string, entry Entry) {
+	s.putMemoryBlob(key, entry)
+}
+
+func (s *Store) putMemoryBlob(key string, entry Entry) {
+	if len(entry.Body) == 0 {
+		return
+	}
 	entry.Touched = time.Now()
 	s.mu.Lock()
 	if previous, ok := s.blobs[key]; ok {
@@ -185,7 +200,6 @@ func (s *Store) PutBlob(key string, entry Entry) {
 	s.blobBytes += len(entry.Body)
 	s.evictLocked()
 	s.mu.Unlock()
-	s.writeBlob(key, entry)
 }
 
 func (s *Store) evictLocked() {

@@ -51,6 +51,8 @@ const (
 
 type chatRequest struct {
 	Message        string               `json:"message"`
+	Intent         string               `json:"intent"`
+	Scope          *chatScope           `json:"scope,omitempty"`
 	ContextPath    string               `json:"contextPath"`
 	ConversationID string               `json:"conversationId"`
 	Provider       string               `json:"provider"`
@@ -253,6 +255,37 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) error {
 		contextPath = ""
 	}
 	items, _ := s.chatCorpus(body)
+	var study *documentStudy
+	var scopedItem *catalog.BucketItem
+	if body.Scope != nil {
+		if strings.ToLower(strings.TrimSpace(body.Scope.Type)) != "document" {
+			return catalog.Error(http.StatusBadRequest, "Le type de contexte d’étude est invalide.")
+		}
+		sourcePath, err := catalog.NormalizeFilePath(body.Scope.SourcePath)
+		if err != nil {
+			return err
+		}
+		body.Scope.SourcePath = sourcePath
+		for index := range items {
+			if items[index].Type == "file" && items[index].Path == sourcePath {
+				copy := items[index]
+				scopedItem = &copy
+				break
+			}
+		}
+		if scopedItem == nil && len(items) > 0 {
+			return catalog.Error(http.StatusNotFound, "Ce document n’existe pas dans la bibliothèque indexée.")
+		}
+		if scopedItem != nil {
+			resolveCtx, cancel := context.WithTimeout(r.Context(), chatExcerptWait)
+			study, err = s.prepareDocumentStudy(resolveCtx, *body.Scope, message, body.Intent)
+			cancel()
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	header := w.Header()
 	header.Set("Content-Type", "text/event-stream; charset=utf-8")
 	header.Set("Cache-Control", "no-store, no-transform")
@@ -262,46 +295,77 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) error {
 	if len(chat.Tokens(message)) == 0 {
 		answer := "Formule une question avec une matière, une année (3A, 4A, 5A) ou TOEIC."
 		_ = writeSSE(w, "delta", map[string]string{"text": answer})
-		s.finishChat(w, r, body.ConversationID, message, chatDraft{answer: answer, engine: "local"}, contextPath, nil)
+		s.finishChat(w, r, body.ConversationID, message, chatDraft{answer: answer, engine: "local"}, contextPath, nil, study)
 		return nil
 	}
 	if len(items) == 0 {
 		answer := "La bibliothèque n’est pas encore indexée. Réessaie dans un instant."
 		_ = writeSSE(w, "delta", map[string]string{"text": answer})
-		s.finishChat(w, r, body.ConversationID, message, chatDraft{answer: answer, engine: "local"}, contextPath, nil)
+		s.finishChat(w, r, body.ConversationID, message, chatDraft{answer: answer, engine: "local"}, contextPath, nil, study)
 		return nil
 	}
 
 	profile := chat.QuestionProfile(message)
-	rankLimit := 6
-	if profile.Synthesis {
-		rankLimit = profile.MaxDocs
+	if isStudySynthesis(body.Intent) {
+		profile = chat.Profile{Synthesis: true, MaxDocs: 1, MaxRead: 1}
 	}
-	hits := chat.ExpandForReading(items, chat.Rank(items, message, contextPath, rankLimit), rankLimit)
-	// « comment se structure l’examen » demande plusieurs annales : on ajoute
-	// les voisins du meilleur dossier avant de lire les extraits.
-	if profile.Synthesis {
-		if neighbours := chat.RelatedDocuments(items, hits, profile.MaxDocs-len(hits)); len(neighbours) > 0 {
-			hits = append(hits, neighbours...)
+	var hits []chat.Hit
+	if scopedItem != nil {
+		hit := chat.Hit{
+			Path:   scopedItem.Path,
+			Type:   "file",
+			Name:   chatFileName(scopedItem.Path),
+			Size:   scopedItem.Size,
+			Mtime:  scopedItem.Mtime,
+			Score:  1000,
+			Reason: "Document explicitement sélectionné pour l’étude.",
+		}
+		if study != nil && study.ready() {
+			hit.Read = true
+			hit.Reason = "Structure Docling, sections et provenance vérifiées."
+			hit.Excerpt = readerExcerpt(study.Retrieval.Evidence[0].Text, chatCardRunes)
+		}
+		hits = []chat.Hit{hit}
+		_ = writeSSE(w, "scope", study.publicScope())
+		if study.ready() {
+			_ = writeSSE(w, "citations", map[string]any{
+				"citations": study.publicCitations(),
+				"coverage":  study.Retrieval.Coverage,
+			})
+		}
+	} else {
+		rankLimit := 6
+		if profile.Synthesis {
+			rankLimit = profile.MaxDocs
+		}
+		hits = chat.ExpandForReading(items, chat.Rank(items, message, contextPath, rankLimit), rankLimit)
+		// « comment se structure l’examen » demande plusieurs annales : on ajoute
+		// les voisins du meilleur dossier avant de lire les extraits.
+		if profile.Synthesis {
+			if neighbours := chat.RelatedDocuments(items, hits, profile.MaxDocs-len(hits)); len(neighbours) > 0 {
+				hits = append(hits, neighbours...)
+			}
 		}
 	}
 	if err := writeSSE(w, "sources", map[string]any{"documents": publicHits(hits)}); err != nil {
 		return nil
 	}
-	s.enrichHits(r.Context(), hits, profile.MaxRead)
-	if anyRead(hits) {
-		_ = writeSSE(w, "sources", map[string]any{"documents": publicHits(hits)})
+	if study == nil || !study.ready() {
+		s.enrichHits(r.Context(), hits, profile.MaxRead)
+		if anyRead(hits) {
+			_ = writeSSE(w, "sources", map[string]any{"documents": publicHits(hits)})
+		}
 	}
 
-	draft := s.composeAnswer(r.Context(), w, message, contextPath, sanitizeHistory(body.History, message), hits, body.Provider, body.Model, profile)
-	s.finishChat(w, r, body.ConversationID, message, draft, contextPath, hits)
+	draft := s.composeAnswer(r.Context(), w, message, contextPath, sanitizeHistory(body.History, message), hits, body.Provider, body.Model, profile, study)
+	s.finishChat(w, r, body.ConversationID, message, draft, contextPath, hits, study)
 	return nil
 }
 
-func (s *Server) finishChat(w http.ResponseWriter, r *http.Request, conversationID, question string, draft chatDraft, contextPath string, hits []chat.Hit) {
+func (s *Server) finishChat(w http.ResponseWriter, r *http.Request, conversationID, question string, draft chatDraft, contextPath string, hits []chat.Hit, study *documentStudy) {
 	hits = promoteMentioned(draft.answer, hits)
 	saved := s.rememberChat(r, conversationID, question, draft.answer, contextPath, hits)
-	_ = writeSSE(w, "done", map[string]any{
+	payload := map[string]any{
 		"answer":         draft.answer,
 		"engine":         draft.engine,
 		"model":          draft.model,
@@ -313,7 +377,15 @@ func (s *Server) finishChat(w http.ResponseWriter, r *http.Request, conversation
 		"title":          saved.Title,
 		"saved":          saved.ID != "",
 		"saveError":      saved.Error,
-	})
+	}
+	if study != nil {
+		payload["scope"] = study.publicScope()
+		payload["knowledgeSource"] = study.KnowledgeSource
+		payload["artifactId"] = study.ArtifactID
+		payload["citations"] = study.publicCitations()
+		payload["coverage"] = study.Retrieval.Coverage
+	}
+	_ = writeSSE(w, "done", payload)
 }
 
 type chatSave struct {
@@ -560,7 +632,7 @@ type chatDraft struct {
 	degraded  bool // vrai quand un moteur a échoué : relancer peut réussir
 }
 
-func (s *Server) composeAnswer(ctx context.Context, w http.ResponseWriter, message, contextPath string, history []chatTurn, hits []chat.Hit, providerID, modelOverride string, profile chat.Profile) chatDraft {
+func (s *Server) composeAnswer(ctx context.Context, w http.ResponseWriter, message, contextPath string, history []chatTurn, hits []chat.Hit, providerID, modelOverride string, profile chat.Profile, study *documentStudy) chatDraft {
 	providers := s.chatCandidates(providerID, modelOverride)
 	if len(hits) == 0 {
 		answer := "Je n’ai pas trouvé de document qui corresponde. Essaie avec le nom d’un cours, une année (3A, 4A, 5A) ou TOEIC."
@@ -569,6 +641,9 @@ func (s *Server) composeAnswer(ctx context.Context, w http.ResponseWriter, messa
 	}
 	if len(providers) == 0 {
 		answer := localAnswer(hits, nvidiaMissingNote)
+		if study != nil && study.ready() {
+			answer = localStudyAnswer(study, nvidiaMissingNote)
+		}
 		_ = writeSSE(w, "delta", map[string]string{"text": answer})
 		return chatDraft{answer: answer, engine: "local", note: nvidiaMissingNote}
 	}
@@ -590,7 +665,7 @@ func (s *Server) composeAnswer(ctx context.Context, w http.ResponseWriter, messa
 		}
 		attemptedID = provider.id
 		attemptedModel = provider.model
-		draft, err := s.draftWithProvider(ctx, w, message, contextPath, history, hits, provider, profile, remaining)
+		draft, err := s.draftWithProvider(ctx, w, message, contextPath, history, hits, provider, profile, remaining, study)
 		if err == nil {
 			return draft
 		}
@@ -603,6 +678,9 @@ func (s *Server) composeAnswer(ctx context.Context, w http.ResponseWriter, messa
 		note = chatFailuresNote(failures)
 	}
 	answer := localAnswer(hits, note)
+	if study != nil && study.ready() {
+		answer = localStudyAnswer(study, note)
+	}
 	_ = writeSSE(w, "delta", map[string]string{"text": answer})
 	return chatDraft{
 		answer:    answer,
@@ -617,7 +695,7 @@ func (s *Server) composeAnswer(ctx context.Context, w http.ResponseWriter, messa
 // draftWithProvider interroge un moteur. Si le modèle a épuisé son budget de
 // jetons en réfléchissant, une seconde tentative lui en laisse davantage
 // avant de passer au moteur suivant.
-func (s *Server) draftWithProvider(ctx context.Context, w http.ResponseWriter, message, contextPath string, history []chatTurn, hits []chat.Hit, provider *chatProvider, profile chat.Profile, budget time.Duration) (chatDraft, error) {
+func (s *Server) draftWithProvider(ctx context.Context, w http.ResponseWriter, message, contextPath string, history []chatTurn, hits []chat.Hit, provider *chatProvider, profile chat.Profile, budget time.Duration, study *documentStudy) (chatDraft, error) {
 	var lastErr error
 	started := time.Now()
 	truncated := false
@@ -666,7 +744,7 @@ func (s *Server) draftWithProvider(ctx context.Context, w http.ResponseWriter, m
 		var streamed strings.Builder
 		stats := &completionStats{}
 		announced := false
-		err := s.streamChatCompletion(attemptCtx, provider, s.nvidiaMessages(message, contextPath, history, hits, profile), completionOptions{
+		err := s.streamChatCompletion(attemptCtx, provider, s.nvidiaMessages(message, contextPath, history, hits, profile, study), completionOptions{
 			maxTokens: tokens,
 			effort:    effort,
 		}, func(delta string) error {
@@ -686,7 +764,11 @@ func (s *Server) draftWithProvider(ctx context.Context, w http.ResponseWriter, m
 			err = &chatCompletionError{kind: "empty", provider: provider.label, finish: stats.finish}
 		}
 		if err == nil {
-			return chatDraft{answer: ensureStructure(streamed.String(), hits), engine: provider.id, model: provider.model}, nil
+			answer := ensureStructure(streamed.String(), hits)
+			if study != nil && study.ready() {
+				answer = sanitizeStudyCitations(answer, study)
+			}
+			return chatDraft{answer: answer, engine: provider.id, model: provider.model}, nil
 		}
 		lastErr = err
 		if streamed.Len() > 0 {
@@ -812,17 +894,24 @@ func (s *Server) chatCandidates(providerID, modelOverride string) []*chatProvide
 	return ready
 }
 
-func (s *Server) nvidiaMessages(message, contextPath string, history []chatTurn, hits []chat.Hit, profile chat.Profile) []nvidiaMessage {
+func (s *Server) nvidiaMessages(message, contextPath string, history []chatTurn, hits []chat.Hit, profile chat.Profile, study *documentStudy) []nvidiaMessage {
 	messages := make([]nvidiaMessage, 0, len(history)+2)
-	if profile.Synthesis {
+	switch {
+	case study != nil && study.ready():
+		messages = append(messages, nvidiaMessage{Role: "system", Content: studySystemPrompt})
+	case profile.Synthesis:
 		messages = append(messages, nvidiaMessage{Role: "system", Content: chatSynthesisPrompt})
-	} else {
+	default:
 		messages = append(messages, nvidiaMessage{Role: "system", Content: chatSystemPrompt})
 	}
 	for _, turn := range history {
 		messages = append(messages, nvidiaMessage{Role: turn.Role, Content: turn.Content})
 	}
-	messages = append(messages, nvidiaMessage{Role: "user", Content: documentPrompt(message, contextPath, hits, profile)})
+	prompt := documentPrompt(message, contextPath, hits, profile)
+	if study != nil && study.ready() {
+		prompt = studyDocumentPrompt(message, study)
+	}
+	messages = append(messages, nvidiaMessage{Role: "user", Content: prompt})
 	return messages
 }
 

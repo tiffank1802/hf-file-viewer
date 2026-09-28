@@ -2,7 +2,9 @@
 
 **Date : 28 septembre 2026**
 
-**Statut : plan d’architecture — compatible avec la conversion Docling en cours**
+**Statut : première tranche implémentée — résolution Docling, scope document, récupération structurée, citations et fallback**
+
+> Implémenté dans `backend/internal/reader`, `backend/internal/api/study.go` et le mode document de `LibraryChat` : un document ouvert peut être ciblé explicitement, les artefacts `ready` sont préférés et les citations ouvrent la page du PDF. Restent notamment le résumé map-reduce durable, `study/v1`, la file de génération et le lecteur par `blockId`.
 
 ## 1. Décision proposée
 

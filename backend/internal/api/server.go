@@ -208,12 +208,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) error {
 		index = "stale"
 	}
 	writeJSON(w, r, http.StatusOK, map[string]any{
-		"ok":       true,
-		"service":  "enise-docs",
-		"backend":  "go",
-		"bucketId": s.cfg.BucketID,
-		"cache":    "memory",
-		"index":    index,
+		"ok":              true,
+		"service":         "enise-docs",
+		"backend":         "go",
+		"bucketId":        s.cfg.BucketID,
+		"derivedBucketId": s.cfg.DerivedBucketID,
+		"cache":           "memory",
+		"index":           index,
 	}, "no-store", nil)
 	return nil
 }

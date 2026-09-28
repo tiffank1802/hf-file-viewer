@@ -5,8 +5,9 @@
 # Optionnel : uniquement si le bucket Hugging Face devient privé.
 HF_TOKEN="hf_your_read_only_token"
 
-# Optionnel : surcharge locale du bucket configuré dans wrangler.jsonc.
+# Optionnel : surcharge locale des buckets source et dérivé.
 # HF_BUCKET_ID="ktongue/ENISE-SITE"
+# HF_DERIVED_BUCKET_ID="ktongue/ENISE-SITE-DERIVED"
 
 # Autodesk Platform Services (APS / Forge) pour la visualisation 3D.
 # Créer une application APS avec les scopes :
