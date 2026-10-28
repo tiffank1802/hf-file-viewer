@@ -36,7 +36,6 @@ jobs:
   # 1. macOS (Universal Binary : Apple Silicon arm64 + Intel x86_64 -> .dmg/.app)
   # ---------------------------------------------------------------------------
   build-macos:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[verify-app-downloads]')
     name: macOS (Universal .dmg & .app)
     runs-on: macos-latest
     steps:
@@ -84,7 +83,6 @@ jobs:
   # 2. iOS (Physical Device .ipa + Simulator arm64 .app.zip)
   # ---------------------------------------------------------------------------
   build-ios:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[verify-app-downloads]')
     name: iOS (.ipa & Simulator .app)
     runs-on: macos-latest
     steps:
@@ -152,7 +150,6 @@ jobs:
   # 3. Android (Universal Signed .apk + Play Store .aab)
   # ---------------------------------------------------------------------------
   build-android:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[verify-app-downloads]')
     name: Android (.apk & .aab)
     runs-on: ubuntu-24.04
     steps:
@@ -273,7 +270,6 @@ jobs:
   # 4. Windows (x64 NSIS -setup.exe & WiX .msi en français)
   # ---------------------------------------------------------------------------
   build-windows:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[verify-app-downloads]')
     name: Windows (x64 .exe & .msi)
     runs-on: windows-latest
     steps:
@@ -359,25 +355,3 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
           RELEASE_TARGET: ${{ github.sha }}
         run: bash scripts/publish-app-release.sh release-assets
-
-  # Vérification ponctuelle et anonyme des quatre téléchargements publics.
-  verify-public-downloads:
-    name: Verify public app downloads
-    if: github.event_name == 'push' && github.ref == 'refs/heads/arena/f912a7b4-hf-file-viewer' && contains(github.event.head_commit.message, '[verify-app-downloads]')
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    steps:
-      - name: Download and verify the published files without authentication
-        run: |
-          set -euo pipefail
-          BASE=https://github.com/tiffank1802/hf-file-viewer/releases/latest/download
-          mkdir downloads && cd downloads
-          curl -fsSL --retry 2 "$BASE/SHA256SUMS.txt" -o SHA256SUMS.txt
-          : > expected.sha256
-          for file in ENISE-Docs-windows-x64-setup.exe ENISE-Docs-macos-universal.dmg ENISE-Docs-android-universal.apk ENISE-Docs-ios-unsigned.ipa; do
-            curl -fsSL --retry 2 "$BASE/$file" -o "$file"
-            grep -F "  $file" SHA256SUMS.txt >> expected.sha256
-          done
-          test "$(wc -l < expected.sha256)" -eq 4
-          sha256sum --check expected.sha256
