@@ -1,3 +1,4 @@
+import { apiCredentials, apiUrl } from '../utils/runtime.js';
 import { LibraryApiError } from './api.js';
 
 const RETRY_DELAYS = [200, 700];
@@ -8,9 +9,9 @@ async function readerJson(url, signal) {
   for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt += 1) {
     let response;
     try {
-      response = await fetch(url, {
+      response = await fetch(apiUrl(url), {
         signal,
-        credentials: 'same-origin',
+        credentials: apiCredentials(),
         headers: { Accept: 'application/json' },
       });
     } catch (error) {
@@ -72,7 +73,7 @@ export function readerAssetUrl(sourcePath, artifactId, assetId) {
     artifactId,
     asset: assetId,
   });
-  return `/api/reader/asset?${params}`;
+  return apiUrl(`/api/reader/asset?${params}`);
 }
 
 export function retryAfterMs(value) {

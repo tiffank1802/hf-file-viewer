@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import {
   FiBookOpen,
   FiCheck,
@@ -9,11 +9,14 @@ import {
   FiX,
 } from 'react-icons/fi';
 import { canOpenStructuredReader } from '../reader/route';
-import { fileProxyUrl, huggingFaceFileUrl } from '../services/api';
+import { fileProxyUrl, huggingFaceFileUrl, mediaFileUrl } from '../services/api';
 import { formatBytes, getExtension } from '../utils/files';
+import { isAndroidRuntime, isTauriRuntime } from '../utils/runtime';
 import { FileTypeIcon } from './Icons';
 import ModelViewer from './ModelViewer';
 import OfficeViewer from './OfficeViewer';
+
+const PdfReader = lazy(() => import('../reader/PdfReader'));
 
 const MAX_TEXT_PREVIEW_BYTES = 2 * 1024 * 1024;
 
@@ -116,6 +119,15 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
   const renderPreview = () => {
     if (file.kind === 'pdf') {
       const page = Number(file.previewPage);
+      if (isTauriRuntime() || isAndroidRuntime()) {
+        return (
+          <Suspense fallback={<div className="preview-loader"><span /><p>Chargement du PDF…</p></div>}>
+            <div className="pdf-frame pdf-reader-modal-host">
+              <PdfReader url={proxyUrl} targetPage={page > 0 ? page : 1} />
+            </div>
+          </Suspense>
+        );
+      }
       const source = page > 0 ? `${proxyUrl}#page=${page}` : proxyUrl;
       return <iframe className="pdf-frame" src={source} title={`Aperçu de ${file.name}`} />;
     }
@@ -123,7 +135,7 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
       return <div className="image-preview"><img src={proxyUrl} alt={file.name} /></div>;
     }
     if (file.kind === 'video') {
-      return <div className="media-preview"><video src={proxyUrl} controls preload="metadata" /></div>;
+      return <div className="media-preview"><video src={mediaFileUrl(file.path)} controls preload="metadata" /></div>;
     }
     if (file.kind === 'audio') {
       return (
@@ -131,7 +143,7 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
           <span><FileTypeIcon kind="audio" size={42} /></span>
           <h3>{file.name}</h3>
           <p>Ressource audio · {formatBytes(file.size)}</p>
-          <audio src={proxyUrl} controls preload="metadata" />
+          <audio src={mediaFileUrl(file.path)} controls preload="metadata" />
         </div>
       );
     }

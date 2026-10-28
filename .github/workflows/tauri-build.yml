@@ -1,0 +1,315 @@
+name: Tauri Multiplatform Build
+
+on:
+  push:
+    branches:
+      - master
+      - main
+      - 'arena/**'
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      api_origin:
+        description: "Origine HTTPS publique de l'API (défaut : Cloud Run Go)"
+        required: false
+        default: 'https://enise-docs-api-mb66o5jbpa-ew.a.run.app'
+
+concurrency:
+  group: tauri-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ENISE_API_ORIGIN: ${{ inputs.api_origin || 'https://enise-docs-api-mb66o5jbpa-ew.a.run.app' }}
+  VITE_API_ORIGIN: ${{ inputs.api_origin || '' }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. macOS (Universal Binary : Apple Silicon arm64 + Intel x86_64 -> .dmg/.app)
+  # ---------------------------------------------------------------------------
+  build-macos:
+    name: macOS (Universal .dmg & .app)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Rust stable (Apple Silicon + Intel)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Rust Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Tauri macOS Universal Binary
+        run: npx tauri build --target universal-apple-darwin --bundles app,dmg --ci
+
+      - name: Archive macOS .app bundle
+        run: |
+          mkdir -p artifacts
+          cp src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg artifacts/
+          (cd src-tauri/target/universal-apple-darwin/release/bundle/macos && tar -czf "$GITHUB_WORKSPACE/artifacts/ENISE-Docs-macos-universal.app.tar.gz" "ENISE Docs.app")
+          ls -lh artifacts/
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: enise-docs-macos-universal
+          path: artifacts/*
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 2. iOS (Physical Device .ipa + Simulator arm64 .app.zip)
+  # ---------------------------------------------------------------------------
+  build-ios:
+    name: iOS (.ipa & Simulator .app)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Rust stable (iOS targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+
+      - name: Rust Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install XcodeGen & expose toolchain to Xcode build phases
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          sudo mkdir -p /usr/local/bin
+          for bin in node npm npx cargo rustc rustup; do
+            if command -v "$bin" >/dev/null 2>&1; then
+              sudo ln -sf "$(command -v "$bin")" "/usr/local/bin/$bin"
+            fi
+          done
+
+      - name: Install frontend dependencies & build dist
+        run: |
+          npm ci
+          npm run build
+
+      - name: Initialize Tauri iOS Xcode project
+        run: npx tauri ios init --ci --skip-targets-install
+
+      - name: Build iOS Device (.ipa) & iOS Simulator (.app)
+        run: |
+          mkdir -p artifacts
+          XCODEPROJ=$(find src-tauri/gen/apple -maxdepth 1 -name "*.xcodeproj" | head -n 1)
+          echo "Using Xcode project: $XCODEPROJ"
+          SCHEME=$(xcodebuild -list -json -project "$XCODEPROJ" | python3 -c 'import json,sys; s=json.load(sys.stdin)["project"]["schemes"]; print(next((x for x in s if "iOS" in x), s[0]))')
+          echo "Detected iOS scheme: $SCHEME"
+
+          xcodebuild -project "$XCODEPROJ" \
+            -scheme "$SCHEME" \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath src-tauri/gen/apple/DerivedData-iphoneos \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+          mkdir -p artifacts/payload-tmp/Payload
+          cp -R src-tauri/gen/apple/DerivedData-iphoneos/Build/Products/Release-iphoneos/*.app artifacts/payload-tmp/Payload/
+          (cd artifacts/payload-tmp && zip -qry "$GITHUB_WORKSPACE/artifacts/ENISE-Docs-ios-unsigned.ipa" Payload)
+          rm -rf artifacts/payload-tmp
+
+          xcodebuild -project "$XCODEPROJ" \
+            -scheme "$SCHEME" \
+            -sdk iphonesimulator \
+            -arch arm64 \
+            -configuration Release \
+            -derivedDataPath src-tauri/gen/apple/DerivedData-iphonesimulator \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+          (cd src-tauri/gen/apple/DerivedData-iphonesimulator/Build/Products/Release-iphonesimulator && zip -qry "$GITHUB_WORKSPACE/artifacts/ENISE-Docs-ios-simulator-arm64.app.zip" *.app)
+          ls -lh artifacts/
+
+      - name: Upload iOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: enise-docs-ios
+          path: artifacts/*
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 3. Android (Universal Signed .apk + Play Store .aab)
+  # ---------------------------------------------------------------------------
+  build-android:
+    name: Android (.apk & .aab)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install host system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK & NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android Platform 35, Build-Tools & NDK 27
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Setup Rust stable (Android targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Rust Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Initialize & Build Tauri Android (.apk & .aab)
+        run: |
+          npx tauri android init --ci --skip-targets-install
+          npx tauri android build --apk --aab --ci
+
+      - name: Align & Sign Android APK + Collect AAB
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          mkdir -p artifacts
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+          UNSIGNED_APK=$(find src-tauri/gen/android/app/build/outputs/apk -type f -name "*.apk" | head -n 1)
+          AAB_FILE=$(find src-tauri/gen/android/app/build/outputs/bundle -type f -name "*.aab" | head -n 1)
+
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > /tmp/release.keystore
+            KS_PASS="$ANDROID_KEYSTORE_PASSWORD"
+            KEY_ALIAS="$ANDROID_KEY_ALIAS"
+            KEY_PASS="${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
+          else
+            keytool -genkeypair -v \
+              -keystore /tmp/release.keystore \
+              -alias enisedocs \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass enisedocs123 \
+              -keypass enisedocs123 \
+              -dname "CN=ENISE Docs, OU=ENISE, O=Centrale Lyon, L=Saint-Etienne, S=Auvergne-Rhone-Alpes, C=FR"
+            KS_PASS="enisedocs123"
+            KEY_ALIAS="enisedocs"
+            KEY_PASS="enisedocs123"
+          fi
+
+          "$BUILD_TOOLS/zipalign" -v -p 4 "$UNSIGNED_APK" /tmp/aligned.apk
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks /tmp/release.keystore \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass "pass:$KS_PASS" \
+            --key-pass "pass:$KEY_PASS" \
+            --out artifacts/ENISE-Docs-android-universal.apk \
+            /tmp/aligned.apk
+          rm -f /tmp/release.keystore /tmp/aligned.apk
+
+          cp "$AAB_FILE" artifacts/ENISE-Docs-android-universal.aab
+          ls -lh artifacts/
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: enise-docs-android
+          path: artifacts/*
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 4. Windows (x64 NSIS -setup.exe & WiX .msi en français)
+  # ---------------------------------------------------------------------------
+  build-windows:
+    name: Windows (x64 .exe & .msi)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Rust stable (MSVC x64)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Tauri Windows Installers (NSIS .exe & WiX .msi)
+        run: npx tauri build --target x86_64-pc-windows-msvc --bundles nsis,msi --ci
+
+      - name: Collect Windows artifacts
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cp src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe artifacts/
+          cp src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi artifacts/
+          ls -lh artifacts/
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: enise-docs-windows-x64
+          path: artifacts/*
+          if-no-files-found: error

@@ -71,6 +71,35 @@ const API_SECURITY_HEADERS = {
   'X-Robots-Tag': 'noindex, nofollow',
 };
 
+const TAURI_CORS_ORIGINS = new Set([
+  'tauri://localhost',
+  'http://tauri.localhost',
+  'https://tauri.localhost',
+]);
+
+const CORS_EXPOSE_HEADERS = 'Content-Range, Content-Length, Accept-Ranges, X-Cache-Status, X-Model3D-Meta, Retry-After';
+
+export function resolveAllowedCorsOrigin(request, env) {
+  const origin = String(request?.headers?.get('Origin') || '').trim();
+  if (!origin) return '';
+  if (TAURI_CORS_ORIGINS.has(origin)) return origin;
+  const extra = String(env?.CORS_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return extra.includes(origin) ? origin : '';
+}
+
+function withCorsHeaders(response, allowedOrigin) {
+  if (!allowedOrigin || !response) return response;
+  const wrapped = new Response(response.body, response);
+  wrapped.headers.set('Access-Control-Allow-Origin', allowedOrigin);
+  wrapped.headers.set('Access-Control-Allow-Credentials', 'true');
+  wrapped.headers.set('Access-Control-Expose-Headers', CORS_EXPOSE_HEADERS);
+  wrapped.headers.append('Vary', 'Origin');
+  return wrapped;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -79,19 +108,30 @@ export default {
       return env.ASSETS.fetch(request);
     }
 
+    const allowedOrigin = resolveAllowedCorsOrigin(request, env);
+
     if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204,
-        headers: {
-          ...API_SECURITY_HEADERS,
-          Allow: 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
-          'Access-Control-Allow-Methods': 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
-          'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
-          'Access-Control-Max-Age': '86400',
-        },
-      });
+      return withCorsHeaders(
+        new Response(null, {
+          status: 204,
+          headers: {
+            ...API_SECURITY_HEADERS,
+            Allow: 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
+            'Access-Control-Allow-Methods': 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
+            'Access-Control-Max-Age': '86400',
+          },
+        }),
+        allowedOrigin,
+      );
     }
 
+    const response = await handleApiRequest(request, url, env, ctx);
+    return withCorsHeaders(response, allowedOrigin);
+  },
+};
+
+async function handleApiRequest(request, url, env, ctx) {
     try {
       if (url.pathname === '/api/health') {
         return handleHealth(env);
@@ -211,8 +251,7 @@ export default {
         { status: 500, cacheControl: 'no-store' },
       );
     }
-  },
-};
+}
 
 /** Cache navigateur des documents d’index : court, pour voir les nouveautés. */
 export function browserCacheControl(env) {

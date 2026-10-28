@@ -121,8 +121,23 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Printf("%s %s %d %s", r.Method, r.URL.RequestURI(), writer.status, time.Since(started).Round(time.Millisecond))
 }
 
+func isAllowedTauriOrigin(origin string) bool {
+	switch strings.TrimSpace(origin) {
+	case "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	applyAPISecurity(w.Header())
+	if origin := strings.TrimSpace(r.Header.Get("Origin")); isAllowedTauriOrigin(origin) {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges, X-Cache-Status, X-Model3D-Meta, Retry-After")
+		w.Header().Add("Vary", "Origin")
+	}
 	if r.Method == http.MethodOptions {
 		w.Header().Set("Allow", "GET, HEAD, POST, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PATCH, DELETE, OPTIONS")

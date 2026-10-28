@@ -597,6 +597,14 @@ npm run count:files  # comptage de référence des fichiers du bucket HF
 npm audit            # audit des dépendances
 ```
 
+## Applications natives Tauri v2 (macOS, iOS, Android, Windows)
+
+Le dépôt inclut une enveloppe **Tauri v2** (`src-tauri/`) permettant de compiler le site en application native légère pour **macOS** (Universal `.dmg`/`.app`), **iOS** (`.ipa` + Simulateur), **Android** (`.apk` signé + `.aab`) et **Windows** (`.exe` NSIS + `.msi` WiX), sans modifier le comportement du site Web sur Cloudflare Workers.
+
+- Plan architectural détaillé et guide de signature : [`docs/TAURI_MULTIPLATFORM_PLAN.md`](./docs/TAURI_MULTIPLATFORM_PLAN.md)
+- Pipeline CI parallèle multi-OS : [`.github/workflows/tauri-build.yml`](./.github/workflows/tauri-build.yml)
+- Scripts npm : `npm run tauri:dev`, `npm run tauri:build`, `npm run tauri:build:macos`, `npm run tauri:build:windows`, `npm run tauri:android:init && npm run tauri:android:build`, `npm run tauri:ios:init && npm run tauri:ios:build`.
+
 ## Structure
 
 ```text

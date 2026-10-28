@@ -1,7 +1,9 @@
+import { apiCredentials, apiUrl } from '../utils/runtime.js';
+
 async function request(path, { method = 'GET', body } = {}) {
-  const response = await fetch(path, {
+  const response = await fetch(apiUrl(path), {
     method,
-    credentials: 'same-origin',
+    credentials: apiCredentials(),
     headers: {
       Accept: 'application/json',
       ...(body ? { 'Content-Type': 'application/json' } : {}),

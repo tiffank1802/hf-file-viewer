@@ -1527,3 +1527,33 @@ body.reader-open { overflow: hidden; }
   .reader-highlight, .reader-highlight-page { border: 2px solid Highlight; background: transparent; forced-color-adjust: none; }
   .reader-selection-toolbar { border: 2px solid ButtonText; }
 }
+
+/* Adaptation native Tauri v2 (macOS, iOS Dynamic Island, Android edge-to-edge, Windows) */
+.pdf-reader-modal-host {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+}
+
+.is-tauri .site-header {
+  height: calc(86px + env(safe-area-inset-top, 0px));
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.is-tauri .reader-header {
+  padding-top: calc(8px + env(safe-area-inset-top, 0px));
+  height: auto;
+  min-height: calc(52px + env(safe-area-inset-top, 0px));
+}
+
+@media (max-width: 760px) {
+  .is-tauri .site-header {
+    height: calc(72px + env(safe-area-inset-top, 0px));
+  }
+  .is-tauri .preview-header {
+    padding-top: calc(14px + env(safe-area-inset-top, 0px));
+  }
+}
+

@@ -11,6 +11,7 @@ import { FiRefreshCw } from 'react-icons/fi';
 import { GlobalWorkerOptions, TextLayer, getDocument } from 'pdfjs-dist';
 import workerSource from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import 'pdfjs-dist/web/pdf_viewer.css';
+import { isTauriRuntime } from '../utils/runtime';
 
 GlobalWorkerOptions.workerSrc = workerSource;
 
@@ -35,7 +36,7 @@ const PdfReader = forwardRef(function PdfReader({
     if (!url) return undefined;
     const task = getDocument({
       url,
-      withCredentials: true,
+      withCredentials: !isTauriRuntime(),
       disableAutoFetch: true,
       disableStream: true,
       rangeChunkSize: 256 * 1024,

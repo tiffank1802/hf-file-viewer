@@ -3,6 +3,7 @@ import { FiDownload, FiInfo } from 'react-icons/fi';
 import { AUTODESK_VIEWER_API_URL } from '../config';
 import { fileProxyUrl } from '../services/api';
 import { formatBytes } from '../utils/files';
+import { apiCredentials, apiUrl } from '../utils/runtime';
 import { FileTypeIcon } from './Icons';
 
 const VIEWER_SCRIPT_ID = 'autodesk-viewer-api';
@@ -60,7 +61,7 @@ export default function AutodeskViewer({ file }) {
     setMessage('Connexion au service Autodesk…');
 
     const getAccessToken = (callback) => {
-      fetch('/api/aps/token', { cache: 'no-store' })
+      fetch(apiUrl('/api/aps/token'), { cache: 'no-store', credentials: apiCredentials() })
         .then((response) => {
           if (!response.ok) throw new Error('Token Autodesk indisponible');
           return response.json();
@@ -197,8 +198,9 @@ export default function AutodeskViewer({ file }) {
       }
 
       pollController = new AbortController();
-      fetch(`/api/aps/status?${viewerQuery(file)}`, {
+      fetch(apiUrl(`/api/aps/status?${viewerQuery(file)}`), {
         cache: 'no-store',
+        credentials: apiCredentials(),
         signal: pollController.signal,
       })
         .then((response) => {
@@ -244,9 +246,10 @@ export default function AutodeskViewer({ file }) {
       try {
         const params = viewerQuery(file);
         if (force) params.set('force', '1');
-        const response = await fetch(`/api/aps/view?${params}`, {
+        const response = await fetch(apiUrl(`/api/aps/view?${params}`), {
           method: 'POST',
           cache: 'no-store',
+          credentials: apiCredentials(),
         });
         const payload = await response.json();
         if (disposed) return;
