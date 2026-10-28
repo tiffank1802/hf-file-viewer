@@ -107,7 +107,7 @@ test('préparation : refuse un fichier manquant, vide ou ambigu avant publicatio
   await assert.rejects(prepareAppRelease(input, output), /ambigu/);
 });
 
-test('publication atomique : brouillon, upload puis publication ; une release existante reste immuable', async (t) => {
+test('publication atomique : brouillon vérifié, upload puis publication ; une release publique reste immuable', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'enise-app-publish-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const input = path.join(root, 'input');
@@ -122,7 +122,9 @@ test('publication atomique : brouillon, upload puis publication ; une release ex
 printf '%s\\n' "$*" >> "$GH_LOG"
 if [[ "$1 $2" == 'release view' ]]; then
   if [[ "$GH_STATE" == 'missing' ]]; then exit 1; fi
-  if [[ "$GH_STATE" == 'draft' || "$GH_STATE" == 'upload-fails' ]]; then echo true; else echo false; fi
+  if [[ "$GH_STATE" == 'draft' || "$GH_STATE" == 'upload-fails' ]]; then printf 'true\\t%s\\n' "$RELEASE_TARGET";
+  elif [[ "$GH_STATE" == 'mismatch' ]]; then printf 'true\\tother-commit\\n';
+  else printf 'false\\t%s\\n' "$RELEASE_TARGET"; fi
 fi
 if [[ "$1 $2" == 'release upload' && "$GH_STATE" == 'upload-fails' ]]; then exit 1; fi
 `, { mode: 0o755 });
@@ -140,11 +142,25 @@ if [[ "$1 $2" == 'release upload' && "$GH_STATE" == 'upload-fails' ]]; then exit
     },
   });
   let result = run('missing');
-  assert.equal(result.status, 0, result.stderr);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Brouillon.*introuvable/);
   let commands = await readFile(log, 'utf8');
-  assert.match(commands, /release create v1\.0\.0 .*--draft/);
-  assert.ok(commands.indexOf('release upload') > commands.indexOf('release create'));
+  assert.doesNotMatch(commands, /release create|release upload|release edit/);
+
+  await writeFile(log, '');
+  result = run('draft');
+  assert.equal(result.status, 0, result.stderr);
+  commands = await readFile(log, 'utf8');
+  assert.doesNotMatch(commands, /release create/);
+  assert.ok(commands.indexOf('release upload') > commands.indexOf('release view'));
   assert.ok(commands.indexOf('release edit') > commands.indexOf('release upload'));
+
+  await writeFile(log, '');
+  result = run('mismatch');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /non le commit compilé/);
+  commands = await readFile(log, 'utf8');
+  assert.doesNotMatch(commands, /release upload|release edit/);
 
   await writeFile(log, '');
   result = run('public');

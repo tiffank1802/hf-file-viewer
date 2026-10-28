@@ -31,18 +31,24 @@ run_gh() {
   fi
 }
 
-# Un rerun peut reprendre un brouillon ; une release déjà publique est
-# immuable pour ne jamais remplacer silencieusement les téléchargements.
-if state=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
-  if [[ "$state" != "true" ]]; then
-    echo "La release $TAG est déjà publiée ; utilisez un nouveau tag." >&2
-    exit 1
-  fi
-else
-  run_gh release create "$TAG" --target "$TARGET" --draft \
-    --title "ENISE Docs $TAG — applications de test" \
-    --notes-file .github/APP_RELEASE_NOTES.md
+# Les droits GITHUB_TOKEN du dépôt permettent d'alimenter un brouillon, mais
+# la création d'une release renvoie 403. Un mainteneur doit donc créer le
+# brouillon avec son accès GitHub avant de lancer la publication.
+if ! release_info=$(gh release view "$TAG" --json isDraft,targetCommitish --jq '[.isDraft, .targetCommitish] | @tsv' 2>&1); then
+  printf '::error::Brouillon %s introuvable ou inaccessible. Créez-le avec --draft --target %s avant publication. %s\n' \
+    "$TAG" "$TARGET" "${release_info//$'\n'/ }" >&2
+  exit 1
+fi
+IFS=$'\t' read -r state draft_target <<< "$release_info"
+if [[ "$state" != "true" ]]; then
+  echo "La release $TAG est déjà publiée ; utilisez un nouveau tag." >&2
+  exit 1
+fi
+if [[ "$draft_target" != "$TARGET" ]]; then
+  printf '::error::Le brouillon %s cible %s, et non le commit compilé %s.\n' "$TAG" "$draft_target" "$TARGET" >&2
+  exit 1
 fi
 
+# Un rerun peut reprendre un brouillon ; une release publique est immuable.
 run_gh release upload "$TAG" "$ASSET_DIR"/* --clobber
 run_gh release edit "$TAG" --draft=false --latest

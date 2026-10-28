@@ -18,6 +18,10 @@ on:
         description: "Origine HTTPS publique de l'API (défaut : Cloud Run Go)"
         required: false
         default: 'https://enise-docs-api-mb66o5jbpa-ew.a.run.app'
+      release_tag:
+        description: 'Tag stable du brouillon existant à publier (ex. v1.0.1, facultatif)'
+        required: false
+        type: string
 
 concurrency:
   group: tauri-build-${{ github.sha }}
@@ -32,7 +36,7 @@ jobs:
   # 1. macOS (Universal Binary : Apple Silicon arm64 + Intel x86_64 -> .dmg/.app)
   # ---------------------------------------------------------------------------
   build-macos:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[test-release-permissions]')
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[verify-app-downloads]')
     name: macOS (Universal .dmg & .app)
     runs-on: macos-latest
     steps:
@@ -80,7 +84,7 @@ jobs:
   # 2. iOS (Physical Device .ipa + Simulator arm64 .app.zip)
   # ---------------------------------------------------------------------------
   build-ios:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[test-release-permissions]')
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[verify-app-downloads]')
     name: iOS (.ipa & Simulator .app)
     runs-on: macos-latest
     steps:
@@ -148,7 +152,7 @@ jobs:
   # 3. Android (Universal Signed .apk + Play Store .aab)
   # ---------------------------------------------------------------------------
   build-android:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[test-release-permissions]')
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[verify-app-downloads]')
     name: Android (.apk & .aab)
     runs-on: ubuntu-24.04
     steps:
@@ -269,7 +273,7 @@ jobs:
   # 4. Windows (x64 NSIS -setup.exe & WiX .msi en français)
   # ---------------------------------------------------------------------------
   build-windows:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[test-release-permissions]')
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[verify-app-downloads]')
     name: Windows (x64 .exe & .msi)
     runs-on: windows-latest
     steps:
@@ -316,15 +320,15 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # 5. Publication des tags vMAJEUR.MINEUR.PATCH : aucun push de branche ne
-  #    remplace une release publique. Le brouillon n'est publié qu'une fois
-  #    tous les fichiers et leurs empreintes téléversés.
+  # 5. Publication d'un brouillon créé au préalable : tag vMAJEUR.MINEUR.PATCH
+  #    ou workflow_dispatch avec release_tag. Une release publique est immuable
+  #    et le brouillon n'est publié qu'après tous les uploads.
   # ---------------------------------------------------------------------------
   publish-release:
     name: Publish GitHub Release
     runs-on: ubuntu-24.04
     needs: [build-macos, build-ios, build-android, build-windows]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     permissions:
       actions: read
       contents: write
@@ -342,32 +346,38 @@ jobs:
       - name: Prepare stable filenames and SHA-256 checksums
         run: node scripts/prepare-app-release.mjs collected-artifacts release-assets
 
-      - name: Publish the release after every upload succeeds
+      - name: Verify the tag matches the version in Tauri configuration
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          VERSION=$(node -p 'JSON.parse(require("node:fs").readFileSync("src-tauri/tauri.conf.json", "utf8")).version')
+          test "$RELEASE_TAG" = "v$VERSION" || { echo "::error::Le tag $RELEASE_TAG doit correspondre à la version v$VERSION"; exit 1; }
+
+      - name: Publish an existing draft after every upload succeeds
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
           RELEASE_TARGET: ${{ github.sha }}
         run: bash scripts/publish-app-release.sh release-assets
 
-  # Contrôle temporaire des permissions de création de release du runner.
-  verify-draft-creation:
-    name: Verify draft release creation
-    if: github.event_name == 'push' && github.ref == 'refs/heads/arena/f912a7b4-hf-file-viewer' && contains(github.event.head_commit.message, '[test-release-permissions]')
+  # Vérification ponctuelle et anonyme des quatre téléchargements publics.
+  verify-public-downloads:
+    name: Verify public app downloads
+    if: github.event_name == 'push' && github.ref == 'refs/heads/arena/f912a7b4-hf-file-viewer' && contains(github.event.head_commit.message, '[verify-app-downloads]')
     runs-on: ubuntu-24.04
     permissions:
-      contents: write
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - name: Create and remove a private draft
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download and verify the published files without authentication
         run: |
-          TEST_TAG="ci-draft-${GITHUB_RUN_ID}"
-          if output=$(gh release create "$TEST_TAG" --target ffc68d4974038775457514d125192c21389508b1 --draft --title "CI permissions test" --notes "Draft created temporarily for CI verification." 2>&1); then
-            echo "$output"
-            gh release delete "$TEST_TAG" --yes
-          else
-            echo "$output"
-            echo "::error::Draft creation failed: ${output//$'\n'/ }"
-            exit 1
-          fi
+          set -euo pipefail
+          BASE=https://github.com/tiffank1802/hf-file-viewer/releases/latest/download
+          mkdir downloads && cd downloads
+          curl -fsSL --retry 2 "$BASE/SHA256SUMS.txt" -o SHA256SUMS.txt
+          : > expected.sha256
+          for file in ENISE-Docs-windows-x64-setup.exe ENISE-Docs-macos-universal.dmg ENISE-Docs-android-universal.apk ENISE-Docs-ios-unsigned.ipa; do
+            curl -fsSL --retry 2 "$BASE/$file" -o "$file"
+            grep -F "  $file" SHA256SUMS.txt >> expected.sha256
+          done
+          test "$(wc -l < expected.sha256)" -eq 4
+          sha256sum --check expected.sha256

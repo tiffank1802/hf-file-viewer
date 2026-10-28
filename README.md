@@ -618,9 +618,15 @@ Sur le site, cliquer sur **Application** dans l’en-tête, ou sur **Installer**
 
 Ces fichiers sont des **versions de test**, pas des applications distribuées sur les stores. Windows et macOS peuvent signaler l’absence de signature officielle ou de notarisation. L’APK Android est installé hors Play Store ; si la clé de signature change entre deux versions, il faudra éventuellement désinstaller la précédente. Les [empreintes SHA-256](https://github.com/tiffank1802/hf-file-viewer/releases/latest/download/SHA256SUMS.txt) permettent de contrôler l’intégrité des fichiers.
 
-Les artefacts temporaires d’un run Actions restent accessibles aux personnes autorisées depuis sa page, mais les téléchargements du site utilisent les **assets publics d’une release**, sans expiration des artefacts Actions. Lorsqu’un mainteneur pousse un tag stable `vMAJEUR.MINEUR.PATCH`, le workflow attend les quatre builds, vérifie les fichiers et les publie ensemble dans une nouvelle release. Il ne remplace jamais une release déjà publiée. Pour utiliser un miroir HTTPS, définir les variables publiques de build `VITE_APP_RELEASE_BASE_URL` et `VITE_APP_RELEASE_PAGE_URL` (voir `.env.example`) et y déposer tous les fichiers aux mêmes noms.
+Les artefacts temporaires d’un run Actions restent accessibles aux personnes autorisées depuis sa page, mais les téléchargements du site utilisent les **assets publics d’une release**, sans expiration des artefacts Actions.
 
-Les changements frontend doivent ensuite être déployés sur le site, par exemple avec `npm run deploy` depuis un environnement autorisé sur Cloudflare.
+Pour publier une nouvelle version :
+
+1. Mettre à jour `version` dans `src-tauri/tauri.conf.json`, puis créer un **brouillon** GitHub Release avec un compte autorisé, en ciblant exactement le SHA du commit à compiler. Exemple : `gh release create v1.0.1 --draft --target <SHA_DU_COMMIT> --title 'ENISE Docs v1.0.1' --notes-file .github/APP_RELEASE_NOTES.md`. Le `GITHUB_TOKEN` du dépôt ne peut pas créer une release (403), mais peut remplir et publier un brouillon existant.
+2. Pousser le tag stable correspondant `vMAJEUR.MINEUR.PATCH`, ou, lorsque le workflow est disponible sur la branche par défaut, lancer **Actions → Tauri Multiplatform Build → Run workflow** sur la branche à compiler en renseignant `release_tag` (par exemple `v1.0.1`). Le SHA choisi doit toujours être celui du brouillon.
+3. Le workflow attend les quatre builds, vérifie les fichiers et les publie ensemble après upload. Une release déjà publique n’est jamais écrasée ; si un build ou un upload échoue, le brouillon reste privé.
+
+Pour utiliser un miroir HTTPS, définir les variables publiques de build `VITE_APP_RELEASE_BASE_URL` et `VITE_APP_RELEASE_PAGE_URL` (voir `.env.example`) et y déposer tous les fichiers aux mêmes noms. Les changements frontend doivent ensuite être déployés sur le site, par exemple avec `npm run deploy` depuis un environnement autorisé sur Cloudflare.
 
 ## Structure
 
