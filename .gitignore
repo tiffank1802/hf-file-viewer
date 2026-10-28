@@ -6,7 +6,11 @@ node_modules/
 .env
 .env.local
 .env.*
-.dev.vars 
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.dev.var
+.dev.var.*
 .patch
 
 
