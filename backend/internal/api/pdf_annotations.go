@@ -56,7 +56,7 @@ func (s *Server) handlePDFAnnotationList(w http.ResponseWriter, r *http.Request,
 	payload := map[string]any{"ok": true, "enabled": true, "sourceRevision": revision, "items": items}
 	if pdfErr != nil {
 		payload["storageAvailable"] = false
-		payload["warning"] = "La table des annotations PDF n’est pas encore provisionnée. Lance npm run appwrite:setup."
+		payload["warning"] = "La table des annotations PDF n’est pas encore provisionnée. Contacte l’administrateur pour vérifier le stockage."
 	} else {
 		payload["storageAvailable"] = true
 	}

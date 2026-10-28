@@ -7,14 +7,10 @@
  * `tests/appwrite-provisioning-plan.test.js`) : --dry-run, --status, --drop et
  * le run réel consomment le même plan, donc ils ne peuvent plus diverger.
  *
- *   npm run appwrite:ping                                  # réseau + endpoint
- *   node scripts/appwrite-setup.mjs --diagnose             # qui répond, où
- *   APPWRITE_API_KEY="***" npm run appwrite:setup          # provisioning
- *   npm run appwrite:status                                # contrôle après run
- *   node scripts/appwrite-setup.mjs --flavor=databases     # force l'API 1.x
- *   node scripts/appwrite-setup.mjs --fix-enums            # réaligne les colonnes enum
- *   node scripts/appwrite-setup.mjs --inspect              # lignes + email du propriétaire
- *   node scripts/appwrite-setup.mjs --drop                 # retire les tables
+ * Les commandes de lecture et de simulation ne modifient rien. Toute écriture
+ * exige --apply et une cible explicite ; --new-table-only refuse de modifier
+ * une table existante. Consulter docs/DEPLOY_PDF_UNIFIED.md avant utilisation.
+ * --drop reste destructif et exige aussi une confirmation par identifiant.
  *
  * La clé serveur ne doit JAMAIS être commitée ni porter un préfixe VITE_.
  */
@@ -50,7 +46,7 @@ function loadDevVars(root) {
 
 import { SPECS, configuredTables, buildPlan, columnDrift, enumColumns, permissionsDrift, summarizeRows, withPendingRetry } from './appwrite-spec.js';
 
-const TABLES = configuredTables(process.env);
+const ALL_TABLES = configuredTables(process.env);
 const argv = process.argv.slice(2);
 const flags = new Set(argv.filter((a) => a.startsWith('--') && !a.includes('=')));
 const option = (name, fallback) => {
@@ -59,12 +55,18 @@ const option = (name, fallback) => {
 };
 
 const DRY_RUN = flags.has('--dry-run');
+const APPLY = flags.has('--apply');
+const ALL = flags.has('--all-tables');
+const NEW_TABLE_ONLY = flags.has('--new-table-only');
+const TARGET_TABLE = option('table', null);
+const TABLES = TARGET_TABLE ? ALL_TABLES.filter((table) => table.id === TARGET_TABLE) : ALL_TABLES;
 const DROP = flags.has('--drop');
 const PING = flags.has('--ping');
 const STATUS = flags.has('--status');
 const FIX_ENUMS = flags.has('--fix-enums');
 const INSPECT = flags.has('--inspect');
 const DIAGNOSE = flags.has('--diagnose');
+const HELP = flags.has('--help') || argv.includes('-h');
 const VERBOSE = flags.has('--verbose');
 const TIMEOUT_MS = Number(process.env.APPWRITE_TIMEOUT_MS || 30_000);
 /**
@@ -96,10 +98,62 @@ class ApiError extends Error {
   }
 }
 
-/** --diagnose et --status doivent interroger le réseau réel, même en dry-run. */
-const NETWORK_PROBE = DIAGNOSE || STATUS || INSPECT;
+/** Les modes de diagnostic doivent interroger le réseau réel, même en dry-run. */
+const NETWORK_PROBE = DIAGNOSE || STATUS || INSPECT || FIX_ENUMS;
 
 const retryOptions = { attempts: RETRY_ATTEMPTS, delayMs: RETRY_DELAY_MS };
+
+function validateOptions() {
+  const allowedFlags = new Set([
+    '--dry-run', '--apply', '--all-tables', '--new-table-only', '--drop',
+    '--ping', '--status', '--fix-enums', '--inspect', '--diagnose', '--verbose', '--help', '-h',
+  ]);
+  const allowedValues = new Set(['flavor', 'specification', 'limit', 'table', 'confirm-delete']);
+  const seenValues = new Set();
+  for (const arg of argv) {
+    if (allowedFlags.has(arg)) continue;
+    const match = /^--([a-z-]+)=(.+)$/.exec(arg);
+    if (!match || !allowedValues.has(match[1]) || seenValues.has(match[1])) {
+      throw new Error(`Option inconnue, vide ou répétée : ${arg}. Utilise --help pour consulter les options.`);
+    }
+    seenValues.add(match[1]);
+  }
+  if (HELP) return;
+  if (TARGET_TABLE !== null && !TABLES.length) throw new Error(`Table inconnue dans le modèle configuré : ${TARGET_TABLE}.`);
+  if (TARGET_TABLE && ALL) throw new Error('--table et --all-tables ne peuvent pas être combinés.');
+  const modeCount = [PING, STATUS, FIX_ENUMS, INSPECT, DIAGNOSE, DROP].filter(Boolean).length;
+  if (modeCount > 1) throw new Error('Choisis un seul mode : ping, status, fix-enums, inspect, diagnose ou drop.');
+  const readOnly = PING || STATUS || INSPECT || DIAGNOSE;
+  if (NEW_TABLE_ONLY && (readOnly || DROP || FIX_ENUMS || !TARGET_TABLE)) {
+    throw new Error('--new-table-only exige --table=<id> et ne se combine pas aux modes de diagnostic ou de suppression.');
+  }
+  if (APPLY && readOnly) throw new Error('--apply ne se combine pas aux modes de diagnostic en lecture seule.');
+  if (!readOnly && !DRY_RUN && !APPLY) {
+    throw new Error('Aucune écriture effectuée : --apply et une cible explicite sont nécessaires après sauvegarde et revue du plan.');
+  }
+  if (!readOnly && !TARGET_TABLE && !ALL && !DRY_RUN) {
+    throw new Error('Aucune écriture effectuée : précise --table=<id> ou --all-tables après revue.');
+  }
+  if ((DROP || FIX_ENUMS) && !TARGET_TABLE) throw new Error('--drop et --fix-enums exigent une seule table avec --table=<id>.');
+  if (DROP && !DRY_RUN && option('confirm-delete', null) !== TARGET_TABLE) {
+    throw new Error('Suppression refusée : --confirm-delete=<même id que --table> est requis.');
+  }
+  if (!DROP && option('confirm-delete', null) !== null) throw new Error('--confirm-delete est réservé à --drop.');
+}
+
+function usage() {
+  console.log([
+    'Provisioning Appwrite — sauvegarder et examiner le plan avant toute écriture.',
+    '  --dry-run                         plan statique, sans comparer la base',
+    '  --status                          diagnostic en lecture seule',
+    '  --table=<id>                      cibler une seule table configurée',
+    '  --new-table-only --table=<id>     créer une table absente ; refuser toute table existante',
+    '  --apply                           autoriser les écritures prévues',
+    '  --all-tables                      cibler toutes les tables (permissions comprises)',
+    '  --flavor=tablesdb|databases       choisir le dialecte Appwrite',
+    '  --drop                            destructif ; voir docs/DEPLOY_PDF_UNIFIED.md',
+  ].join('\n'));
+}
 
 async function request(method, path, body) {
   if (DRY_RUN && !NETWORK_PROBE) return { __dryRun: true };
@@ -175,8 +229,11 @@ function explain(error) {
     ].join('\n');
   }
   if (error.status === 404) {
+    if (error.type && error.type !== 'general_route_not_found') {
+      return `${error.method} ${error.path} → 404 (${error.type}) : ${error.message}`;
+    }
     const hint = otherFlavor(FLAVOR) ? ` Si la route est absente de cette instance : --flavor=${otherFlavor(FLAVOR)}.` : '';
-    return `${error.method} ${error.path} → 404 (${error.type || 'general_route_not_found'}) : route inconnue de cette instance.${hint}`;
+    return `${error.method} ${error.path} → 404 (${error.type || 'type inconnu'}) : ressource ou route inconnue.${hint}`;
   }
   if (error.status === 401) return `401 : APPWRITE_API_KEY absente, invalide ou expirée, ou projet incorrect (${error.method} ${error.path}).`;
   if (error.status === 403) return `403 : accès interdit ; vérifie les permissions et les scopes de la clé pour ${error.method} ${error.path}.`;
@@ -194,8 +251,19 @@ function explain(error) {
 
 let FLAVOR = null;
 
-/** GET puis POST : renvoie 'created' | 'exists' | 'skipped' | 'planned'. */
-async function ensure(getPath, postPath, body, label) {
+const MISSING_TYPES = {
+  database: ['database_not_found'],
+  table: ['table_not_found', 'collection_not_found'],
+  column: ['column_not_found', 'attribute_not_found'],
+  index: ['column_index_not_found', 'index_not_found'],
+};
+
+function isResourceMissing(error, group) {
+  return error?.status === 404 && (MISSING_TYPES[group] ?? []).includes(error.type);
+}
+
+/** Ne créer qu'après un 404 Appwrite identifiant précisément la ressource. */
+async function ensure(getPath, postPath, body, label, group) {
   if (DRY_RUN) {
     console.log(`  · ${label} → POST ${postPath} ${JSON.stringify(body)}`);
     return 'planned';
@@ -205,25 +273,14 @@ async function ensure(getPath, postPath, body, label) {
     console.log(`  ✓ ${label} — déjà en place`);
     return 'exists';
   } catch (error) {
-    if (error.transport) throw error;
-    if (error.status !== 404 && error.status !== 403) throw error;
-    if (error.status === 403) console.warn(`  ! ${label} — illisible avec cette clé, création tentée`);
+    // 403 ne signifie pas absent. Un 404 de route ou de parent non plus.
+    if (!isResourceMissing(error, group)) throw error;
   }
-  try {
-    await withPendingRetry(() => request('POST', postPath, body), label, retryOptions);
-    console.log(`  + ${label} — créée`);
-    return 'created';
-  } catch (error) {
-    if (error.status === 409 || error.type === 'duplicate_unique' || /already exists/i.test(error.message)) {
-      console.log(`  ✓ ${label} — déjà en place (conflit ignoré)`);
-      return 'exists';
-    }
-    if (/index/i.test(`${error.message} ${error.path}`) && /not support|invalid|unsupported/i.test(error.message)) {
-      console.warn(`  ! ${label} — ignoré : ${error.message}`);
-      return 'skipped';
-    }
-    throw error;
-  }
+  // Un conflit peut révéler une création concurrente ou une définition
+  // différente ; ne jamais l'ignorer et poursuivre comme si c'était la nôtre.
+  await withPendingRetry(() => request('POST', postPath, body), label, retryOptions);
+  console.log(`  + ${label} — créée`);
+  return 'created';
 }
 
 /**
@@ -342,6 +399,7 @@ async function status() {
   if (!database) return;
   console.log(`base ${DATABASE_ID} — ${database.name} (${spec.label})`);
   let blocked = 0;
+  const rows = new Map();
   for (const table of TABLES) {
     const row = await request('GET', spec.tablePath(DATABASE_ID, table)).catch((error) => {
       reportStatusError(`table ${table.id}`, error);
@@ -351,35 +409,69 @@ async function status() {
       blocked += 1;
       continue;
     }
-    const columns = row.columns ?? row.attributes ?? [];
-    const indexes = row.indexes ?? [];
-    console.log(`  ${table.id} : ${columns.length}/${table.columns.length} colonnes, ${indexes.length}/${table.indexes.length} index, sécurité par ligne=${row.rowSecurity ?? row.documentSecurity}`);
-    // Les permissions LUES sont la seule réponse à « le PUT est-il passé ? » :
-    // afficher celles du modèle, comme le faisait ce rapport, ne prouvait rien.
-    const live = row.$permissions ?? row.permissions ?? [];
-    const drift = permissionsDrift(table.permissions, live);
-    if (drift.empty) {
-      console.log('    ! aucune permission sur la table : le client ne peut ni lire ni écrire — npm run appwrite:setup');
-      blocked += 1;
-    } else if (drift.missing.length) {
-      console.log(`    ! permissions en base [${live.join(', ')}], prévu [${(table.permissions ?? []).join(', ')}] → npm run appwrite:setup`);
-      blocked += 1;
-    } else if (drift.noCreate) {
-      console.log('    ! pas de create() : inscription possible, profil impossible à écrire');
-      blocked += 1;
-    } else {
-      console.log(`    ✓ permissions conformes (${live.join(', ')})`);
+    rows.set(table.id, row);
+    let invalid = false;
+    const columns = Array.isArray(row.columns ?? row.attributes) ? (row.columns ?? row.attributes) : [];
+    const indexes = Array.isArray(row.indexes) ? row.indexes : [];
+    const security = row.rowSecurity ?? row.documentSecurity;
+    console.log(`  ${table.id} : ${columns.length}/${table.columns.length} colonnes, ${indexes.length}/${table.indexes.length} index, sécurité par ligne=${security}`);
+    if (Number.isFinite(row.bytesUsed) && Number.isFinite(row.bytesMax)) {
+      console.log(`    largeur de ligne déclarée : ${row.bytesUsed}/${row.bytesMax} octets (0 = sans limite annoncée)`);
     }
+    if (security !== table.rowSecurity) {
+      console.log(`    ! sécurité par ligne différente ou inconnue : attendu ${table.rowSecurity}`);
+      invalid = true;
+    }
+    if (row.enabled !== true) {
+      console.log('    ! table désactivée ou état enabled inconnu');
+      invalid = true;
+    }
+    for (const [label, expected, live] of [['colonne', table.columns, columns], ['index', table.indexes, indexes]]) {
+      for (const item of expected) {
+        const found = live.find((entry) => (entry.key ?? entry.$id) === item.key);
+        if (!found) {
+          console.log(`    ! ${label} absente : ${item.key}`);
+          invalid = true;
+          continue;
+        }
+        if (found.status !== 'available') {
+          console.log(`    ! ${label} ${item.key} non disponible ou état inconnu : ${found.status ?? 'inconnu'}`);
+          invalid = true;
+        }
+        if (label === 'index') {
+          const actualColumns = found.columns ?? found.attributes;
+          if (found.type !== item.type || !Array.isArray(actualColumns) || JSON.stringify(actualColumns) !== JSON.stringify(item.columns)) {
+            console.log(`    ! définition de l’index ${item.key} différente ou incomplète`);
+            invalid = true;
+          }
+        }
+      }
+    }
+    const live = row.$permissions ?? row.permissions;
+    const drift = permissionsDrift(table.permissions, live);
+    if (!drift.known) {
+      console.log('    ! permissions de table non renvoyées : impossible de les vérifier');
+      invalid = true;
+    } else if (!drift.aligned) {
+      console.log(`    ! permissions de table en base [${live.join(', ')}], prévu [${(table.permissions ?? []).join(', ')}]`);
+      if (drift.empty) console.log('      aucune permission au niveau table ; des permissions de ligne peuvent néanmoins autoriser l’accès.');
+      if (drift.extra.length) console.log(`      accès supplémentaires à examiner : [${drift.extra.join(', ')}]`);
+      invalid = true;
+    } else {
+      console.log(`    ✓ permissions de table conformes (${live.join(', ')})`);
+    }
+    if (invalid) blocked += 1;
   }
-  const drifts = await modelDriftReport();
+  const drifts = await modelDriftReport({ rows });
   if (drifts) {
-    console.log(`  ${drifts} colonne(s) en décalage avec le modèle (${FIX_ENUMS ? 'corrigées' : '--fix-enums pour les enums, console pour le reste'}).`);
+    console.log(`  ${drifts} colonne(s) en décalage avec le modèle : ne rien modifier avant sauvegarde et revue.`);
     process.exitCode = 1;
   }
   if (blocked) {
-    console.log(`\n  ${blocked} table(s) n’ont pas pu être validées : examiner les erreurs et les permissions avant tout déploiement.`);
+    console.log(`\n  ${blocked} table(s) n’ont pas pu être validées : examiner les écarts avant tout déploiement.`);
     process.exitCode = 1;
   }
+  console.log('  Ce diagnostic admin ne vérifie ni les données ni les permissions de chaque ligne ; tester séparément avec deux comptes.');
 }
 
 /**
@@ -390,11 +482,14 @@ async function status() {
  * for required column » rencontré ici — la table était à moitié créée, et le
  * modèle avait changé entre-temps.
  */
-async function modelDriftReport({ fix = false } = {}) {
+async function modelDriftReport({ fix = false, rows = null } = {}) {
   const spec = SPECS[FLAVOR];
   let drifts = 0;
   for (const table of TABLES) {
-    const row = await request('GET', spec.tablePath(DATABASE_ID, table)).catch(() => null);
+    const row = rows ? rows.get(table.id) : await request('GET', spec.tablePath(DATABASE_ID, table)).catch((error) => {
+      reportStatusError(`table ${table.id}`, error);
+      return null;
+    });
     if (!row) continue;
     const liveColumns = row.columns ?? row.attributes ?? [];
     for (const column of table.columns) {
@@ -404,22 +499,27 @@ async function modelDriftReport({ fix = false } = {}) {
       if (!drift) continue;
       drifts += 1;
       const parts = [];
+      if (drift.type) parts.push(`type=${drift.type.actual} prévu=${drift.type.expected}`);
       if (drift.required) parts.push(`requis=${drift.required.actual} prévu=${drift.required.expected}`);
       if (drift.size) parts.push(`taille=${drift.size.actual} prévue=${drift.size.expected}`);
       if (drift.default) parts.push(`défaut=${JSON.stringify(drift.default.actual)} prévu=${JSON.stringify(drift.default.expected)}`);
-      if (drift.elements) parts.push(`enum [${drift.elements.actual?.join(', ')}] prévu [${drift.elements.expected.join(', ')}]`);
+      if (drift.array) parts.push(`tableau=${drift.array.actual} prévu=${drift.array.expected}`);
+      if (drift.encrypt) parts.push(`chiffrement=${drift.encrypt.actual} prévu=${drift.encrypt.expected}`);
+      if (drift.elements) parts.push(`enum [${drift.elements.actual?.join(', ') ?? 'inconnu'}] prévu [${drift.elements.expected.join(', ')}]`);
       console.log(`  ! ${table.id}.${column.key} : ${parts.join(', ')}`);
       const enumFix = enumColumns([table]).find(({ column: c }) => c.key === column.key);
-      if (!enumFix) {
-        console.log('    → non réparable en écriture : ajuste dans la console, ou retire la table avec --drop');
+      if (!enumFix || !Array.isArray(drift.elements?.actual) || Object.keys(drift).some((key) => key !== 'elements')) {
+        console.log('    → sauvegarder et examiner une migration non destructive ; aucune colonne ni table n’est supprimée.');
+        if (fix) process.exitCode = 1;
         continue;
       }
-      if (!fix) { console.log('    → node scripts/appwrite-setup.mjs --fix-enums'); continue; }
-      if (DRY_RUN) continue;
+      if (!fix || DRY_RUN) {
+        console.log('    → vérifier manuellement les conséquences sur les données et sauvegardes avant toute modification.');
+        continue;
+      }
       const target = spec.enumElements(DATABASE_ID, table, column);
-      await withPendingRetry(() => request(target.method ?? 'PATCH', target.path, target.body), `${table.id}.${column.key} enum`, retryOptions)
-        .then(() => console.log('    ✓ éléments d’enum réalignés'))
-        .catch((error) => console.warn(`    ✗ ${table.id}.${column.key} — ${explain(error).split('\n')[0]}`));
+      await withPendingRetry(() => request(target.method ?? 'PATCH', target.path, target.body), `${table.id}.${column.key} enum`, retryOptions);
+      console.log('    ✓ demande de réalignement envoyée ; revérifier l’état et les données.');
     }
   }
   return drifts;
@@ -478,11 +578,16 @@ async function inspect() {
 async function drop() {
   const spec = SPECS[FLAVOR];
   for (const table of [...TABLES].reverse()) {
-    await request('DELETE', spec.tablePath(DATABASE_ID, table)).catch((error) => {
-      console.warn(`  − ${table.id} : ${error.status === 404 ? 'absente' : error.message}`);
-    });
+    const target = spec.tablePath(DATABASE_ID, table);
+    if (DRY_RUN) {
+      console.log(`  · ${table.id} → DELETE ${target} (simulation uniquement)`);
+      continue;
+    }
+    await request('DELETE', target);
+    console.log(`  − ${table.id} : demande de suppression envoyée`);
   }
-  console.log(`${spec.noun}s supprimées (la base est conservée)`);
+  if (DRY_RUN) return;
+  console.log(`Demandes de suppression envoyées (la base est conservée). Vérifier l'état dans Appwrite.`);
   // La suppression est asynchrone côté serveur : recréer la même table dans la
   // seconde qui suit peut retomber sur l'ancienne (409), que ensure() ignore
   // « déjà en place » — et la vieille liste de colonnes survivrait.
@@ -490,6 +595,8 @@ async function drop() {
 }
 
 async function main() {
+  validateOptions();
+  if (HELP) return usage();
   if (PING) return pingOnly();
   if (DIAGNOSE) return diagnose();
 
@@ -515,56 +622,66 @@ async function main() {
   if (DROP) return drop();
   if (FIX_ENUMS) {
     const drifts = await modelDriftReport({ fix: true });
-    console.log(drifts ? `${drifts} colonne(s) en décalage, enums réalignés.` : 'Aucun décalage : la base matche le modèle.');
+    console.log(drifts ? `${drifts} colonne(s) présentaient un décalage. Vérifier à nouveau l’état et les données.` : 'Aucun décalage de colonne détecté.');
     return;
   }
 
   const plan = buildPlan({ spec, databaseId: DATABASE_ID, tables: TABLES });
   const databaseOp = plan[0];
-  if (spec.specifications) {
+  if (spec.specifications && !TARGET_TABLE) {
     const specification = await pickSpecification(spec.specifications);
     if (specification) databaseOp.body = { ...databaseOp.body, specification };
   }
+  if (DRY_RUN) {
+    console.log('Simulation statique : aucune comparaison de la base réelle et aucune écriture.');
+  } else if (!NEW_TABLE_ONLY) {
+    console.warn('Attention : cette opération peut modifier le schéma et réappliquer les permissions des tables ciblées.');
+  }
 
   for (const op of plan) {
-    if (op.group === 'table') console.log(`\n${spec.noun} ${op.label}`);
+    if (op.group === 'database' && TARGET_TABLE) {
+      // Cibler une table ne doit jamais créer ou configurer la base par surprise.
+      if (DRY_RUN) console.log(`  · base existante requise → GET ${op.get}`);
+      else {
+        await request('GET', op.get);
+        console.log(`  ✓ base ${DATABASE_ID} — vérifiée sans modification`);
+      }
+      continue;
+    }
+    if (op.group === 'table') {
+      console.log(`\n${spec.noun} ${op.label}`);
+      if (NEW_TABLE_ONLY) {
+        if (DRY_RUN) {
+          console.log(`  · ${op.label} → GET ${op.get} puis POST ${op.post} uniquement si absence confirmée ${JSON.stringify(op.body)}`);
+        } else {
+          const exists = await request('GET', op.get).then(() => true).catch((error) => {
+            if (isResourceMissing(error, 'table')) return false;
+            throw error;
+          });
+          if (exists) throw new Error(`La table ${op.label} existe déjà : aucun changement de cette table en mode --new-table-only.`);
+          // Ne pas ignorer un conflit entre le GET et le POST : quelqu'un peut
+          // avoir créé une autre table entre-temps.
+          await request('POST', op.post, op.body);
+          console.log(`  + ${op.label} — création demandée`);
+        }
+        continue;
+      }
+    }
     if (op.group === 'permissions') {
       if (DRY_RUN) {
         console.log(`  · ${op.label} → ${op.method} ${op.patch} ${JSON.stringify(op.body)}`);
       } else {
-        // Méthode imposée par le dialecte : TablesDB attend un PUT sur la table
-        // (avec `name`), pas un PATCH — le PATCH répond une page 404 du Console.
-        await withPendingRetry(() => request(op.method ?? 'PATCH', op.patch, op.body), `${op.parent} permissions`, retryOptions)
-          .then(() => console.log(`  ✓ ${op.parent} — permissions appliquées`))
-          .catch((error) => console.warn(`  ! ${op.parent} — permissions : ${explain(error).split('\n')[0]}`));
+        await withPendingRetry(() => request(op.method ?? 'PUT', op.patch, op.body), `${op.parent} permissions`, retryOptions);
+        console.log(`  ✓ ${op.parent} — permissions appliquées`);
       }
       continue;
     }
-    await ensure(op.get, op.post, op.body, op.label);
+    await ensure(op.get, op.post, op.body, op.label, op.group);
   }
 
-  // Contrôle immédiat : une colonne déjà présente avant ce run n'a pas été
-  // recréée, donc un modèle modifié entre deux exécutions se voit ici plutôt
-  // qu'au premier écritage refusé par Appwrite.
-  const drifts = await modelDriftReport();
-  if (drifts) console.log(`\n${drifts} colonne(s) en décalage avec la base — relance avec --fix-enums pour les enums.`);
-
-  console.log([
-    '',
-    'Contrôle',
-    '--------',
-    `   npm run appwrite:status      # colonnes et index attendus vs réels`,
-    '',
-    'À faire ensuite',
-    '---------------',
-    '1. Rien à mettre dans le navigateur. Go utilise déjà la base enise_docs.',
-    '   Relance npm run dev, puis connecte-toi : profil, favoris et annotations s’écrivent.',
-    '2. Console → Settings → Auth : 12 caractères minimum.',
-    '3. Pour les emails (vérification, mot de passe oublié), ajoute le hostname',
-    '   du site dans Console → Settings → Domains & Platforms.',
-    `   Dialecte détecté : ${flavor}.`,
-    '',
-  ].join('\n'));
+  if (DRY_RUN) return;
+  console.log('\nDemandes envoyées. Les colonnes/index peuvent encore être en cours de création ; ne pas relancer automatiquement.');
+  await status();
 }
 
 await main().catch((error) => {

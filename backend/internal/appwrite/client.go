@@ -471,8 +471,8 @@ var frenchByType = map[string]string{
 	"row_invalid_structure":       "Profil refusé par la table.",
 	"missing_session":             "Session non ouverte.",
 	"not_configured":              "Compte non configuré.",
-	"table_not_found":             "Table absente. Lance npm run appwrite:setup.",
-	"collection_not_found":        "Table absente. Lance npm run appwrite:setup.",
+	"table_not_found":             "Table absente. Contacte l’administrateur pour vérifier le stockage.",
+	"collection_not_found":        "Table absente. Contacte l’administrateur pour vérifier le stockage.",
 }
 
 func userFrom(raw []byte) (User, error) {

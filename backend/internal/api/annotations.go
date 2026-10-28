@@ -296,7 +296,7 @@ func (s *Server) annotationUser(w http.ResponseWriter, r *http.Request) (appwrit
 
 func (s *Server) annotationFail(err error) error {
 	if appwrite.IsMissingTable(err) {
-		return catalog.Error(http.StatusConflict, "La table annotations est absente. Lance npm run appwrite:setup.")
+		return catalog.Error(http.StatusConflict, "La table annotations est absente. Contacte l’administrateur pour vérifier le stockage.")
 	}
 	return s.authFail(err)
 }

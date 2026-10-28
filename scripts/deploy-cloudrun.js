@@ -2,7 +2,8 @@
 /**
  * Déploie l’API Go d’ENISE Docs sur Cloud Run, dans le projet Firebase.
  *
- *   npm run deploy:api:firebase -- --project <id-du-projet>
+ * Le mode --dry-run est une simulation. Tout déploiement réel exige --apply
+ * et un projet explicite, après sauvegarde et revue de la configuration.
  *
  * Le site reste sur Cloudflare Workers : le Worker appelle directement l’URL
  * *.run.app (GO_API_ORIGIN). Passer par Firebase Hosting couperait les
@@ -78,10 +79,14 @@ export function parseCloudRunArgs(argv = process.argv.slice(2)) {
     writeOrigin: true,
     withHfToken: false,
     dryRun: false,
+    apply: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     const [flag, inline] = arg.includes('=') ? [arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)] : [arg, null];
+    if (inline !== null && ['--no-origin', '--with-hf-token', '--dry-run', '--apply', '--help', '-h'].includes(flag)) {
+      throw new Error(`${flag} n'accepte pas de valeur.`);
+    }
     const value = () => {
       if (inline !== null) return inline;
       i += 1;
@@ -107,6 +112,9 @@ export function parseCloudRunArgs(argv = process.argv.slice(2)) {
       case '--dry-run':
         options.dryRun = true;
         break;
+      case '--apply':
+        options.apply = true;
+        break;
       case '--help':
       case '-h':
         options.help = true;
@@ -116,6 +124,17 @@ export function parseCloudRunArgs(argv = process.argv.slice(2)) {
     }
   }
   return options;
+}
+
+/** Empêche une ancienne commande copiée de déployer sans consentement explicite. */
+export function validateDeploymentIntent(options) {
+  if (options.dryRun && options.apply) throw new Error('--dry-run et --apply ne peuvent pas être combinés.');
+  if (!options.dryRun && !options.apply) {
+    throw new Error('Aucun déploiement effectué : --apply est requis après sauvegarde, test et revue de la cible.');
+  }
+  if (options.apply && (!options.project || !String(options.project).trim())) {
+    throw new Error('Un déploiement réel exige un projet explicite avec --project.');
+  }
 }
 
 /** Lit un fichier KEY="valeur" (format .dev.vars) sans toucher process.env. */
@@ -252,7 +271,8 @@ function usage() {
   --service <nom>    défaut ${DEFAULTS.service}
   --no-origin        ne pas écrire GO_API_ORIGIN dans wrangler.jsonc
   --with-hf-token    transmettre HF_TOKEN (seulement si le bucket est privé)
-  --dry-run          afficher la commande sans rien déployer`);
+  --dry-run          afficher la commande sans rien déployer
+  --apply            autoriser le déploiement après revue ; --project explicite requis`);
 }
 
 async function main() {
@@ -261,6 +281,7 @@ async function main() {
     usage();
     return;
   }
+  validateDeploymentIntent(options);
   const project = resolveProject(options.project);
   if (!project) {
     usage();

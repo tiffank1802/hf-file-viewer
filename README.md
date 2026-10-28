@@ -146,20 +146,13 @@ Le site reste sur Cloudflare Workers ; seule l’API Go (assistant, compte étud
 
 **Prérequis, une seule fois :**
 
-1. Console Firebase → **Mettre à niveau** vers le plan **Blaze** (Cloud Run exige un compte de facturation ; le quota gratuit mensuel couvre largement ce trafic). Conseillé : une alerte de budget à 1 € dans Google Cloud → Facturation → Budgets.
+1. Identifier le vrai projet Google Cloud, vérifier la facturation, les quotas et les droits ; prévoir une alerte de budget. Les coûts dépendent de l'usage et de la configuration.
 2. Installer le [Google Cloud SDK](https://cloud.google.com/sdk/docs/install), puis `gcloud auth login`.
 3. Renseigner au moins un moteur dans `.dev.vars` (`CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN`, ou une clé OpenRouter / NVIDIA / OpenCode).
 
-**Déploiement :**
+**Avant déploiement :** suivre le [guide de déploiement](docs/DEPLOY_PDF_UNIFIED.md), sauvegarder la configuration et vérifier un staging isolé. Une simulation avec `--dry-run` ne déploie rien. Le déploiement réel exige `--apply` et un projet explicite ; il active les API Google, construit l’image, publie un service public et peut remplacer des variables ou modifier `wrangler.jsonc`. Le Worker doit être revu et déployé séparément.
 
-```bash
-npm run deploy:api:firebase -- --project <id-du-projet-firebase>
-npm run deploy
-```
-
-Le script active les API Cloud Run / Cloud Build / Artifact Registry, construit l’image depuis [`backend/Dockerfile`](./backend/Dockerfile), déploie le service `enise-docs-api` (région `europe-west1`, public, délai 300 s, 0 à 3 instances), vérifie `/api/health` puis écrit `GO_API_ORIGIN` dans `wrangler.jsonc`. `npm run deploy` republie ensuite le Worker.
-
-Seules les clés utiles de `.dev.vars` sont transmises au service (moteurs de rédaction, modèles, Appwrite) ; `CHAT_TRUST_PROXY=1`, le bucket source et `HF_DERIVED_BUCKET_ID=ktongue/ENISE-SITE-DERIVED` sont fixés d’office. `HF_TOKEN` n’est envoyé qu’avec `--with-hf-token` (bucket privé). Autres options : `--region`, `--service`, `--no-origin`, `--dry-run` (affiche la commande `gcloud` sans rien déployer). Le projet peut aussi venir de `GOOGLE_CLOUD_PROJECT` ou du `.firebaserc` (`firebase use --add`).
+Seules les clés utiles de `.dev.vars` sont transmises au service (moteurs de rédaction, modèles, Appwrite) ; `CHAT_TRUST_PROXY=1`, le bucket source et `HF_DERIVED_BUCKET_ID=ktongue/ENISE-SITE-DERIVED` sont fixés d’office. `HF_TOKEN` n’est envoyé qu’avec `--with-hf-token` (bucket privé). Autres options : `--region`, `--service`, `--no-origin`, `--dry-run` (affiche la commande `gcloud` sans rien déployer). Pour une simulation uniquement, le projet peut aussi venir de `GOOGLE_CLOUD_PROJECT` ou du `.firebaserc` (`firebase use --add`).
 
 > Cloud Run s’arrête quand personne ne l’utilise ; une instance Go redémarre en une à deux secondes, et le cache repart à vide (l’index se recharge depuis Hugging Face).
 >
@@ -460,16 +453,13 @@ Pour un déploiement CI GitHub, stocker `CLOUDFLARE_API_TOKEN` et `CLOUDFLARE_AC
 
 La connexion, les favoris et les annotations privées passent par le backend Go, pas par le SDK Appwrite dans le navigateur. Le projet est **Django objects** (`https://fra.cloud.appwrite.io/v1`, `69cedb12002acdd498e0`).
 
-Le compte (email, mot de passe, nom) vit dans Appwrite Auth. La promotion, la filière, les favoris, les conversations et les annotations vivent dans la base `enise_docs` : `profiles`, `favorites`, `conversations`, `messages`, `annotations` (héritées/Docling) et `pdf_annotations_v2` (PDF original). La nouvelle table est additive ; les anciennes notes ne sont pas migrées ni supprimées. La base se provisionne depuis ta machine avec une clé serveur :
+Le compte (email, mot de passe, nom) vit dans Appwrite Auth. La promotion, la filière, les favoris, les conversations et les annotations vivent dans la base `enise_docs` : `profiles`, `favorites`, `conversations`, `messages`, `annotations` (héritées/Docling) et `pdf_annotations_v2` (PDF original). La nouvelle table est additive ; les anciennes notes ne sont pas migrées ni supprimées. Avant toute modification, effectuer et tester une sauvegarde, puis suivre le [guide de déploiement](docs/DEPLOY_PDF_UNIFIED.md). Un diagnostic en lecture seule utilise une clé serveur dédiée et des scopes de lecture :
 
 ```bash
-# Console Appwrite → API Keys → databases.write, puis dans .dev.vars :
-# APPWRITE_API_KEY="…"
-npm run appwrite:setup
-npm run appwrite:status
+npm run appwrite:status -- --flavor=tablesdb
 ```
 
-Sans cette clé, la connexion marche déjà. Les cœurs, le profil et les annotations ne s’enregistrent qu’après le script. Les anciens favoris laissés dans le navigateur sont repris au premier compte connecté, puis la copie locale est effacée.
+Le script de provisioning exige une cible et une autorisation explicite pour toute écriture ; il peut modifier les permissions de tables existantes. Ne pas exposer la clé au frontend ni la partager. Les anciens favoris laissés dans le navigateur sont repris au premier compte connecté, puis la copie locale est effacée.
 
 ## API
 

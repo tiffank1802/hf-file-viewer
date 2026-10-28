@@ -151,7 +151,7 @@ export default function LibraryChat({
     listConversations(controller.signal)
       .then((payload) => {
         if (payload.unprovisioned) {
-          setHistoryNote(payload.error || 'Lance npm run appwrite:setup pour garder les conversations.');
+          setHistoryNote(payload.error || 'Contacte l’administrateur pour vérifier le stockage des conversations.');
           return;
         }
         const items = Array.isArray(payload.items) ? payload.items : [];

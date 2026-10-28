@@ -11,6 +11,9 @@ Ce guide décrit le déploiement **Appwrite → API Go sur Cloud Run → Worker 
 - Disposer de Node.js >= 20.19, `npm`, `gcloud` connecté au bon projet Google, et Wrangler connecté au bon compte Cloudflare. Cloud Run/Cloud Build nécessitent les droits et la facturation appropriés. À la racine du dépôt : `npm ci`.
 - Identifier séparément les ressources de staging et de production : projet/base Appwrite, clé serveur Appwrite, projet Google, service Cloud Run, Worker et nom de domaine, KV, buckets et fournisseur IA. Le code du nouveau lecteur et son schéma doivent provenir de la même révision.
 - Avant le changement, effectuer **et tester une sauvegarde/restauration Appwrite** adaptée à votre instance : toutes les tables et lignes, leurs IDs, permissions et liens avec les utilisateurs. Sauvegarder également la configuration du projet/authentification selon les capacités de votre instance. Ne pas se fier à un export tronqué à la première page.
+  - Si la fonctionnalité est disponible sur votre offre Appwrite, créer une sauvegarde manuelle dans **Databases → base → Backups**, puis tester sa restauration vers une **nouvelle** base isolée. Vérifier les droits et la couverture exacts de votre offre.
+  - Sinon, envisager un export CSV **de chaque table**, plus la capture séparée du schéma, des index, des permissions de table, de `rowSecurity`, de l'état `enabled` et de la configuration du projet. Vérifier que l'export contient les IDs, dates et permissions par ligne quand ils sont nécessaires. Plusieurs CSV ne constituent pas un instantané atomique : suspendre les écritures ou mettre en place une procédure cohérente. Un CSV seul n'est pas une sauvegarde complète de la configuration ni d'Appwrite Auth.
+  - Protéger ces fichiers et tester la restauration dans une **autre** base : comparer nombres et IDs de lignes, données, schéma, index et permissions ; contrôler les accès avec deux comptes. Si la restauration n'est pas vérifiée ou si des données/configurations manquent, ne pas considérer la sauvegarde comme complète.
 - Noter la révision Cloud Run servant le trafic, la version/déploiement Cloudflare actuel, ses bindings et secrets, ainsi que la configuration Appwrite existante. Sauvegarder séparément, avec accès restreint, le fichier de configuration du service :
 
   ```sh
@@ -39,7 +42,7 @@ cp -n .dev.vars.example .dev.vars
 chmod 600 .dev.vars
 ```
 
-Éditer localement `.dev.vars` sans publier son contenu. Remplacer **explicitement** au minimum :
+Éditer localement `.dev.vars` sans publier son contenu. Le fait que le fichier soit ignoré par Git **n'empêche pas** sa synchronisation par Google Drive, iCloud ou un autre service si le dossier du dépôt est synchronisé. Utiliser un dossier et un stockage de secrets adaptés, privés et non partagés. Remplacer **explicitement** au minimum :
 
 ```dotenv
 APPWRITE_ENDPOINT="https://endpoint-appwrite-de-cet-environnement/v1"
@@ -51,42 +54,36 @@ APPWRITE_API_KEY="cle-serveur-de-provisionnement"
 ```
 
 - `tablesdb` correspond à l'API TablesDB 2.x ; si l'instance utilise les collections héritées, employer `databases` de manière cohérente dans le fichier et les commandes ci-dessous. L'endpoint doit être celui de l'instance, avec `/v1` une seule fois.
-- La clé serveur doit avoir les droits de lecture et d'écriture du schéma nécessaires au script pour la base, les tables/collections, colonnes/attributs, index et permissions. Pour TablesDB, les scopes Appwrite actuels sont `databases.read`, `databases.write`, `tables.read`, `tables.write`, `columns.read`, `columns.write`, `indexes.read` et `indexes.write` ; vérifier les noms disponibles sur votre version. La clé sert au **provisionnement seulement** : elle n'est pas copiée par le script dans Cloud Run et ne doit jamais être exposée au frontend ni préfixée par `VITE_`.
+- Pour le diagnostic seul, utiliser une clé dédiée avec uniquement les scopes de lecture nécessaires : `databases.read`, `tables.read`, `columns.read` et `indexes.read` pour TablesDB, selon votre version. Après sauvegarde, test et revue seulement, une clé de provisioning séparée peut nécessiter les scopes `.write` correspondants. Restreindre ou révoquer cette dernière une fois terminée, après avoir vérifié qu'elle n'est utilisée par aucun autre service. La clé de provisioning n'est pas copiée par le script dans Cloud Run et ne doit jamais être exposée au frontend ni préfixée par `VITE_`.
 - La nouvelle table est `pdf_annotations_v2` par défaut. Si un ID différent est requis, renseigner `APPWRITE_PDF_ANNOTATIONS_TABLE_ID` **avant** le provisioning et le déploiement ; il doit être distinct de toutes les autres tables. Les IDs personnalisés des profils, favoris, conversations, messages et annotations historiques (`APPWRITE_*_TABLE_ID`) doivent également être identiques entre les deux opérations.
 - Si l'assistant IA est requis, renseigner aussi dans `.dev.vars` les variables serveur d'un fournisseur disponible, par exemple `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`, ou les variables Cloudflare AI. Sans fournisseur, la rédaction IA ne sera pas disponible. Ne pas mettre de clé dans les variables `VITE_`, dans Git, dans une capture ou dans le navigateur.
 - **Attention aux priorités différentes :** le script Appwrite privilégie les variables déjà exportées dans le shell sur `.dev.vars`, puis lit aussi `.env` et `.env.local` ; le script Cloud Run privilégie `.dev.vars` et complète depuis le shell. Une variable résiduelle peut donc cibler une autre base. Vérifier les noms exportés avec `env | cut -d= -f1 | grep -E '^(APPWRITE_|VITE_APPWRITE_)'` et supprimer/aligner les valeurs conflictuelles sans les afficher. Le dry-run ci-dessous affiche l'endpoint, le projet et les chemins de base effectivement visés.
 
-## 3. Provisionner la base
+## 3. Préparer le schéma Appwrite sans toucher aux données existantes
 
-Exemple pour TablesDB ; utiliser `--flavor=databases` partout pour une instance héritée :
+**Arrêt si une sauvegarde complète et sa restauration n'ont pas été vérifiées, ou si une exécution précédente a échoué.** Le script ne rend pas une écriture atomique et ne répare pas automatiquement un état partiel. Ne pas supprimer ni recréer une table existante pour corriger un échec.
 
-```sh
-npm run appwrite:setup -- --dry-run --flavor=tablesdb
-```
+La colonne `anchorJson` est déclarée à **16 384 caractères** dans le schéma. Les versions de l'adaptateur SQL Appwrite examinées stockent une `string` au-delà de 16 381 caractères en `TEXT`, ce qui évite de compter 16 000 caractères × 4 dans la largeur maximale de ligne. L'API Go continue de limiter le JSON de l'ancre à **16 000 octets**. Ce choix dépend de l'adaptateur et de la version Appwrite : vérifier la création et des écritures longues, y compris Unicode, sur une base de staging du même environnement avant de l'envisager ailleurs. Sources : [adaptateur Utopia 3.5 utilisé par Appwrite 1.8.1](https://github.com/utopia-php/database/blob/5da71b65a6123ce2e78795522b05b7458aabfbd7/src/Database/Adapter/SQL.php#L1099-L1144) ; [adaptateur Utopia 8.3 utilisé par Appwrite 2.6.2](https://github.com/utopia-php/database/blob/86e31fb84e535c69e58bcbc19037bf1fb472fccb/src/Database/Adapter/SQL.php#L2636-L2693).
 
-Lire le plan entier avant confirmation : projet, base, IDs, colonnes, index et surtout permissions de chaque table. **Ce n'est pas une migration limitée à la nouvelle table : le script réapplique les permissions et l'activation de toutes les tables connues, y compris celles qui existent déjà.** Vérifier les conséquences sur la configuration actuelle ; si elles sont inacceptables, ne pas exécuter le script sur cette base et créer le schéma voulu séparément après revue.
-
-Après sauvegarde et validation du plan, vérifier la connectivité. Ce ping ne valide ni la clé ni les permissions :
-
-```sh
-npm run appwrite:ping
-```
-
-Seulement après avoir confirmé la cible, la clé et l'impact du plan, appliquer le schéma :
-
-```sh
-npm run appwrite:setup -- --flavor=tablesdb
-```
-
-Si la commande a réussi, examiner le statut :
+Avec la clé en lecture seule, vérifier d'abord le projet et la base :
 
 ```sh
 npm run appwrite:status -- --flavor=tablesdb
 ```
 
-Attendre que les colonnes et index soient disponibles. Lire tous les avertissements de `status` et vérifier dans la console les tables, les permissions réelles et la sécurité par ligne/document : **le code de sortie de `status` à lui seul ne garantit pas que tout est correct**. Vérifier notamment l'isolation des notes entre comptes. Les anciennes annotations restent dans leur table ; les nouvelles notes PDF utilisent la table v2.
+Le diagnostic reste partiel : il compare notamment les permissions de table, la sécurité par ligne, les noms, définitions et états des colonnes et index attendus ; il ne vérifie pas les données ou les permissions de chaque ligne. Si un champ, une permission ou une ressource ne peut être vérifié, examiner la console sans tenter de correction automatique. Les permissions de ligne peuvent autoriser des accès même si les permissions de table sont vides.
 
-Ne jamais utiliser `--drop` pour déployer ni pour revenir en arrière : cette option détruit les tables ciblées. Ne pas appliquer `--fix-enums` sans examen séparé de son effet.
+Puis examiner le plan **statique**, sans appel réseau ni modification, pour la seule nouvelle table (adapter l'ID s'il a été configuré) :
+
+```sh
+npm run appwrite:setup -- --dry-run --flavor=tablesdb --table=pdf_annotations_v2 --new-table-only
+```
+
+**Le plan ne prouve pas que la table est absente ni que l'instance acceptera le schéma.** Tester d'abord sur une base de staging séparée avec une clé et des comptes de test dédiés, sans accès aux données réelles. Faire valider le plan, l'identifiant de la base et les permissions. Le mode `--new-table-only` exige une cible unique et refuse une table existante ; il ne crée pas la base. Pour toute écriture, une autorisation explicite `--apply` est également requise. La création peut néanmoins s'arrêter à mi-parcours et laisser une **nouvelle** table incomplète : dans ce cas, s'arrêter, examiner l'état et ne pas relancer automatiquement. Le mode ciblé ne verrouille pas l'instance contre des modifications concurrentes : coordonner les autres opérateurs.
+
+La création de la table PDF seule ne répare pas la table `annotations` historique. Le backend lit les anciennes annotations avant les nouvelles ; une panne ou une autorisation refusée sur la table historique peut donc affecter le parcours PDF. Évaluer son schéma, ses données et ses permissions avant de décider d'une éventuelle réparation séparée. Une colonne existante de taille différente n'est pas redimensionnée automatiquement.
+
+Le mode général avec `--apply --all-tables` peut modifier les permissions, noms, activation et sécurité de **toutes** les tables du modèle. Ne l'utiliser qu'après revue spécifique et accord. Ne jamais utiliser `--drop` pour déployer ni pour revenir en arrière : cette option détruit les tables ciblées. Ne pas appliquer `--fix-enums` sans examen séparé de son effet.
 
 ## 4. Déployer l'API Go Cloud Run
 
@@ -111,12 +108,7 @@ npm run deploy:api:firebase -- --project "$PROJECT_ID" --region "$REGION" \
   --service "$SERVICE" --no-origin --dry-run
 ```
 
-Après revue, avec les bons accès et la bonne configuration, exécuter le déploiement réel séparément :
-
-```sh
-npm run deploy:api:firebase -- --project "$PROJECT_ID" --region "$REGION" \
-  --service "$SERVICE" --no-origin
-```
+Un déploiement réel exige maintenant `--apply` et un `--project` explicite. Ne pas le lancer avant d'avoir identifié le vrai projet, confirmé facturation et droits, sauvegardé la configuration, testé le staging et validé l'impact sur le service et les secrets. Exécuter la commande réelle séparément après cette revue, jamais dans le même bloc que la simulation.
 
 Seulement si le déploiement a réussi, récupérer l'URL et tester la santé :
 

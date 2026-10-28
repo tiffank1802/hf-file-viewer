@@ -436,7 +436,7 @@ func (s *Server) rememberChat(r *http.Request, conversationID, question, answer,
 	if err != nil {
 		log.Printf("chat mémoire: %v", err)
 		if appwrite.IsMissingTable(err) {
-			return chatSave{Error: "Lance npm run appwrite:setup pour garder les conversations."}
+			return chatSave{Error: "Contacte l’administrateur pour vérifier le stockage des conversations."}
 		}
 		detail := appwrite.French(err)
 		var apiErr *appwrite.APIError
@@ -489,7 +489,7 @@ func (s *Server) handleChatHistory(w http.ResponseWriter, r *http.Request) error
 			if appwrite.IsMissingTable(err) {
 				writeJSON(w, r, http.StatusOK, map[string]any{
 					"ok": true, "enabled": true, "unprovisioned": true, "items": []any{},
-					"error": "Lance npm run appwrite:setup pour garder les conversations.",
+					"error": "Contacte l’administrateur pour vérifier le stockage des conversations.",
 				}, "no-store", nil)
 				return nil
 			}
