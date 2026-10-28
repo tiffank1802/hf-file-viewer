@@ -54,7 +54,7 @@ Cinq problèmes concrets apparaîtraient avec un simple encapsulage naïf ; chac
 |---|---|---|---|
 | **macOS** | macOS (`macos-latest` + Xcode) | Universal Binary (`universal-apple-darwin` : Apple Silicon `arm64` + Intel `x86_64`), macOS 11.0+ | `ENISE Docs_1.0.0_universal.dmg`, `ENISE-Docs-macos-universal.app.tar.gz` |
 | **iOS** | macOS (`macos-latest` + Xcode + XcodeGen) | `aarch64-apple-ios` (iPhone / iPad, iOS 14.0+) + `iphonesimulator` (`arm64`) | `ENISE-Docs-ios-unsigned.ipa` (ou signé si secrets Apple présents), `ENISE-Docs-ios-simulator-arm64.app.zip` |
-| **Android** | Linux (`ubuntu-latest` + JDK 17 + SDK 35 + NDK 27) | `aarch64` (`arm64-v8a`), `armv7` (`armeabi-v7a`), `x86_64`, `i686` (`minSdkVersion` 24 / Android 7.0+) | `ENISE-Docs-android-universal.apk` (aligné & signé, prêt à installer), `ENISE-Docs-android-universal.aab` (Google Play) |
+| **Android** | Linux (`ubuntu-24.04` + JDK 21 + SDK 37 + NDK 27) | `aarch64` (`arm64-v8a`), `armv7` (`armeabi-v7a`), `x86_64`, `i686` (`minSdkVersion` 24 / Android 7.0+) | `ENISE-Docs-android-universal.apk` (aligné & signé, prêt à installer), `ENISE-Docs-android-universal.aab` (Google Play) |
 | **Windows** | Windows (`windows-latest` + MSVC + WiX + NSIS) | `x86_64-pc-windows-msvc` (installateur en français + bootstrapper WebView2 auto) | `ENISE Docs_1.0.0_x64-setup.exe` (NSIS), `ENISE Docs_1.0.0_x64_fr-FR.msi` (WiX) |
 
 > **Pourquoi un pipeline CI multi-OS est indispensable :** Apple impose contractuellement et techniquement **macOS + Xcode** pour compiler les cibles **macOS** (`.dmg`) et **iOS** (`.ipa` / `WKWebView` / SDK iPhoneOS). Le workflow [`.github/workflows/tauri-build.yml`](../.github/workflows/tauri-build.yml) orchestre en parallèle les 3 runners natifs (`macos-latest`, `ubuntu-latest`, `windows-latest`) et publie les installateurs prêts à télécharger.
@@ -103,7 +103,7 @@ npm run tauri:build:macos
 # Compiler pour Windows (NSIS .exe + WiX .msi, depuis Windows avec Visual Studio C++ Build Tools)
 npm run tauri:build:windows
 
-# Initialiser et compiler pour Android (JDK 17 + ANDROID_HOME + NDK_HOME configurés)
+# Initialiser et compiler pour Android (JDK 21 + ANDROID_HOME + NDK_HOME configurés)
 rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
 npm run tauri:android:init
 npm run tauri:android:build

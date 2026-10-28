@@ -20,8 +20,8 @@ on:
         default: 'https://enise-docs-api-mb66o5jbpa-ew.a.run.app'
 
 concurrency:
-  group: tauri-build-${{ github.ref }}
-  cancel-in-progress: true
+  group: tauri-build-${{ github.sha }}
+  cancel-in-progress: false
 
 env:
   ENISE_API_ORIGIN: ${{ inputs.api_origin || 'https://enise-docs-api-mb66o5jbpa-ew.a.run.app' }}
@@ -163,11 +163,11 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      - name: Setup Java 17
+      - name: Setup Java 21
         uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Setup Android SDK & NDK 27
         run: |
@@ -184,7 +184,9 @@ jobs:
             SDKMANAGER="$SDK_DIR/cmdline-tools/latest/bin/sdkmanager"
           fi
           yes | "$SDKMANAGER" --sdk_root="$SDK_DIR" --licenses > /dev/null || true
-          "$SDKMANAGER" --sdk_root="$SDK_DIR" --install "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+          "$SDKMANAGER" --sdk_root="$SDK_DIR" --install "build-tools;35.0.0" "ndk;27.2.12479018"
+          "$SDKMANAGER" --sdk_root="$SDK_DIR" --install "platforms;android-37" || "$SDKMANAGER" --sdk_root="$SDK_DIR" --install "platforms;android-36" || true
+          yes | "$SDKMANAGER" --sdk_root="$SDK_DIR" --licenses > /dev/null || true
           echo "ANDROID_HOME=$SDK_DIR" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK_DIR" >> "$GITHUB_ENV"
           echo "NDK_HOME=$SDK_DIR/ndk/27.2.12479018" >> "$GITHUB_ENV"
