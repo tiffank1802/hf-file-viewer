@@ -20,9 +20,19 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) error {
 	}
 	download := r.URL.Query().Get("download") == "1"
 	rangeHeader := r.Header.Get("Range")
+	readerPDF := r.URL.Query().Get("reader") == "1"
+	revision := strings.TrimSpace(r.URL.Query().Get("revision"))
+	if readerPDF && readerDocumentKind(filePath) != "pdf" {
+		return catalog.Error(http.StatusBadRequest, "Le lecteur attend un PDF.")
+	}
+	if revision != "" && (!readerPDF || !validPDFRevision(revision) || !strings.HasPrefix(revision, "etag-sha256:")) {
+		return catalog.Error(http.StatusBadRequest, "La révision du PDF est invalide.")
+	}
 	key := "file:" + s.cfg.BucketID + ":" + filePath
 
-	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+	// Reader requests bypass stale path-based caches. Every range of an
+	// ETag-pinned document must come from the same upstream version.
+	if !readerPDF && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 		if entry, freshness := s.cache.GetBlob(key); freshness == "fresh" || freshness == "stale" {
 			if freshness == "stale" {
 				go s.refreshFile(filePath)
@@ -39,12 +49,15 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	defer upstream.Body.Close()
+	if revision != "" && strongETagRevision(upstream.Header.Get("ETag")) != revision {
+		return catalog.Error(http.StatusConflict, "Le PDF a changé pendant sa lecture. Rouvre le document.")
+	}
 
 	status := "MISS"
 	if rangeHeader != "" || upstream.StatusCode == http.StatusPartialContent {
 		status = "BYPASS-RANGE"
 	}
-	cacheable := upstream.StatusCode == http.StatusOK &&
+	cacheable := !readerPDF && upstream.StatusCode == http.StatusOK &&
 		rangeHeader == "" &&
 		upstream.ContentLength >= 0 &&
 		upstream.ContentLength <= s.cfg.MaxCacheableFileBytes
@@ -53,6 +66,9 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	s.prepareFileHeaders(w, upstream.Header, filePath, download, status)
+	if readerPDF {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	w.WriteHeader(upstream.StatusCode)
 	if r.Method == http.MethodHead {
 		return nil

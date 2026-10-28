@@ -273,6 +273,23 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) error {
 				break
 			}
 		}
+		pdfScope := body.Scope.SourceRevision != "" || body.Scope.PDFContext != nil || (body.Scope.Anchor != nil && body.Scope.Anchor.SchemaVersion == pdfAnchorSchema)
+		if pdfScope {
+			// Never authorize a client-supplied catalog hint as a PDF source.
+			query := r.Clone(r.Context())
+			params := query.URL.Query()
+			params.Set("path", sourcePath)
+			query.URL.RawQuery = params.Encode()
+			if _, err := s.readerSourcePath(query); err != nil {
+				return err
+			}
+			if scopedItem == nil {
+				scopedItem = &catalog.BucketItem{Type: "file", Path: sourcePath}
+			}
+			if len(items) == 0 {
+				items = []catalog.BucketItem{*scopedItem}
+			}
+		}
 		if scopedItem == nil && len(items) > 0 {
 			return catalog.Error(http.StatusNotFound, "Ce document n’existe pas dans la bibliothèque indexée.")
 		}
@@ -326,6 +343,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) error {
 		if study != nil && study.ready() {
 			hit.Read = true
 			hit.Reason = "Structure Docling, sections et provenance vérifiées."
+			if study.KnowledgeSource == "pdf-reader" {
+				hit.Reason = "Texte transmis par le lecteur PDF, non vérifié côté serveur."
+			}
 			hit.Excerpt = readerExcerpt(study.Retrieval.Evidence[0].Text, chatCardRunes)
 		}
 		hits = []chat.Hit{hit}

@@ -1,3 +1,5 @@
+import { apiCredentials, apiUrl } from '../utils/runtime.js';
+
 const READER_METRIC_EVENTS = new Set([
   'open',
   'metadata',
@@ -32,9 +34,9 @@ export function emitReaderMetric(event, values = {}) {
   const payload = buildReaderMetric(event, values);
   if (!payload || typeof fetch !== 'function') return false;
   try {
-    void fetch('/api/reader/metrics', {
+    void fetch(apiUrl('/api/reader/metrics'), {
       method: 'POST',
-      credentials: 'same-origin',
+      credentials: apiCredentials(),
       keepalive: true,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

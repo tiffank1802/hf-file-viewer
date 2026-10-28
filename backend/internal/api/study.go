@@ -29,21 +29,40 @@ const (
 )
 
 type chatScope struct {
-	Type       string      `json:"type"`
-	SourcePath string      `json:"sourcePath"`
-	ArtifactID string      `json:"artifactId,omitempty"`
-	Anchor     *chatAnchor `json:"anchor,omitempty"`
+	Type           string          `json:"type"`
+	SourcePath     string          `json:"sourcePath"`
+	ArtifactID     string          `json:"artifactId,omitempty"`
+	SourceRevision string          `json:"sourceRevision,omitempty"`
+	PDFContext     *pdfChatContext `json:"pdfContext,omitempty"`
+	Anchor         *chatAnchor     `json:"anchor,omitempty"`
+}
+
+type pdfChatContext struct {
+	IndexedPages int              `json:"indexedPages"`
+	TotalPages   int              `json:"totalPages"`
+	Complete     bool             `json:"complete"`
+	Passages     []pdfChatPassage `json:"passages"`
+}
+
+type pdfChatPassage struct {
+	Page   int    `json:"page"`
+	Text   string `json:"text"`
+	Origin string `json:"origin,omitempty"`
 }
 
 type chatAnchor struct {
-	BlockID string           `json:"blockId,omitempty"`
-	Quote   string           `json:"quote,omitempty"`
-	Prefix  string           `json:"prefix,omitempty"`
-	Suffix  string           `json:"suffix,omitempty"`
-	Start   int              `json:"start,omitempty"`
-	End     int              `json:"end,omitempty"`
-	Page    int              `json:"page,omitempty"`
-	Rects   []chatAnchorRect `json:"rects,omitempty"`
+	SchemaVersion  string              `json:"schemaVersion,omitempty"`
+	SourceRevision string              `json:"sourceRevision,omitempty"`
+	Origin         string              `json:"origin,omitempty"`
+	Segments       []reader.PDFSegment `json:"segments,omitempty"`
+	BlockID        string              `json:"blockId,omitempty"`
+	Quote          string              `json:"quote,omitempty"`
+	Prefix         string              `json:"prefix,omitempty"`
+	Suffix         string              `json:"suffix,omitempty"`
+	Start          int                 `json:"start,omitempty"`
+	End            int                 `json:"end,omitempty"`
+	Page           int                 `json:"page,omitempty"`
+	Rects          []chatAnchorRect    `json:"rects,omitempty"`
 }
 
 type chatAnchorRect struct {
@@ -55,6 +74,7 @@ type chatAnchorRect struct {
 
 type documentStudy struct {
 	SourcePath      string
+	SourceRevision  string
 	ArtifactID      string
 	ArtifactPrefix  string
 	PipelineVersion string
@@ -69,7 +89,7 @@ type documentStudy struct {
 }
 
 func (study *documentStudy) ready() bool {
-	return study != nil && study.KnowledgeSource == "docling" && len(study.Retrieval.Evidence) > 0
+	return study != nil && (study.KnowledgeSource == "docling" || study.KnowledgeSource == "pdf-reader") && len(study.Retrieval.Evidence) > 0
 }
 
 func (study *documentStudy) publicScope() map[string]any {
@@ -79,6 +99,7 @@ func (study *documentStudy) publicScope() map[string]any {
 	out := map[string]any{
 		"type":            "document",
 		"sourcePath":      study.SourcePath,
+		"sourceRevision":  study.SourceRevision,
 		"artifactId":      study.ArtifactID,
 		"pipelineVersion": study.PipelineVersion,
 		"knowledgeSource": study.KnowledgeSource,
@@ -109,6 +130,9 @@ func (study *documentStudy) publicCitations() []reader.Evidence {
 }
 
 func (s *Server) prepareDocumentStudy(ctx context.Context, scope chatScope, message, intent string) (*documentStudy, error) {
+	if scope.SourceRevision != "" || scope.PDFContext != nil || (scope.Anchor != nil && scope.Anchor.SchemaVersion == pdfAnchorSchema) {
+		return s.preparePDFStudy(ctx, scope)
+	}
 	if err := normalizeChatAnchor(scope.Anchor); err != nil {
 		return nil, err
 	}
@@ -432,6 +456,9 @@ func studyDocumentPrompt(question string, study *documentStudy) string {
 	var b strings.Builder
 	b.WriteString("DOCUMENT\n")
 	fmt.Fprintf(&b, "Titre : %s\nChemin : %s\nArtefact : %s\n", study.Title, study.SourcePath, study.ArtifactID)
+	if study.KnowledgeSource == "pdf-reader" {
+		fmt.Fprintf(&b, "Révision PDF : %s. Texte fourni par le lecteur et non vérifié côté serveur ; il peut contenir des erreurs d’extraction ou d’OCR.\n", study.SourceRevision)
+	}
 	coverage := study.Retrieval.Coverage
 	fmt.Fprintf(&b, "Couverture : %s, %d/%d chunks, %d/%d sections.\n",
 		coverage.Kind, coverage.SelectedChunks, coverage.TotalChunks, coverage.SelectedSections, coverage.TotalSections)
@@ -497,15 +524,21 @@ func localStudyAnswer(study *documentStudy, note string) string {
 	}
 	coverage := study.Retrieval.Coverage
 	var b strings.Builder
-	fmt.Fprintf(&b, "## Lecture structurée de %s\n", study.Title)
-	fmt.Fprintf(&b, "Docling a relié %d/%d passages et %d/%d sections au document. ",
-		coverage.SelectedChunks, coverage.TotalChunks, coverage.SelectedSections, coverage.TotalSections)
-	if coverage.Kind == "whole-document" {
-		b.WriteString("Tous les passages structurés entrent dans le contexte.\n")
+	if study.KnowledgeSource == "pdf-reader" {
+		fmt.Fprintf(&b, "## Passages du PDF %s\n", study.Title)
+		b.WriteString("Ces extraits proviennent du lecteur et ne sont pas vérifiés par le serveur. Ils ne constituent pas une lecture exhaustive.\n")
+		b.WriteString("\n## Passages disponibles\n")
 	} else {
-		b.WriteString("Il s’agit d’une sélection représentative, pas d’une lecture exhaustive.\n")
+		fmt.Fprintf(&b, "## Lecture structurée de %s\n", study.Title)
+		fmt.Fprintf(&b, "Docling a relié %d/%d passages et %d/%d sections au document. ",
+			coverage.SelectedChunks, coverage.TotalChunks, coverage.SelectedSections, coverage.TotalSections)
+		if coverage.Kind == "whole-document" {
+			b.WriteString("Tous les passages structurés entrent dans le contexte.\n")
+		} else {
+			b.WriteString("Il s’agit d’une sélection représentative, pas d’une lecture exhaustive.\n")
+		}
+		b.WriteString("\n## Passages vérifiés\n")
 	}
-	b.WriteString("\n## Passages vérifiés\n")
 	limit := len(study.Retrieval.Evidence)
 	if limit > 5 {
 		limit = 5

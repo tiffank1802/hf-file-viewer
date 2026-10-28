@@ -19,8 +19,7 @@ import {
   FiWifiOff,
   FiX,
 } from 'react-icons/fi';
-import { fileProxyUrl } from '../services/api';
-import { fetchReaderDocument, fetchReaderPage } from '../services/reader';
+import { fetchPDFRevision, fetchReaderDocument, hashPDFBytes, pdfReaderUrl } from '../services/reader';
 import { normalizeBucketItem } from '../utils/files';
 import AnnotationComposer from './AnnotationComposer';
 import AnnotationPanel from './AnnotationPanel';
@@ -29,10 +28,14 @@ import ReaderAssistant from './ReaderAssistant';
 import { emitReaderMetric, metricBucket, readerViewport } from './readerMetrics';
 import StructuredReader from './structured/StructuredReader';
 import { useReaderAnnotations } from './useReaderAnnotations';
+import { usePdfTextIndex } from './usePdfTextIndex';
+import { searchPDFIndex } from './pdfTextIndex';
 import {
-  buildSelectionAnchor,
+  buildPdfSelectionAnchor,
   buildStructuredSelectionAnchor,
-  normalizedSelectionRects,
+  MAX_SELECTION_CHARS,
+  MAX_SELECTION_PAGES,
+  MAX_SELECTION_ZONES,
 } from './selectionAnchor';
 
 const ACTIONS = [
@@ -65,31 +68,52 @@ export default function DocumentWorkspace({
   const [selection, setSelection] = useState(null);
   const [noteSelection, setNoteSelection] = useState(null);
   const [highlights, setHighlights] = useState([]);
-  const pageBlocks = useRef(new Map());
-  const pageRequests = useRef(new Map());
+  const [selectionError, setSelectionError] = useState('');
+  const [pdfIdentity, setPdfIdentity] = useState({ strategy: '', revision: '', error: '' });
+  const [pdfIdentityAttempt, setPdfIdentityAttempt] = useState(0);
+  const [pdfDocument, setPdfDocument] = useState(null);
+  const [pdfHash, setPdfHash] = useState('');
+  const [pdfHashError, setPdfHashError] = useState('');
+  const [pendingAsk, setPendingAsk] = useState(null);
+  const captureSequence = useRef(0);
   const pdfRef = useRef(null);
   const structuredRef = useRef(null);
   const assistantRef = useRef(null);
   const selectionToolbarRef = useRef(null);
   const metadataStartedAt = useRef(0);
   const metadataErrorRef = useRef('');
-  const ready = metadata?.status === 'structured-ready';
-  const pdfAvailable = metadata?.capabilities?.pdf ?? documentFile.kind === 'pdf';
+  const structuredReady = metadata?.status === 'structured-ready';
+  // A Docling response (including a stale capability flag) must never hide
+  // the original PDF, whose availability is independent of that pipeline.
+  const pdfAvailable = documentFile.kind === 'pdf' || Boolean(metadata?.capabilities?.pdf);
+  const pdfMode = viewMode === 'pdf' && documentFile.kind === 'pdf';
+  const pdfUrl = pdfReaderUrl(documentFile.path, pdfIdentity.revision);
+  const currentPdf = pdfDocument?.url === pdfUrl ? pdfDocument.pdf : null;
+  const pdfRevision = currentPdf
+    ? (pdfIdentity.strategy === 'strong-etag' ? pdfIdentity.revision : pdfIdentity.strategy === 'sha256' ? pdfHash : '')
+    : '';
+  const ready = pdfMode ? Boolean(pdfRevision) : structuredReady;
+  const pdfIndex = usePdfTextIndex(pdfMode ? currentPdf : null, pdfRevision);
   const annotations = useReaderAnnotations({
     sourcePath: documentFile.path,
     artifactId: metadata?.artifactId || '',
+    sourceRevision: pdfRevision,
+    pdfMode,
     ready,
     authenticated,
     onRequireAuth,
   });
   const activeAnnotations = useMemo(() => annotations.items
-    .filter((item) => item.status === 'active' && item.artifactId === metadata?.artifactId), [annotations.items, metadata?.artifactId]);
+    .filter((item) => item.status === 'active' && (pdfMode
+      ? item.sourceRevision === pdfRevision && !item.legacy
+      : item.artifactId === metadata?.artifactId)), [annotations.items, metadata?.artifactId, pdfMode, pdfRevision]);
   const annotationHighlights = useMemo(() => activeAnnotations
     .map((item) => ({
       annotationId: item.id,
       page: Number(item.page || item.anchor?.page) || 1,
       blockId: item.blockId || item.anchor?.blockId || '',
       rects: item.anchor?.rects || [],
+      segments: item.anchor?.segments || [],
       kind: 'annotation',
       color: item.color || 'yellow',
     })), [activeAnnotations]);
@@ -100,6 +124,24 @@ export default function DocumentWorkspace({
   const structuredHighlightBlock = useMemo(() => [...highlights]
     .reverse()
     .find((item) => (item.kind === 'selection' || item.kind === 'citation') && item.blockId)?.blockId || '', [highlights]);
+
+  // A pending geometric capture must never complete against another PDF,
+  // revision, viewport or mode. Old selections/composers are discarded when
+  // the document identity changes; PDF-space highlights survive zoom changes.
+  useEffect(() => {
+    captureSequence.current += 1;
+    setSelection(null);
+    setNoteSelection(null);
+    setPendingAsk(null);
+    setHighlights([]);
+    return () => { captureSequence.current += 1; };
+  }, [documentFile.path, pdfRevision, viewMode]);
+  useEffect(() => {
+    if (!assistantOpen) setPendingAsk(null);
+  }, [assistantOpen]);
+  useEffect(() => {
+    captureSequence.current += 1;
+  }, [zoom]);
 
   useEffect(() => {
     document.body.classList.add('reader-open');
@@ -137,6 +179,39 @@ export default function DocumentWorkspace({
   }, []);
 
   useEffect(() => {
+    if (!documentFile.path || documentFile.kind !== 'pdf') return undefined;
+    const controller = new AbortController();
+    setPdfIdentity({ strategy: '', revision: '', error: '' });
+    setPdfHash('');
+    setPdfHashError('');
+    fetchPDFRevision(documentFile.path, controller.signal)
+      .then((identity) => {
+        if (identity.strategy !== 'strong-etag' && identity.strategy !== 'sha256') throw new Error('Version du PDF indisponible.');
+        setPdfIdentity({ ...identity, error: '' });
+      })
+      .catch((error) => {
+        if (error.name !== 'AbortError') setPdfIdentity({ strategy: '', revision: '', error: error.message || 'Version du PDF indisponible.' });
+      });
+    return () => controller.abort();
+  }, [documentFile.kind, documentFile.path, pdfIdentityAttempt]);
+
+  useEffect(() => {
+    if (!currentPdf || pdfIdentity.strategy !== 'sha256') return undefined;
+    let active = true;
+    setPdfHash('');
+    setPdfHashError('');
+    const maxBytes = Number(pdfIdentity.maxHashBytes) || 64 * 1024 * 1024;
+    if (Number(pdfIdentity.size) > maxBytes) {
+      setPdfHashError('Ce PDF dépasse la limite de 64 Mio sans ETag fort.');
+      return () => { active = false; };
+    }
+    hashPDFBytes(currentPdf, maxBytes)
+      .then((revision) => { if (active) setPdfHash(revision); })
+      .catch((error) => { if (active) setPdfHashError(error.message || 'Empreinte PDF indisponible.'); });
+    return () => { active = false; };
+  }, [currentPdf, pdfIdentity]);
+
+  useEffect(() => {
     if (!documentFile.path) return undefined;
     const controller = new AbortController();
     metadataStartedAt.current = performance.now();
@@ -146,8 +221,8 @@ export default function DocumentWorkspace({
     fetchReaderDocument(documentFile.path, '', controller.signal)
       .then((value) => {
         setMetadata(value);
-        if (!value.capabilities?.pdf) setViewMode('structured');
-        if (Number(value.pageCount) > 0) setPageCount(Number(value.pageCount));
+        if (documentFile.kind !== 'pdf' && !value.capabilities?.pdf) setViewMode('structured');
+        if (documentFile.kind !== 'pdf' && Number(value.pageCount) > 0) setPageCount(Number(value.pageCount));
         emitReaderMetric('metadata', {
           kind: value.kind || documentFile.kind,
           status: value.status || 'unknown',
@@ -183,6 +258,7 @@ export default function DocumentWorkspace({
       if (event.key !== 'Escape') return;
       if (noteSelection) setNoteSelection(null);
       else if (selection) {
+        captureSequence.current += 1;
         setSelection(null);
         setHighlights((current) => current.filter((item) => item.kind !== 'selection'));
         window.getSelection()?.removeAllRanges();
@@ -207,11 +283,12 @@ export default function DocumentWorkspace({
       setPdfTargetPage(target);
       pdfRef.current?.scrollToPage(target);
     }
-  }, [pageCount, viewMode]);
+  }, [pageCount, viewMode, setPage, setPdfTargetPage]);
 
-  const onPdfDocument = useCallback((pdf) => {
+  const onPdfDocument = useCallback((pdf, url) => {
+    setPdfDocument({ pdf, url });
     setPageCount(pdf.numPages);
-  }, []);
+  }, [setPdfDocument, setPageCount]);
 
   const onPdfFirstPage = useCallback(({ durationMs }) => {
     emitReaderMetric('first-page', {
@@ -222,41 +299,37 @@ export default function DocumentWorkspace({
   }, []);
 
   const onPdfError = useCallback(() => {
+    // A failed or obsolete load must not leave the previous PDF marked ready.
+    setPdfDocument(null);
     emitReaderMetric('pdf-error', { outcome: 'error' });
-  }, []);
+  }, [setPdfDocument]);
+
+  const retryPDF = useCallback(() => {
+    setPdfIdentityAttempt((value) => value + 1);
+  }, [setPdfIdentityAttempt]);
 
   const onVisiblePage = useCallback((visiblePage) => {
     setPage((current) => (current === visiblePage ? current : visiblePage));
-  }, []);
-
-  const loadPageBlocks = useCallback(async (pageNumber) => {
-    if (!metadata?.artifactId || metadata.status !== 'structured-ready') return [];
-    if (pageBlocks.current.has(pageNumber)) return pageBlocks.current.get(pageNumber);
-    if (pageRequests.current.has(pageNumber)) return pageRequests.current.get(pageNumber);
-    const request = fetchReaderPage(documentFile.path, metadata.artifactId, pageNumber)
-      .then((payload) => {
-        const blocks = Array.isArray(payload.blocks) ? payload.blocks : [];
-        pageBlocks.current.set(pageNumber, blocks);
-        pageRequests.current.delete(pageNumber);
-        return blocks;
-      })
-      .catch(() => {
-        pageRequests.current.delete(pageNumber);
-        return [];
-      });
-    pageRequests.current.set(pageNumber, request);
-    return request;
-  }, [documentFile.path, metadata]);
+  }, [setPage]);
 
   const captureSelection = useCallback(async (focusToolbar = false) => {
+    const sequence = ++captureSequence.current;
     const browserSelection = window.getSelection();
     if (!browserSelection || browserSelection.isCollapsed || browserSelection.rangeCount === 0) return;
+    // Never leave actions for an older passage visible after a failed capture.
+    setSelection(null);
+    setHighlights((current) => current.filter((item) => item.kind !== 'selection'));
     const range = browserSelection.getRangeAt(0);
     const quote = browserSelection.toString().replace(/\s+/g, ' ').trim();
-    if (quote.length < 2 || Array.from(quote).length > 2000) return;
+    if (quote.length < 2) return;
+    if (Array.from(quote).length > MAX_SELECTION_CHARS) {
+      setSelectionError('La sélection dépasse 2 000 caractères. Choisissez un passage plus court.');
+      return;
+    }
+    setSelectionError('');
     const rangeRect = range.getBoundingClientRect();
     const position = {
-      left: Math.min(window.innerWidth - 330, Math.max(12, rangeRect.left + rangeRect.width / 2 - 150)),
+      left: Math.max(12, Math.min(window.innerWidth - 330, rangeRect.left + rangeRect.width / 2 - 150)),
       top: Math.max(64, rangeRect.top - 52),
     };
 
@@ -274,55 +347,100 @@ export default function DocumentWorkspace({
       if (anchor.page > 0) setPage(anchor.page);
       setSelection({ anchor, position, focusToolbar });
       emitReaderMetric('selection', {
-        mode: 'structured',
-        outcome: 'anchored',
+        mode: 'structured', outcome: 'anchored',
         selectionLength: metricBucket(Array.from(quote).length, [10, 50, 200, 500, 2000]),
       });
       setHighlights((current) => [
         ...current.filter((item) => item.kind !== 'selection'),
         { page: anchor.page, rects: [], blockId: anchor.blockId, kind: 'selection' },
       ]);
-      if (mobile) setSidebarOpen(false);
-      setAssistantOpen(true);
+      if (!mobile) setAssistantOpen(true);
       return;
     }
 
-    const pageElement = selectionElement(range.commonAncestorContainer)?.closest?.('[data-reader-page]');
-    if (!pageElement) return;
-    const pageNumber = Number(pageElement.dataset.readerPage);
-    const pageRect = pageElement.getBoundingClientRect();
-    const rects = normalizedSelectionRects(range.getClientRects(), pageRect);
-    if (rects.length === 0) return;
-    const blocks = await loadPageBlocks(pageNumber);
-    const anchor = buildSelectionAnchor({
-      quote,
-      page: pageNumber,
-      rects,
-      pageText: pageElement.innerText || pageElement.textContent || '',
-      blocks,
+    if (!pdfRevision) {
+      setSelectionError('Vérification de la version du PDF en cours ou indisponible. Réessayez après son chargement.');
+      return;
+    }
+    const startElement = selectionElement(range.startContainer)?.closest?.('.reader-pdf-text');
+    const endElement = selectionElement(range.endContainer)?.closest?.('.reader-pdf-text');
+    const firstPage = Number(startElement?.closest?.('[data-reader-page]')?.dataset.readerPage);
+    const lastPage = Number(endElement?.closest?.('[data-reader-page]')?.dataset.readerPage);
+    if (!startElement || !endElement || !firstPage || !lastPage || lastPage < firstPage) return;
+    if (lastPage - firstPage + 1 > MAX_SELECTION_PAGES) {
+      setSelectionError('Sélectionnez au maximum 8 pages à la fois.');
+      return;
+    }
+    const segments = [];
+    const quotes = [];
+    const pageTexts = [];
+    for (let pageNumber = firstPage; pageNumber <= lastPage; pageNumber += 1) {
+      const pageElement = document.querySelector(`[data-reader-page="${pageNumber}"]`);
+      const textLayer = pageElement?.querySelector('.reader-pdf-text');
+      if (!pageElement || !textLayer) {
+        setSelectionError('Toutes les pages sélectionnées doivent être chargées à l’écran.');
+        return;
+      }
+      const pageRange = document.createRange();
+      pageRange.selectNodeContents(textLayer);
+      if (pageNumber === firstPage) pageRange.setStart(range.startContainer, range.startOffset);
+      if (pageNumber === lastPage) pageRange.setEnd(range.endContainer, range.endOffset);
+      const pageQuote = pageRange.toString().replace(/\s+/g, ' ').trim();
+      if (!pageQuote) continue;
+      const rects = [...pageRange.getClientRects()];
+      const segment = await pdfRef.current?.selectionGeometry(pageNumber, rects, pageElement.getBoundingClientRect());
+      if (sequence !== captureSequence.current) return;
+      if (!segment?.quads?.length) {
+        setSelectionError('Impossible de positionner cette sélection sur la page PDF.');
+        return;
+      }
+      segments.push(segment);
+      quotes.push(pageQuote);
+      pageTexts.push(pdfIndex.pages.get(pageNumber) || textLayer.innerText || textLayer.textContent || '');
+    }
+    if (segments.reduce((count, item) => count + item.quads.length, 0) > MAX_SELECTION_ZONES) {
+      setSelectionError('La sélection contient plus de 32 zones. Choisissez un passage plus court.');
+      return;
+    }
+    const anchor = buildPdfSelectionAnchor({
+      quote: quotes.join(' '), segments, sourceRevision: pdfRevision, pageText: pageTexts.join(' '),
     });
-    if (!anchor) return;
+    if (!anchor) {
+      setSelectionError('Cette sélection ne peut pas être ancrée. Choisissez un passage plus court.');
+      return;
+    }
     setSelection({ anchor, position, focusToolbar });
     emitReaderMetric('selection', {
-      mode: 'pdf',
-      outcome: anchor.blockId ? 'anchored' : 'geometric',
-      selectionLength: metricBucket(Array.from(quote).length, [10, 50, 200, 500, 2000]),
+      mode: 'pdf', outcome: 'geometric',
+      selectionLength: metricBucket(Array.from(anchor.quote).length, [10, 50, 200, 500, 2000]),
     });
     setHighlights((current) => [
       ...current.filter((item) => item.kind !== 'selection'),
-      { page: pageNumber, rects, blockId: anchor.blockId, kind: 'selection' },
+      { page: anchor.page, segments: anchor.segments, kind: 'selection' },
     ]);
-    if (mobile) setSidebarOpen(false);
-    setAssistantOpen(true);
-  }, [loadPageBlocks, mobile, viewMode]);
+    if (!mobile) setAssistantOpen(true);
+  }, [mobile, pdfIndex.pages, pdfRevision, viewMode, setSelectionError, setPage, setSelection, setHighlights, setAssistantOpen]);
 
   const askSelection = useCallback((action) => {
     if (!selection?.anchor) return;
-    assistantRef.current?.ask(action.question, action.intent, selection.anchor);
+    if (assistantRef.current) assistantRef.current.ask(action.question, action.intent, selection.anchor);
+    else setPendingAsk({ ...action, anchor: selection.anchor });
     emitReaderMetric('assistant', { action: action.intent, outcome: 'started' });
     if (mobile) setSidebarOpen(false);
     setAssistantOpen(true);
-  }, [mobile, selection]);
+  }, [mobile, selection, setPendingAsk, setSidebarOpen, setAssistantOpen]);
+
+  useEffect(() => {
+    if (!assistantOpen || !pendingAsk) return undefined;
+    // The mobile assistant has just mounted. Defer the request until after
+    // React's effect setup/cleanup cycle, otherwise StrictMode can immediately
+    // abort the request while replaying its unmount cleanup in development.
+    const timer = window.setTimeout(() => {
+      assistantRef.current?.ask(pendingAsk.question, pendingAsk.intent, pendingAsk.anchor);
+      setPendingAsk(null);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [assistantOpen, pendingAsk, setPendingAsk]);
 
   const keepHighlight = useCallback(async () => {
     if (!selection?.anchor || !ready) return;
@@ -335,7 +453,7 @@ export default function DocumentWorkspace({
     if (mobile) setAssistantOpen(false);
     setSidebarOpen(true);
     setSidebarTab('annotations');
-  }, [annotations, mobile, ready, selection]);
+  }, [annotations, mobile, ready, selection, setHighlights, setSelection, setAssistantOpen, setSidebarOpen, setSidebarTab]);
 
   const startNote = useCallback(() => {
     if (!selection?.anchor || !ready) return;
@@ -344,9 +462,9 @@ export default function DocumentWorkspace({
       return;
     }
     setNoteSelection(selection);
-  }, [authenticated, onRequireAuth, ready, selection]);
+  }, [authenticated, onRequireAuth, ready, selection, setNoteSelection]);
 
-  const closeNote = useCallback(() => setNoteSelection(null), []);
+  const closeNote = useCallback(() => setNoteSelection(null), [setNoteSelection]);
 
   const saveNote = useCallback(async ({ body, color }) => {
     if (!noteSelection?.anchor) return;
@@ -365,9 +483,15 @@ export default function DocumentWorkspace({
     if (mobile) setAssistantOpen(false);
     setSidebarOpen(true);
     setSidebarTab('annotations');
-  }, [annotations, mobile, noteSelection]);
+  }, [annotations, mobile, noteSelection, setHighlights, setSelection, setNoteSelection, setAssistantOpen, setSidebarOpen, setSidebarTab]);
 
   const openAnnotation = useCallback((annotation) => {
+    if (annotation?.status !== 'active' || (pdfMode && (
+      annotation?.legacy || annotation?.sourceRevision !== pdfRevision || annotation?.anchor?.schemaVersion !== 'pdf-anchor/v1'
+    ))) {
+      setSelectionError('Cette annotation non active ou issue d’une ancienne version doit être vérifiée avant de la positionner sur le document actuel.');
+      return;
+    }
     const targetPage = Number(annotation?.page || annotation?.anchor?.page) || 0;
     const blockId = annotation?.blockId || annotation?.anchor?.blockId || '';
     if (targetPage > 0) setPage(targetPage);
@@ -376,29 +500,33 @@ export default function DocumentWorkspace({
       setPdfTargetPage(targetPage || 1);
       pdfRef.current?.scrollToPage(targetPage || 1);
     }
-    if (annotation?.status === 'needs-review') return;
     setHighlights((current) => [
       ...current.filter((item) => item.kind !== 'citation'),
       {
         page: targetPage,
         blockId,
         rects: annotation?.anchor?.rects || [],
+        segments: annotation?.anchor?.segments || [],
         kind: 'citation',
       },
     ]);
-  }, [viewMode]);
+  }, [pdfMode, pdfRevision, viewMode, setSelectionError, setPage, setPdfTargetPage, setHighlights]);
 
   const onStructuredVisible = useCallback((block) => {
     if (block.page > 0) setPage((current) => (current === block.page ? current : block.page));
-  }, []);
+  }, [setPage]);
 
   const openOutlineItem = useCallback((item) => {
     if (Number(item?.page) > 0) setPage(Number(item.page));
     if (viewMode === 'structured') void structuredRef.current?.scrollToBlock(item?.blockId, item?.ordinal);
     else changePage(item?.page || 1);
-  }, [changePage, viewMode]);
+  }, [changePage, viewMode, setPage]);
 
   const openCitation = useCallback((citation) => {
+    if (pdfMode && citation?.sourceRevision && citation.sourceRevision !== pdfRevision) {
+      setSelectionError('Cette citation appartient à une autre version du PDF.');
+      return;
+    }
     emitReaderMetric('citation-open', { mode: viewMode, outcome: 'opened' });
     const targetPage = Number(citation?.page) || 0;
     const blockId = citation?.blockIds?.[0] || '';
@@ -412,7 +540,7 @@ export default function DocumentWorkspace({
       item.page === targetPage
       && (!citation?.blockIds?.length || citation.blockIds.includes(item.blockId))
     ));
-    const marker = selected || {
+    const marker = citation?.segments?.length ? { page: targetPage, segments: citation.segments } : (!pdfMode && selected) || {
       page: targetPage,
       blockId,
       bbox: citation?.bbox || null,
@@ -421,25 +549,29 @@ export default function DocumentWorkspace({
       ...current.filter((item) => item.kind !== 'citation'),
       { ...marker, kind: 'citation' },
     ]);
-  }, [highlights, viewMode]);
+  }, [highlights, pdfMode, pdfRevision, viewMode, setSelectionError, setPage, setPdfTargetPage, setHighlights]);
 
   const selectViewMode = useCallback((mode) => {
     if (mode === 'pdf') setPdfTargetPage(page);
+    captureSequence.current += 1;
+    setSelection(null);
+    setHighlights([]);
+    window.getSelection()?.removeAllRanges();
     setViewMode(mode);
     emitReaderMetric('mode-change', { mode, kind: documentFile.kind });
-  }, [documentFile.kind, page]);
+  }, [documentFile.kind, page, setPdfTargetPage, setSelection, setHighlights, setViewMode]);
 
   const toggleSidebar = useCallback(() => {
     const next = !sidebarOpen;
     setSidebarOpen(next);
     if (next && mobile) setAssistantOpen(false);
-  }, [mobile, sidebarOpen]);
+  }, [mobile, sidebarOpen, setSidebarOpen, setAssistantOpen]);
 
   const toggleAssistant = useCallback(() => {
     const next = !assistantOpen;
     setAssistantOpen(next);
     if (next && mobile) setSidebarOpen(false);
-  }, [assistantOpen, mobile]);
+  }, [assistantOpen, mobile, setAssistantOpen, setSidebarOpen]);
 
   const onSidebarTabsKeyDown = useCallback((event) => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -447,14 +579,17 @@ export default function DocumentWorkspace({
     const tab = event.key === 'ArrowRight' || event.key === 'End' ? 'annotations' : 'outline';
     setSidebarTab(tab);
     window.requestAnimationFrame(() => document.getElementById(`reader-${tab}-tab`)?.focus());
-  }, []);
+  }, [setSidebarTab]);
 
-  const retryMetadata = useCallback(() => setMetadataAttempt((value) => value + 1), []);
+  const getPDFContext = useCallback((question) => searchPDFIndex(pdfIndex, question), [pdfIndex]);
+  const retryMetadata = useCallback(() => setMetadataAttempt((value) => value + 1), [setMetadataAttempt]);
   const clearSelection = useCallback(() => {
+    captureSequence.current += 1;
+    setSelectionError('');
     setSelection(null);
     setHighlights((current) => current.filter((item) => item.kind !== 'selection'));
     window.getSelection()?.removeAllRanges();
-  }, []);
+  }, [setSelectionError, setSelection, setHighlights]);
 
   return (
     <div className={`document-workspace${sidebarOpen ? ' sidebar-open' : ''}${assistantOpen ? ' assistant-open' : ''}`}>
@@ -464,6 +599,13 @@ export default function DocumentWorkspace({
           <FiWifiOff aria-hidden="true" /> Hors connexion — la lecture déjà chargée reste disponible.
         </div>
       )}
+      {(selectionError || (!noteSelection && annotations.error) || (pdfMode && (pdfIdentity.error || pdfHashError))) && (
+        <div className="reader-notice" role="status">
+          <span>{selectionError || (pdfMode && (pdfIdentity.error || pdfHashError)) || annotations.error}</span>
+          {(pdfIdentity.error || pdfHashError) && <button type="button" onClick={retryPDF}>Réessayer</button>}
+          {selectionError && <button type="button" aria-label="Fermer le message" onClick={() => setSelectionError('')}><FiX aria-hidden="true" /></button>}
+        </div>
+      )}
       <header className="reader-header">
         <button type="button" onClick={onClose} aria-label="Revenir à la bibliothèque"><FiChevronLeft aria-hidden="true" /></button>
         <div className="reader-title">
@@ -471,7 +613,7 @@ export default function DocumentWorkspace({
           <span><strong>{metadata?.title || documentFile.name}</strong><small>{documentFile.path}</small></span>
         </div>
         <div className="reader-center-controls">
-          {pdfAvailable && ready && (
+          {pdfAvailable && structuredReady && (
             <div className="reader-mode-switch" role="group" aria-label="Mode de lecture">
               <button type="button" aria-pressed={viewMode === 'pdf'} className={viewMode === 'pdf' ? 'active' : ''} onClick={() => selectViewMode('pdf')}><FiBookOpen aria-hidden="true" /> PDF</button>
               <button type="button" aria-pressed={viewMode === 'structured'} className={viewMode === 'structured' ? 'active' : ''} onClick={() => selectViewMode('structured')}><FiFileText aria-hidden="true" /> Structuré</button>
@@ -537,8 +679,8 @@ export default function DocumentWorkspace({
             <button type="button" className="reader-panel-close" onClick={() => setSidebarOpen(false)} aria-label="Fermer le plan et les notes"><FiX aria-hidden="true" /></button>
             <div className={`reader-docling-state ${ready ? 'ready' : 'fallback'}`}>
               <i />
-              <span><strong>{ready ? 'Structure Docling prête' : 'Lecture originale'}</strong><small>{readerStatus(metadata, metadataError)}</small></span>
-              {metadataError && (
+              <span><strong>{pdfMode ? 'PDF original' : (structuredReady ? 'Structure Docling prête' : 'Lecture originale')}</strong><small>{pdfMode ? (ready ? 'Sélection, notes et IA sur le PDF' : 'Vérification de la version du PDF…') : readerStatus(metadata, metadataError)}</small></span>
+              {metadataError && !pdfMode && (
                 <button type="button" onClick={retryMetadata} disabled={!online} aria-label="Réessayer de charger la structure">
                   <FiRefreshCw aria-hidden="true" />
                 </button>
@@ -600,16 +742,18 @@ export default function DocumentWorkspace({
           {viewMode === 'pdf' && pdfAvailable ? (
             <PdfReader
               ref={pdfRef}
-              url={fileProxyUrl(documentFile.path)}
+              url={pdfUrl}
               zoom={zoom}
+              indexedPages={pdfIndex.pages}
               highlights={visibleHighlights}
               targetPage={pdfTargetPage}
               onDocument={onPdfDocument}
               onFirstPage={onPdfFirstPage}
               onPageChange={onVisiblePage}
               onError={onPdfError}
+              onRetry={retryPDF}
             />
-          ) : ready && metadata?.artifactId ? (
+          ) : structuredReady && metadata?.artifactId ? (
             <StructuredReader
               ref={structuredRef}
               sourcePath={documentFile.path}
@@ -635,11 +779,16 @@ export default function DocumentWorkspace({
 
         {assistantOpen && (
           <ReaderAssistant
+            key={`${viewMode}:${pdfMode ? pdfRevision : metadata?.artifactId || ''}`}
             ref={assistantRef}
             document={{
               ...metadata,
               sourcePath: documentFile.path,
+              pdfMode,
+              sourceRevision: pdfRevision,
             }}
+            pdfIndex={pdfIndex}
+            getPDFContext={getPDFContext}
             selection={selection}
             onCitation={openCitation}
             onClose={() => setAssistantOpen(false)}
@@ -668,6 +817,7 @@ export default function DocumentWorkspace({
         <AnnotationComposer
           selection={noteSelection}
           saving={annotations.saving}
+          error={annotations.error}
           onSave={saveNote}
           onClose={closeNote}
         />

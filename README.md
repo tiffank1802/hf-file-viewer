@@ -460,7 +460,7 @@ Pour un déploiement CI GitHub, stocker `CLOUDFLARE_API_TOKEN` et `CLOUDFLARE_AC
 
 La connexion, les favoris et les annotations privées passent par le backend Go, pas par le SDK Appwrite dans le navigateur. Le projet est **Django objects** (`https://fra.cloud.appwrite.io/v1`, `69cedb12002acdd498e0`).
 
-Le compte (email, mot de passe, nom) vit dans Appwrite Auth. La promotion, la filière, les favoris, les conversations de l’assistant et les annotations du lecteur vivent dans la base `enise_docs`, tables `profiles`, `favorites`, `conversations`, `messages` et `annotations`. Cette base se crée une fois, depuis ta machine, avec une clé serveur :
+Le compte (email, mot de passe, nom) vit dans Appwrite Auth. La promotion, la filière, les favoris, les conversations et les annotations vivent dans la base `enise_docs` : `profiles`, `favorites`, `conversations`, `messages`, `annotations` (héritées/Docling) et `pdf_annotations_v2` (PDF original). La nouvelle table est additive ; les anciennes notes ne sont pas migrées ni supprimées. La base se provisionne depuis ta machine avec une clé serveur :
 
 ```bash
 # Console Appwrite → API Keys → databases.write, puis dans .dev.vars :
@@ -482,6 +482,7 @@ Le Worker Cloudflare et le backend Go exposent les mêmes routes. L’en-tête `
 | `GET /api/index` | index compact récursif : documents, `counts` par dossier et `totalFiles` |
 | `GET /api/counts?prefix=GM` | effectifs extraits du JSON d’index (`X-Data-Source: index-json`) |
 | `GET /api/file?path=...` | aperçu/stream d’un document |
+| `GET /api/file?path=...&reader=1&revision=...` | PDF du lecteur, sans cache par chemin ; chaque plage est vérifiée quand un ETag fort est disponible |
 | `GET /api/file?path=...&download=1` | téléchargement avec `Content-Disposition: attachment` |
 | `GET /api/file/<chemin>` | même document via une URL « propre » sans query string (iframe ShareCAD) |
 | `GET /api/aps/token` | jeton public Autodesk pour la visionneuse 3D |
@@ -496,7 +497,8 @@ Le Worker Cloudflare et le backend Go exposent les mêmes routes. L’en-tête `
 | `GET /api/link/preview?url=...` | aperçu enrichi d’un lien `.url` (Open Graph, mis en cache) |
 | `GET /api/chat/status` | assistant prêt, local, ou non configuré. Jamais de clé dans la réponse |
 | `POST /api/chat` | question en JSON, réponse en flux (`text/event-stream`) : documents, réflexion éventuelle, puis texte |
-| `GET /api/reader/document?path=...` | métadonnées, capacités et plan Docling du lecteur interactif |
+| `GET /api/reader/pdf-revision?path=...` | stratégie de révision du PDF original (ETag fort ou repli SHA-256) |
+| `GET /api/reader/document?path=...` | métadonnées, capacités et plan Docling optionnels du lecteur interactif |
 | `GET /api/reader/page?path=...&artifactId=...&page=...` | blocs Docling de la page PDF demandée |
 | `GET /api/reader/blocks?path=...&artifactId=...&from=...&limit=...` | fenêtre bornée de blocs (`blockId` optionnel pour une navigation directe) |
 | `GET /api/reader/asset?path=...&artifactId=...&asset=...` | illustration déclarée par l’artefact courant, avec type et taille contrôlés |
@@ -508,7 +510,7 @@ Le Worker Cloudflare et le backend Go exposent les mêmes routes. L’en-tête `
 
 L’évolution vers un assistant d’étude attaché à un document, fondé sur les artefacts Docling et compatible avec le futur lecteur interactif, est détaillée dans [`docs/DOCUMENT_AI_STUDY_PLAN.md`](docs/DOCUMENT_AI_STUDY_PLAN.md). La première tranche est opérationnelle : depuis l’aperçu, **Étudier avec l’IA** cible un `sourcePath`, préfère `document.json` et `chunks.jsonl` lorsqu’ils sont prêts, affiche l’état Docling/fallback et rend les citations `[S1]` ouvrables à la page PDF correspondante.
 
-Le lecteur plein écran est implémenté jusqu’au lot R6 : PDF.js virtualise les rendus éloignés, la sélection alimente des actions IA contextuelles, les citations reviennent au passage, les annotations privées persistent et la vue structurée reste accessible pour les formats déjà convertis par Docling. Le navigateur rend titres, paragraphes, listes, tableaux, figures, légendes et formules sans HTML non fiable. R6 ajoute aussi la reprise des lectures réseau, les tiroirs mobiles, les annonces d’accessibilité, les préférences de mouvement/contraste, des métriques strictement agrégées et les scénarios Playwright Chromium/Firefox/WebKit/mobile. Le détail reste dans [`docs/ALPHAXIV_INTERACTIVE_READER_PLAN.md`](docs/ALPHAXIV_INTERACTIVE_READER_PLAN.md).
+Le lecteur plein écran affiche le **PDF original**, la sélection, les notes privées et l’assistant dans une même vue, indépendamment de Docling. Les ancres sont attachées à une révision et à la géométrie PDF ; les anciennes notes ou celles d’une autre version sont conservées mais marquées « à vérifier ». Un index local progressif alimente les questions générales en indiquant sa couverture. Le texte transmis par le lecteur n’est pas vérifié par le serveur ; un scan sans texte nécessite un OCR non inclus dans ce lot. La vue structurée Docling reste disponible séparément quand son artefact existe. Architecture, limites et tests : [`docs/PDF_UNIFIED_READER.md`](docs/PDF_UNIFIED_READER.md). Procédure de déploiement Appwrite, Cloud Run et Cloudflare, sauvegarde et rollback : [`docs/DEPLOY_PDF_UNIFIED.md`](docs/DEPLOY_PDF_UNIFIED.md).
 
 Le déploiement est contrôlé au build par `VITE_READER_ROLLOUT=off|pilot|pdf|all` (défaut : `all`). Le mode `pilot` exige `VITE_READER_PILOT_PATHS`, liste de chemins exacts séparés par des virgules. Ces variables sont publiques : elles ne doivent contenir aucun secret. Pour la matrice navigateur :
 
@@ -592,10 +594,58 @@ Après purge, vérifier que `/api/index` repart en `X-Cache-Status: MISS` et que
 npm run lint         # ESLint
 npm test             # tests Node du Worker et des utilitaires
 npm run build        # build Vite
-npm run check        # lint + tests + build
+npm run check        # lint + tests Node/Python + build
+npm run test:e2e     # parcours navigateur avec API simulée
+npm run test:pdf-integration  # navigateur + serveur Go réel, services simulés
 npm run count:files  # comptage de référence des fichiers du bucket HF
 npm audit            # audit des dépendances
 ```
+
+### Tests d’intégration du lecteur PDF
+
+Avec Node.js 20.19+, Go 1.22+ et les navigateurs Playwright installés :
+
+```bash
+npm ci
+npm run test:e2e:install                # installe Chromium, Firefox, WebKit et leurs dépendances système
+npm run test:pdf-integration            # les trois moteurs
+npm run test:pdf-integration -- --project=chromium --workers=1  # un seul moteur
+```
+
+Le script **reconstruit `dist/` avec une configuration de test**, compile le serveur Go dans un dossier temporaire et le démarre sur une adresse locale. Il utilise uniquement un PDF du dépôt et des services Hugging Face, Appwrite et IA simulés ; aucune clé ou donnée réelle n’est nécessaire. Les parcours vérifient notamment les notes, l’isolation entre comptes, les révisions et plages PDF, les citations et l’annulation, y compris un parcours mobile émulé sous Chromium. Un transport Tauri simulé teste le raccordement JavaScript au serveur Go, mais **ne valide pas l’application Rust native**. Les faux services, la simulation Tauri et l’absence du Worker Cloudflare ne remplacent pas les essais en conditions réelles.
+
+Les détails, limites et étapes de validation sont dans [`docs/PDF_UNIFIED_READER.md`](./docs/PDF_UNIFIED_READER.md). Le workflow [`.github/workflows/pdf-reader-checks.yml`](./.github/workflows/pdf-reader-checks.yml) définit les mêmes contrôles multi-navigateurs en CI ; consulter son résultat Actions pour savoir s’ils ont réellement été exécutés.
+
+## Applications natives Tauri v2 (macOS, iOS, Android, Windows)
+
+Le dépôt inclut une enveloppe **Tauri v2** (`src-tauri/`) permettant de compiler le site en application native légère pour **macOS** (Universal `.dmg`/`.app`), **iOS** (`.ipa` + Simulateur), **Android** (`.apk` signé + `.aab`) et **Windows** (`.exe` NSIS + `.msi` WiX), sans modifier le comportement du site Web sur Cloudflare Workers.
+
+- Plan architectural détaillé et guide de signature : [`docs/TAURI_MULTIPLATFORM_PLAN.md`](./docs/TAURI_MULTIPLATFORM_PLAN.md)
+- Pipeline CI parallèle multi-OS : [`.github/workflows/tauri-build.yml`](./.github/workflows/tauri-build.yml)
+- Scripts npm : `npm run tauri:dev`, `npm run tauri:build`, `npm run tauri:build:macos`, `npm run tauri:build:windows`, `npm run tauri:android:init && npm run tauri:android:build`, `npm run tauri:ios:init && npm run tauri:ios:build`.
+
+### Télécharger l’application depuis le site
+
+Sur le site, cliquer sur **Application** dans l’en-tête, ou sur **Installer** dans la navigation mobile, puis choisir son système. L’adresse `/?download=1` ouvre directement le panneau de téléchargement. Les liens ci-dessous pointent aussi vers la dernière **GitHub Release publique** : ils ne nécessitent pas de compte GitHub.
+
+| Plateforme | Téléchargement |
+|---|---|
+| Windows 10/11 x64 | [Installateur .exe](https://github.com/tiffank1802/hf-file-viewer/releases/latest/download/ENISE-Docs-windows-x64-setup.exe) · [paquet .msi](https://github.com/tiffank1802/hf-file-viewer/releases/latest/download/ENISE-Docs-windows-x64.msi) |
+| macOS 11+ Intel / Apple Silicon | [Image .dmg](https://github.com/tiffank1802/hf-file-viewer/releases/latest/download/ENISE-Docs-macos-universal.dmg) |
+| Android 7+ | [APK universel](https://github.com/tiffank1802/hf-file-viewer/releases/latest/download/ENISE-Docs-android-universal.apk) |
+| iOS / iPadOS 14+ | [IPA non signé](https://github.com/tiffank1802/hf-file-viewer/releases/latest/download/ENISE-Docs-ios-unsigned.ipa) : **signature et profil Apple requis avant installation** |
+
+Ces fichiers sont des **versions de test**, pas des applications distribuées sur les stores. Windows et macOS peuvent signaler l’absence de signature officielle ou de notarisation. L’APK Android est installé hors Play Store ; si la clé de signature change entre deux versions, il faudra éventuellement désinstaller la précédente. Les [empreintes SHA-256](https://github.com/tiffank1802/hf-file-viewer/releases/latest/download/SHA256SUMS.txt) permettent de contrôler l’intégrité des fichiers.
+
+Les artefacts temporaires d’un run Actions restent accessibles aux personnes autorisées depuis sa page, mais les téléchargements du site utilisent les **assets publics d’une release**, sans expiration des artefacts Actions.
+
+Pour publier une nouvelle version :
+
+1. Mettre à jour `version` dans `src-tauri/tauri.conf.json`, puis créer un **brouillon** GitHub Release avec un compte autorisé, en ciblant exactement le SHA du commit à compiler. Exemple : `gh release create v1.0.1 --draft --target <SHA_DU_COMMIT> --title 'ENISE Docs v1.0.1' --notes-file .github/APP_RELEASE_NOTES.md`. Le `GITHUB_TOKEN` du dépôt ne peut pas créer une release (403), mais peut remplir et publier un brouillon existant.
+2. Pousser le tag stable correspondant `vMAJEUR.MINEUR.PATCH`, ou, lorsque le workflow est disponible sur la branche par défaut, lancer **Actions → Tauri Multiplatform Build → Run workflow** sur la branche à compiler en renseignant `release_tag` (par exemple `v1.0.1`). Le SHA choisi doit toujours être celui du brouillon.
+3. Le workflow attend les quatre builds, vérifie les fichiers et les publie ensemble après upload. Une release déjà publique n’est jamais écrasée ; si un build ou un upload échoue, le brouillon reste privé.
+
+Pour utiliser un miroir HTTPS, définir les variables publiques de build `VITE_APP_RELEASE_BASE_URL` et `VITE_APP_RELEASE_PAGE_URL` (voir `.env.example`) et y déposer tous les fichiers aux mêmes noms. Les changements frontend doivent ensuite être déployés sur le site, par exemple avec `npm run deploy` depuis un environnement autorisé sur Cloudflare.
 
 ## Structure
 

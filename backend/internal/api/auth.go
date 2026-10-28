@@ -462,16 +462,17 @@ func (s *Server) authReady() bool {
 
 func (s *Server) appwrite() *appwrite.Client {
 	return &appwrite.Client{
-		Endpoint:           s.cfg.AppwriteEndpoint,
-		ProjectID:          s.cfg.AppwriteProjectID,
-		DatabaseID:         s.cfg.AppwriteDatabaseID,
-		ProfileTable:       s.cfg.AppwriteProfileTable,
-		FavoritesTable:     s.cfg.AppwriteFavoritesTable,
-		ConversationsTable: s.cfg.AppwriteConversationsTable,
-		MessagesTable:      s.cfg.AppwriteMessagesTable,
-		AnnotationsTable:   s.cfg.AppwriteAnnotationsTable,
-		Flavor:             s.cfg.AppwriteFlavor,
-		HTTP:               s.authClient,
+		Endpoint:            s.cfg.AppwriteEndpoint,
+		ProjectID:           s.cfg.AppwriteProjectID,
+		DatabaseID:          s.cfg.AppwriteDatabaseID,
+		ProfileTable:        s.cfg.AppwriteProfileTable,
+		FavoritesTable:      s.cfg.AppwriteFavoritesTable,
+		ConversationsTable:  s.cfg.AppwriteConversationsTable,
+		MessagesTable:       s.cfg.AppwriteMessagesTable,
+		AnnotationsTable:    s.cfg.AppwriteAnnotationsTable,
+		PDFAnnotationsTable: s.cfg.AppwritePDFAnnotationsTable,
+		Flavor:              s.cfg.AppwriteFlavor,
+		HTTP:                s.authClient,
 	}
 }
 

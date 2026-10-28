@@ -52,6 +52,14 @@ NVIDIA_API_KEY="nvapi-your-key"
 HF_TOKEN="hf_secret"
 APS_CLIENT_SECRET="ne-doit-pas-partir"
 export OPENCODE_API_KEY=oc-key
+APPWRITE_API_KEY=provisioning-only
+APPWRITE_PROFILE_TABLE_ID=custom_profiles
+APPWRITE_FAVORITES_TABLE_ID=custom_favorites
+APPWRITE_CONVERSATIONS_TABLE_ID=custom_conversations
+APPWRITE_MESSAGES_TABLE_ID=custom_messages
+APPWRITE_ANNOTATIONS_TABLE_ID=custom_annotations
+APPWRITE_PDF_ANNOTATIONS_TABLE_ID=custom_pdf_notes
+APPWRITE_ENABLED=1
 `);
   assert.equal(file.CLOUDFLARE_API_TOKEN, 'cf-token');
   assert.equal(file.OPENCODE_API_KEY, 'oc-key');
@@ -66,6 +74,14 @@ export OPENCODE_API_KEY=oc-key
   assert.ok(!('NVIDIA_API_KEY' in env), 'valeur d’exemple transmise');
   assert.ok(!('HF_TOKEN' in env), 'HF_TOKEN transmis sans --with-hf-token');
   assert.ok(!('APS_CLIENT_SECRET' in env), 'clé hors liste transmise');
+  assert.ok(!('APPWRITE_API_KEY' in env), 'clé de provisioning transmise au backend');
+  for (const key of [
+    'APPWRITE_PROFILE_TABLE_ID', 'APPWRITE_FAVORITES_TABLE_ID',
+    'APPWRITE_CONVERSATIONS_TABLE_ID', 'APPWRITE_MESSAGES_TABLE_ID',
+    'APPWRITE_ANNOTATIONS_TABLE_ID', 'APPWRITE_PDF_ANNOTATIONS_TABLE_ID', 'APPWRITE_ENABLED',
+  ]) {
+    assert.equal(env[key], file[key], `${key} absent du déploiement Cloud Run`);
+  }
   assert.ok(hasEngine(env));
 
   assert.equal(buildServiceEnv(file, {}, { withHfToken: true }).HF_TOKEN, 'hf_secret');

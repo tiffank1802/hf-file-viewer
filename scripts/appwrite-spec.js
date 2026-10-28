@@ -134,7 +134,53 @@ export const TABLES = [
       { key: 'idx_annotation_user', type: 'key', columns: ['userId', '$updatedAt'] },
     ],
   },
+  {
+    // Additive PDF-only store. Legacy Docling annotations remain untouched.
+    id: 'pdf_annotations_v2',
+    name: 'Annotations privées PDF',
+    rowSecurity: true,
+    permissions: [`create("${ROLE_CREATE}")`],
+    columns: [
+      { type: 'string', key: 'userId', size: 36, required: true },
+      { type: 'string', key: 'documentKey', size: 64, required: true },
+      { type: 'string', key: 'sourcePath', size: 1024, required: true },
+      { type: 'string', key: 'sourceRevision', size: 160, required: true },
+      { type: 'string', key: 'artifactId', size: 160, required: false, default: '' },
+      { type: 'string', key: 'blockId', size: 160, required: false, default: '' },
+      { type: 'integer', key: 'page', required: false, min: 0, max: 100000 },
+      { type: 'string', key: 'anchorJson', size: 16000, required: true },
+      { type: 'enum', key: 'kind', elements: ['highlight', 'note', 'question', 'bookmark'], required: false, default: 'highlight' },
+      { type: 'enum', key: 'color', elements: ['yellow', 'green', 'blue', 'pink'], required: false, default: 'yellow' },
+      { type: 'string', key: 'body', size: 4000, required: false, default: '' },
+      { type: 'enum', key: 'status', elements: ['active', 'needs-review', 'archived'], required: false, default: 'active' },
+    ],
+    indexes: [
+      { key: 'idx_pdf_annot_document', type: 'key', columns: ['documentKey', '$updatedAt'] },
+      { key: 'idx_pdf_annot_revision', type: 'key', columns: ['documentKey', 'sourceRevision', '$updatedAt'] },
+      { key: 'idx_pdf_annot_user', type: 'key', columns: ['userId', '$updatedAt'] },
+    ],
+  },
 ];
+
+/** Keep setup/status/dry-run aligned with the IDs consumed by the Go API. */
+export function configuredTables(env = {}) {
+  const configured = {
+    profiles: env.APPWRITE_PROFILE_TABLE_ID || env.VITE_APPWRITE_PROFILE_TABLE_ID,
+    favorites: env.APPWRITE_FAVORITES_TABLE_ID || env.VITE_APPWRITE_FAVORITES_TABLE_ID,
+    conversations: env.APPWRITE_CONVERSATIONS_TABLE_ID,
+    messages: env.APPWRITE_MESSAGES_TABLE_ID,
+    annotations: env.APPWRITE_ANNOTATIONS_TABLE_ID,
+    pdf_annotations_v2: env.APPWRITE_PDF_ANNOTATIONS_TABLE_ID,
+  };
+  const seen = new Set();
+  return TABLES.map((table) => {
+    const id = String(configured[table.id] || table.id).trim();
+    if (!isValidAppwriteUid(id)) throw new Error(`Identifiant Appwrite invalide : ${id}`);
+    if (seen.has(id)) throw new Error(`Les tables Appwrite doivent être distinctes : ${id}`);
+    seen.add(id);
+    return id === table.id ? table : { ...table, id };
+  });
+}
 
 /**
  * Une « table » (2.x) et une « collection » (1.x) sont le même objet.

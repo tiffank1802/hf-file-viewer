@@ -48,8 +48,9 @@ function loadDevVars(root) {
   }
 }
 
-import { SPECS, TABLES, buildPlan, columnDrift, enumColumns, permissionsDrift, summarizeRows, withPendingRetry } from './appwrite-spec.js';
+import { SPECS, configuredTables, buildPlan, columnDrift, enumColumns, permissionsDrift, summarizeRows, withPendingRetry } from './appwrite-spec.js';
 
+const TABLES = configuredTables(process.env);
 const argv = process.argv.slice(2);
 const flags = new Set(argv.filter((a) => a.startsWith('--') && !a.includes('=')));
 const option = (name, fallback) => {
@@ -498,7 +499,7 @@ async function main() {
     return;
   }
 
-  const plan = buildPlan({ spec, databaseId: DATABASE_ID });
+  const plan = buildPlan({ spec, databaseId: DATABASE_ID, tables: TABLES });
   const databaseOp = plan[0];
   if (spec.specifications) {
     const specification = await pickSpecification(spec.specifications);

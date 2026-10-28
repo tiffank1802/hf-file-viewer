@@ -31,7 +31,7 @@ export const DEFAULTS = {
   region: 'europe-west1',
 };
 
-/** Variables fixes : le service n’est joint que par le Worker. */
+/** Valeurs historiques imposées : l'URL Cloud Run reste publique et peut aussi être appelée directement. */
 export const FIXED_ENV = {
   CHAT_TRUST_PROXY: '1',
   HF_BUCKET_ID: 'ktongue/ENISE-SITE',
@@ -57,8 +57,15 @@ export const FORWARDED_KEYS = [
   'APPWRITE_ENDPOINT',
   'APPWRITE_PROJECT_ID',
   'APPWRITE_DATABASE_ID',
+  'APPWRITE_PROFILE_TABLE_ID',
+  'APPWRITE_FAVORITES_TABLE_ID',
+  'APPWRITE_CONVERSATIONS_TABLE_ID',
+  'APPWRITE_MESSAGES_TABLE_ID',
+  'APPWRITE_ANNOTATIONS_TABLE_ID',
+  'APPWRITE_PDF_ANNOTATIONS_TABLE_ID',
   'APPWRITE_PUBLIC_ORIGIN',
   'APPWRITE_FLAVOR',
+  'APPWRITE_ENABLED',
 ];
 
 const REQUIRED_APIS = ['run.googleapis.com', 'cloudbuild.googleapis.com', 'artifactregistry.googleapis.com'];

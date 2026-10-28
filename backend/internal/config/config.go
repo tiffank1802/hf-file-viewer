@@ -109,17 +109,18 @@ type Config struct {
 	CloudflareAIBase    string
 	CloudflareAIModel   string
 
-	AppwriteEnabled            bool
-	AppwriteEndpoint           string
-	AppwriteProjectID          string
-	AppwriteDatabaseID         string
-	AppwriteProfileTable       string
-	AppwriteFavoritesTable     string
-	AppwriteConversationsTable string
-	AppwriteMessagesTable      string
-	AppwriteAnnotationsTable   string
-	AppwriteFlavor             string
-	AppwritePublicOrigin       string
+	AppwriteEnabled             bool
+	AppwriteEndpoint            string
+	AppwriteProjectID           string
+	AppwriteDatabaseID          string
+	AppwriteProfileTable        string
+	AppwriteFavoritesTable      string
+	AppwriteConversationsTable  string
+	AppwriteMessagesTable       string
+	AppwriteAnnotationsTable    string
+	AppwritePDFAnnotationsTable string
+	AppwriteFlavor              string
+	AppwritePublicOrigin        string
 }
 
 func Load(root string) Config {
@@ -211,6 +212,7 @@ func Load(root string) Config {
 	cfg.AppwriteConversationsTable = firstNonEmpty(get("APPWRITE_CONVERSATIONS_TABLE_ID"), "conversations")
 	cfg.AppwriteMessagesTable = firstNonEmpty(get("APPWRITE_MESSAGES_TABLE_ID"), "messages")
 	cfg.AppwriteAnnotationsTable = firstNonEmpty(get("APPWRITE_ANNOTATIONS_TABLE_ID"), "annotations")
+	cfg.AppwritePDFAnnotationsTable = firstNonEmpty(get("APPWRITE_PDF_ANNOTATIONS_TABLE_ID"), "pdf_annotations_v2")
 	cfg.AppwritePublicOrigin = strings.TrimSpace(get("APPWRITE_PUBLIC_ORIGIN"))
 	cfg.AppwriteFlavor = "tablesdb"
 	if strings.EqualFold(firstNonEmpty(get("APPWRITE_FLAVOR"), get("VITE_APPWRITE_FLAVOR")), "databases") {

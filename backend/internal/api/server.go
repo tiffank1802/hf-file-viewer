@@ -121,12 +121,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Printf("%s %s %d %s", r.Method, r.URL.RequestURI(), writer.status, time.Since(started).Round(time.Millisecond))
 }
 
+func isAllowedTauriOrigin(origin string) bool {
+	switch strings.TrimSpace(origin) {
+	case "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	applyAPISecurity(w.Header())
+	if origin := strings.TrimSpace(r.Header.Get("Origin")); isAllowedTauriOrigin(origin) {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges, ETag, Last-Modified, X-Cache-Status, X-Model3D-Meta, Retry-After")
+		w.Header().Add("Vary", "Origin")
+	}
 	if r.Method == http.MethodOptions {
 		w.Header().Set("Allow", "GET, HEAD, POST, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Range, Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Range, If-Range, Content-Type, Authorization")
 		w.Header().Set("Access-Control-Max-Age", "86400")
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -139,6 +154,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		err = s.allow(w, r, http.MethodGet, s.handleChatStatus)
 	case r.URL.Path == "/api/chat":
 		err = s.allow(w, r, http.MethodPost, s.handleChat)
+	case r.URL.Path == "/api/reader/pdf-revision":
+		err = s.allow(w, r, http.MethodGet, s.handlePDFRevision)
 	case r.URL.Path == "/api/reader/document":
 		err = s.allow(w, r, http.MethodGet, s.handleReaderDocument)
 	case r.URL.Path == "/api/reader/page":

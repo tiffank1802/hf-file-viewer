@@ -1,5 +1,6 @@
-import { FiHeart, FiInfo, FiSearch } from 'react-icons/fi';
+import { FiDownload, FiHeart, FiInfo, FiSearch, FiSmartphone } from 'react-icons/fi';
 import { SIDE_LINKS } from '../config';
+import { isTauriRuntime } from '../utils/runtime';
 import { NavigationIcon } from './Icons';
 
 function isActiveLink(currentPath, linkPath) {
@@ -13,11 +14,13 @@ export default function SideNav({
   favoriteCount,
   onOpenSearch,
   onOpenFavorites,
+  onOpenDownload,
   spaces = [],
 }) {
   // Dossiers présents dans le bucket mais absents des liens fixes : ils
   // apparaissent ici dès que l’index les découvre.
   const otherSpaces = spaces.filter((space) => space.dynamic);
+  const inTauri = isTauriRuntime();
 
   return (
     <aside className="library-sidebar glass-panel" aria-label="Navigation de la bibliothèque">
@@ -68,6 +71,13 @@ export default function SideNav({
           <span><FiSearch aria-hidden="true" /></span>
           Recherche globale
         </button>
+        {onOpenDownload && (
+          <button className="sidebar-utility sidebar-utility--app" type="button" onClick={onOpenDownload}>
+            <span>{inTauri ? <FiSmartphone aria-hidden="true" /> : <FiDownload aria-hidden="true" />}</span>
+            {inTauri ? 'Autres appareils' : 'Télécharger l’app'}
+            {!inTauri && <em className="sidebar-app-badge">App</em>}
+          </button>
+        )}
       </div>
 
       <div className="partner-card">

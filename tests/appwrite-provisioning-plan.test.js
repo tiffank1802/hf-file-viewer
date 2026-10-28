@@ -7,6 +7,7 @@ import {
   SPECS,
   TABLES,
   buildPlan,
+  configuredTables,
   columnDrift,
   enumColumns,
   isPendingResourceError,
@@ -112,6 +113,25 @@ test('la table annotations reste privée, bornée et indexée par révision', ()
   assert.deepEqual(table.indexes.find((index) => index.key === 'idx_annotation_document').columns, ['documentKey', '$updatedAt']);
   assert.deepEqual(table.indexes.find((index) => index.key === 'idx_annotation_revision').columns, ['documentKey', 'artifactId', '$updatedAt']);
   assert.equal(table.indexes.some((index) => index.type === 'unique' && index.columns.includes('sourcePath')), false);
+});
+
+test('les annotations PDF ont un stockage privé distinct et une révision source obligatoire', () => {
+  const table = TABLES.find((item) => item.id === 'pdf_annotations_v2');
+  assert.equal(table.rowSecurity, true);
+  assert.deepEqual(table.permissions, ['create("users")']);
+  assert.equal(table.columns.find((column) => column.key === 'sourceRevision').required, true);
+  assert.equal(table.columns.find((column) => column.key === 'artifactId').required, false);
+  assert.deepEqual(table.indexes.find((index) => index.key === 'idx_pdf_annot_revision').columns, ['documentKey', 'sourceRevision', '$updatedAt']);
+});
+
+test('le provisioning suit les identifiants configurés sans fusionner les tables', () => {
+  const tables = configuredTables({ APPWRITE_PDF_ANNOTATIONS_TABLE_ID: 'pdf_notes_custom', APPWRITE_ANNOTATIONS_TABLE_ID: 'legacy_notes' });
+  const plan = buildPlan({ spec: SPECS.tablesdb, databaseId: DB, tables });
+  assert.ok(plan.some((op) => op.group === 'table' && op.label === 'pdf_notes_custom'));
+  assert.ok(plan.some((op) => op.group === 'table' && op.label === 'legacy_notes'));
+  assert.ok(!plan.some((op) => op.group === 'table' && op.label === 'pdf_annotations_v2'));
+  assert.throws(() => configuredTables({ APPWRITE_PDF_ANNOTATIONS_TABLE_ID: 'annotations' }), /distinctes/);
+  assert.throws(() => configuredTables({ APPWRITE_PDF_ANNOTATIONS_TABLE_ID: '../invalid' }), /invalide/);
 });
 
 test('aucun index unique ne porte une colonne longue', () => {
@@ -263,6 +283,11 @@ test('le modèle respecte les règles que le serveur applique', () => {
       'messages.conversationId',
       'messages.seq',
       'messages.userId',
+      'pdf_annotations_v2.anchorJson',
+      'pdf_annotations_v2.documentKey',
+      'pdf_annotations_v2.sourcePath',
+      'pdf_annotations_v2.sourceRevision',
+      'pdf_annotations_v2.userId',
       'profiles.userId',
     ],
   );

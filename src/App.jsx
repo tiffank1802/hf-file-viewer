@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FiHeart, FiHome, FiSearch } from 'react-icons/fi';
+import { FiDownload, FiHeart, FiHome, FiSearch } from 'react-icons/fi';
+import AppDownloadModal from './components/AppDownloadModal';
 import CategoryGrid from './components/CategoryGrid';
 import Explorer from './components/Explorer';
 import Footer from './components/Footer';
@@ -18,6 +19,7 @@ import { buildHomeCards } from './utils/spaces';
 import { useAuth } from './hooks/useAuth';
 import { useFavorites } from './hooks/useFavorites';
 import { normalizeBucketItem } from './utils/files';
+import { isTauriRuntime } from './utils/runtime';
 import './index.css';
 
 const DocumentWorkspace = lazy(() => import('./reader/DocumentWorkspace'));
@@ -39,7 +41,9 @@ export default function App() {
   const readerOpenedHere = useRef(false);
   const [searchState, setSearchState] = useState({ open: false, mode: 'search' });
   const [authPanel, setAuthPanel] = useState({ open: false, mode: 'signin' });
+  const [downloadOpen, setDownloadOpen] = useState(false);
   const [dismissedAlertKey, setDismissedAlertKey] = useState(null);
+  const inTauri = isTauriRuntime();
   const auth = useAuth();
   const favorites = useFavorites(auth.user);
   const favoriteItems = favorites.items;
@@ -53,6 +57,8 @@ export default function App() {
   }, []);
   const openAuth = useCallback((mode = 'signin') => setAuthPanel({ open: true, mode }), []);
   const closeAuth = useCallback(() => setAuthPanel((current) => ({ ...current, open: false })), []);
+  const openDownload = useCallback(() => setDownloadOpen(true), []);
+  const closeDownload = useCallback(() => setDownloadOpen(false), []);
   const closeSearch = useCallback(() => {
     setSearchState((current) => ({ ...current, open: false }));
   }, []);
@@ -91,7 +97,10 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     if (params.get('recover') === '1') openAuth('recover');
     else if (params.get('verify') === '1') openAuth('signin');
-  }, [openAuth]);
+    else if (params.get('download') === '1' || params.get('app') === '1' || window.location.hash === '#download') {
+      openDownload();
+    }
+  }, [openAuth, openDownload]);
 
   useEffect(() => {
     const onPopState = () => setReaderFile(readerFileFromRoute(window.location.pathname, window.location.search));
@@ -124,8 +133,9 @@ export default function App() {
     return (
       <>
         <Suspense fallback={<div className="reader-route-loading">Préparation du lecteur interactif…</div>}>
+          {/* Discard the previous account's private reader state on account changes. */}
           <DocumentWorkspace
-            key={readerFile.path}
+            key={`${readerFile.path}:${auth.user?.id || 'anonymous'}`}
             file={readerFile}
             initialPage={Number(params.get('page')) || Number(readerFile.previewPage) || 1}
             authenticated={auth.isAuthenticated}
@@ -157,6 +167,7 @@ export default function App() {
         onOpenSearch={() => openSearch('search')}
         onOpenAuth={openAuth}
         onOpenFavorites={() => openSearch('favorites')}
+        onOpenDownload={openDownload}
         favoriteCount={favoriteItems.length}
       />
 
@@ -179,6 +190,7 @@ export default function App() {
           <>
             <Hero
               onOpenSearch={() => openSearch('search')}
+              onOpenDownload={openDownload}
               navigate={library.navigate}
               catalog={catalog}
               spaceCount={home.spaces.length}
@@ -209,6 +221,7 @@ export default function App() {
               favoriteCount={favoriteItems.length}
               onOpenSearch={() => openSearch('search')}
               onOpenFavorites={() => openSearch('favorites')}
+              onOpenDownload={openDownload}
               spaces={home.spaces}
             />
             <Explorer
@@ -222,9 +235,9 @@ export default function App() {
         </section>
       </main>
 
-      <Footer />
+      <Footer onOpenDownload={openDownload} />
 
-      <nav className="mobile-bottom-nav" aria-label="Navigation mobile">
+      <nav className={`mobile-bottom-nav ${!inTauri ? 'has-app-tab' : ''}`} aria-label="Navigation mobile">
         <button type="button" className={!library.path ? 'active' : ''} onClick={() => library.navigate('', { scroll: false })}>
           <FiHome aria-hidden="true" /><span>Accueil</span>
         </button>
@@ -235,7 +248,14 @@ export default function App() {
           <span className="mobile-favorite-icon"><FiHeart aria-hidden="true" />{favoriteItems.length > 0 && <i>{favoriteItems.length}</i>}</span>
           <span>Favoris</span>
         </button>
+        {!inTauri && (
+          <button type="button" onClick={openDownload}>
+            <FiDownload aria-hidden="true" /><span>Installer</span>
+          </button>
+        )}
       </nav>
+
+      <AppDownloadModal open={downloadOpen} onClose={closeDownload} />
 
       <AuthPanel
         open={authPanel.open}

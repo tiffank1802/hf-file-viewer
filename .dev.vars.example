@@ -76,6 +76,7 @@ APS_CLIENT_SECRET="your_aps_client_secret"
 # Optionnel : les identifiants par défaut sont profiles, favorites,
 # conversations, messages et annotations.
 # APPWRITE_ANNOTATIONS_TABLE_ID="annotations"
+# APPWRITE_PDF_ANNOTATIONS_TABLE_ID="pdf_annotations_v2"
 
 # MAX_SOLIDWORKS_BYTES="104857600"
 # MAX_SOLIDWORKS_DEPENDENCY_FILES="64"

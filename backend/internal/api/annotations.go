@@ -17,6 +17,18 @@ const (
 	maxAnnotationJSON = 32 << 10
 )
 
+type annotationCreateRequest struct {
+	SourcePath     string     `json:"sourcePath"`
+	ArtifactID     string     `json:"artifactId"`
+	SourceRevision string     `json:"sourceRevision"`
+	Anchor         chatAnchor `json:"anchor"`
+	Kind           string     `json:"kind"`
+	Color          string     `json:"color"`
+	Body           string     `json:"body"`
+}
+
+const pdfAnnotationIDPrefix = "pdfv2:"
+
 var annotationKinds = map[string]bool{
 	"highlight": true,
 	"note":      true,
@@ -43,7 +55,8 @@ func (s *Server) handleAnnotations(w http.ResponseWriter, r *http.Request) error
 		}
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/annotations/")
-	if id == "" || strings.Contains(id, "/") || !appwrite.ValidID(id) {
+	rowID := strings.TrimPrefix(id, pdfAnnotationIDPrefix)
+	if rowID == "" || strings.Contains(rowID, "/") || !appwrite.ValidID(rowID) {
 		return catalog.Error(http.StatusNotFound, "Annotation introuvable.")
 	}
 	switch r.Method {
@@ -60,6 +73,9 @@ func (s *Server) handleAnnotationList(w http.ResponseWriter, r *http.Request) er
 	user, secret, err := s.annotationUser(w, r)
 	if err != nil {
 		return err
+	}
+	if revision := strings.TrimSpace(r.URL.Query().Get("sourceRevision")); revision != "" {
+		return s.handlePDFAnnotationList(w, r, user, secret, revision)
 	}
 	sourcePath, err := s.readerSourcePath(r)
 	if err != nil {
@@ -100,16 +116,12 @@ func (s *Server) handleAnnotationCreate(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		return err
 	}
-	var body struct {
-		SourcePath string     `json:"sourcePath"`
-		ArtifactID string     `json:"artifactId"`
-		Anchor     chatAnchor `json:"anchor"`
-		Kind       string     `json:"kind"`
-		Color      string     `json:"color"`
-		Body       string     `json:"body"`
-	}
+	var body annotationCreateRequest
 	if err := decodeJSON(r, &body, maxAnnotationJSON); err != nil {
 		return err
+	}
+	if body.SourceRevision != "" || body.Anchor.SchemaVersion == pdfAnchorSchema {
+		return s.handlePDFAnnotationCreate(w, r, user, secret, body)
 	}
 	sourcePath, err := catalog.NormalizeFilePath(body.SourcePath)
 	if err != nil {
@@ -218,12 +230,22 @@ func (s *Server) handleAnnotationUpdate(w http.ResponseWriter, r *http.Request, 
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	updated, err := s.appwrite().UpdateAnnotation(ctx, secret, user.ID, id, patch)
+	client := s.appwrite()
+	pdf := strings.HasPrefix(id, pdfAnnotationIDPrefix)
+	if pdf {
+		client = client.PDFAnnotations()
+		id = strings.TrimPrefix(id, pdfAnnotationIDPrefix)
+	}
+	updated, err := client.UpdateAnnotation(ctx, secret, user.ID, id, patch)
 	if err != nil {
 		return s.annotationFail(err)
 	}
+	item := publicAnnotation(updated, updated.ArtifactID)
+	if pdf {
+		item = publicPDFAnnotation(updated, updated.SourceRevision)
+	}
 	writeJSON(w, r, http.StatusOK, map[string]any{
-		"ok": true, "item": publicAnnotation(updated, updated.ArtifactID),
+		"ok": true, "item": item,
 	}, "no-store", nil)
 	return nil
 }
@@ -235,7 +257,12 @@ func (s *Server) handleAnnotationDelete(w http.ResponseWriter, r *http.Request, 
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	if err := s.appwrite().DeleteAnnotation(ctx, secret, user.ID, id); err != nil {
+	client := s.appwrite()
+	if strings.HasPrefix(id, pdfAnnotationIDPrefix) {
+		client = client.PDFAnnotations()
+		id = strings.TrimPrefix(id, pdfAnnotationIDPrefix)
+	}
+	if err := client.DeleteAnnotation(ctx, secret, user.ID, id); err != nil {
 		return s.annotationFail(err)
 	}
 	writeJSON(w, r, http.StatusOK, map[string]any{"ok": true}, "no-store", nil)

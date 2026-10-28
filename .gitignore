@@ -51,6 +51,8 @@ coverage/
 !tests/*.test.js
 !tests/e2e/
 !tests/e2e/**/*.spec.js
+!tests/integration/
+!tests/integration/**/*.spec.js
 playwright-report/
 test-results/
 reader-rollout-report*.json
@@ -96,3 +98,21 @@ __pycache__/
 # Backend Go
 backend/enise-api
 backend/bin/
+
+# Tauri v2 (Rust / Mobile generated build artifacts)
+src-tauri/target/
+src-tauri/gen/schemas/
+src-tauri/gen/android/.gradle/
+src-tauri/gen/android/local.properties
+src-tauri/gen/android/**/build/
+src-tauri/gen/apple/build/
+src-tauri/gen/apple/DerivedData*/
+src-tauri/gen/apple/Externals/
+src-tauri/WixTools/
+src-tauri/NSIS/
+*.apk
+*.aab
+*.ipa
+*.dmg
+*.msi
+*.exe

@@ -1,5 +1,6 @@
 import { BUCKET_ID, BUCKET_URL } from '../config.js';
 import { normalizeBucketItem } from '../utils/files.js';
+import { apiCredentials, apiUrl, publicApiUrl } from '../utils/runtime.js';
 
 export class LibraryApiError extends Error {
   constructor(message, status = 0) {
@@ -12,8 +13,9 @@ export class LibraryApiError extends Error {
 async function getJson(url, signal) {
   let response;
   try {
-    response = await fetch(url, {
+    response = await fetch(apiUrl(url), {
       signal,
+      credentials: apiCredentials(),
       headers: { Accept: 'application/json' },
     });
   } catch (error) {
@@ -73,10 +75,26 @@ export async function fetchIndex(signal) {
   };
 }
 
-export function fileProxyUrl(path, download = false) {
+export function fileProxyPath(path, download = false) {
   const params = new URLSearchParams({ path });
   if (download) params.set('download', '1');
   return `/api/file?${params}`;
+}
+
+export function fileProxyUrl(path, download = false) {
+  const route = fileProxyPath(path, download);
+  if (download) {
+    return publicApiUrl(route, { relativeOnWeb: true });
+  }
+  return apiUrl(route);
+}
+
+/**
+ * URL directe (HTTPS publique sous Tauri, relative sur le Web) adaptée au
+ * streaming natif `<video>` / `<audio>` sans mise en mémoire tampon complète.
+ */
+export function mediaFileUrl(path) {
+  return publicApiUrl(fileProxyPath(path, false), { relativeOnWeb: true });
 }
 
 /**
@@ -87,7 +105,7 @@ export function officePdfUrl(file) {
   const params = new URLSearchParams({ path: file.path });
   if (Number.isFinite(Number(file.size))) params.set('size', String(file.size));
   if (file.mtime) params.set('mtime', String(file.mtime));
-  return `/api/office/pdf?${params}`;
+  return apiUrl(`/api/office/pdf?${params}`);
 }
 
 /**
@@ -98,7 +116,7 @@ export function model3dGlbUrl(file, quality = 'standard') {
   const params = new URLSearchParams({ path: file.path, quality });
   if (Number.isFinite(Number(file.size))) params.set('size', String(file.size));
   if (file.mtime) params.set('mtime', String(file.mtime));
-  return `/api/model3d/glb?${params}`;
+  return apiUrl(`/api/model3d/glb?${params}`);
 }
 
 /**
@@ -109,7 +127,7 @@ export function model3dGlbUrl(file, quality = 'standard') {
 export function solidworksStepUrl(file, force = false) {
   const params = new URLSearchParams({ path: file.path });
   if (force) params.set('force', '1');
-  return `/api/solidworks/step?${params}`;
+  return apiUrl(`/api/solidworks/step?${params}`);
 }
 
 const SHARECAD_FRAME_URL = 'https://iframe.sharecad.org/cadframe/load';
@@ -132,7 +150,7 @@ export function shareCadFileUrl(file) {
  * Les serveurs ShareCAD téléchargent le fichier depuis cette URL publique.
  */
 export function shareCadFrameUrl(file) {
-  const absoluteUrl = `${window.location.origin}${shareCadFileUrl(file)}`;
+  const absoluteUrl = publicApiUrl(shareCadFileUrl(file));
   return `${SHARECAD_FRAME_URL}?url=${encodeURIComponent(absoluteUrl)}`;
 }
 
