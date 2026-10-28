@@ -178,8 +178,8 @@ function explain(error) {
     const hint = otherFlavor(FLAVOR) ? ` Si la route est absente de cette instance : --flavor=${otherFlavor(FLAVOR)}.` : '';
     return `${error.method} ${error.path} → 404 (${error.type || 'general_route_not_found'}) : route inconnue de cette instance.${hint}`;
   }
-  if (error.status === 401) return `401 : APPWRITE_API_KEY absente, expirée ou révoquée (${error.method} ${error.path}).`;
-  if (error.status === 403) return `403 : la clé n’a pas le scope nécessaire (databases:write) pour ${error.method} ${error.path}.`;
+  if (error.status === 401) return `401 : APPWRITE_API_KEY absente, invalide ou expirée, ou projet incorrect (${error.method} ${error.path}).`;
+  if (error.status === 403) return `403 : accès interdit ; vérifie les permissions et les scopes de la clé pour ${error.method} ${error.path}.`;
   if (error.status === 400) {
     return [
       `400 sur ${error.method} ${error.path} : ${error.message}`,
@@ -321,19 +321,33 @@ async function diagnose() {
   console.log(`flavor   : ${await resolveFlavor().catch(() => 'indéterminé')} (à reporter dans VITE_APPWRITE_FLAVOR)`);
 }
 
+function reportStatusError(resource, error) {
+  process.exitCode = 1;
+  if (error.status === 401 || error.status === 403) {
+    console.log(`  ! ${resource} : impossible à vérifier (${error.status}) — accès refusé ; l’existence de la ressource est inconnue.`);
+    console.log(`    ${explain(error)}`);
+  } else if (error.status === 404) {
+    console.log(`  ! ${resource} : introuvable ou route incorrecte (404) — vérifier l’identifiant, l’API et les permissions.`);
+  } else {
+    console.log(`  ! ${resource} : vérification impossible — ${explain(error).split('\n')[0]}`);
+  }
+}
+
 async function status() {
   const spec = SPECS[FLAVOR];
   const database = await request('GET', spec.database(DATABASE_ID)).catch((error) => {
-    console.log(`base ${DATABASE_ID} : ${error.status ? `absente (${error.status})` : error.cause}`);
+    reportStatusError(`base ${DATABASE_ID}`, error);
     return null;
   });
   if (!database) return;
   console.log(`base ${DATABASE_ID} — ${database.name} (${spec.label})`);
   let blocked = 0;
   for (const table of TABLES) {
-    const row = await request('GET', spec.tablePath(DATABASE_ID, table)).catch(() => null);
+    const row = await request('GET', spec.tablePath(DATABASE_ID, table)).catch((error) => {
+      reportStatusError(`table ${table.id}`, error);
+      return null;
+    });
     if (!row) {
-      console.log(`  ${table.id} : absente — npm run appwrite:setup`);
       blocked += 1;
       continue;
     }
@@ -358,8 +372,14 @@ async function status() {
     }
   }
   const drifts = await modelDriftReport();
-  if (drifts) console.log(`  ${drifts} colonne(s) en décalage avec le modèle (${FIX_ENUMS ? 'corrigées' : '--fix-enums pour les enums, console pour le reste'}).`);
-  if (blocked) console.log(`\n  ${blocked} table(s) empêchent l’écriture depuis le navigateur : un compte créé côté Auth n’aura aucune ligne en base.`);
+  if (drifts) {
+    console.log(`  ${drifts} colonne(s) en décalage avec le modèle (${FIX_ENUMS ? 'corrigées' : '--fix-enums pour les enums, console pour le reste'}).`);
+    process.exitCode = 1;
+  }
+  if (blocked) {
+    console.log(`\n  ${blocked} table(s) n’ont pas pu être validées : examiner les erreurs et les permissions avant tout déploiement.`);
+    process.exitCode = 1;
+  }
 }
 
 /**
@@ -475,10 +495,10 @@ async function main() {
 
   if (!API_KEY && !DRY_RUN && !STATUS) {
     console.error(
-      'APPWRITE_API_KEY manquante. Crée une clé serveur dans Console → API Keys\n'
-      + '(scope databases:write) puis relance :\n'
-      + '  export APPWRITE_API_KEY=$(read -s …) ; npm run appwrite:setup\n'
-      + '--status, --diagnose, --ping et --dry-run fonctionnent sans clé.',
+      'APPWRITE_API_KEY manquante. Crée une clé serveur dans le bon projet Appwrite\n'
+      + 'avec les scopes de lecture/écriture du schéma, puis ajoute-la localement\n'
+      + 'à .dev.vars sous APPWRITE_API_KEY. Ne partage jamais cette clé.\n'
+      + '--ping et --dry-run fonctionnent sans clé ; --status peut exiger une clé.',
     );
     process.exitCode = 1;
     return;

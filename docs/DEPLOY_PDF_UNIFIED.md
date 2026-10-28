@@ -3,6 +3,8 @@
 Ce guide décrit le déploiement **Appwrite → API Go sur Cloud Run → Worker et frontend Cloudflare**. Le PDF original reste dans le bucket Hugging Face existant ; Docling n'est pas nécessaire pour le nouveau parcours PDF. La base et les services de production ne sont pas modifiés par ce document.
 
 > **Commencer par un staging distinct.** Les valeurs par défaut du dépôt pointent vers des ressources existantes. Vérifier explicitement les identifiants, les comptes connectés et les commandes avant de lancer une opération réelle. Les services réellement configurés et les permissions doivent être validés dans votre environnement.
+>
+> Les identifiants d’exemple dans ce guide sont des **substituts, pas des valeurs à utiliser**. Les remplacer par les identifiants réels avant d’exécuter les commandes concernées. Exécuter et vérifier chaque étape séparément ; ne pas coller ensemble une simulation et une commande réelle. Dans le zsh interactif de macOS, une ligne `#` peut être traitée comme une commande si l’option `interactivecomments` est désactivée.
 
 ## 1. Prérequis et sauvegardes
 
@@ -14,7 +16,7 @@ Ce guide décrit le déploiement **Appwrite → API Go sur Cloud Run → Worker 
   ```sh
   export PROJECT_ID="identifiant-du-projet-google"
   export REGION="europe-west1"
-  export SERVICE="enise-docs-api"  # nom réel du service à sauvegarder
+  export SERVICE="nom-reel-du-service-a-sauvegarder"
   umask 077
   BACKUP_DIR="$HOME/backups/enise-$(date -u +%Y%m%dT%H%M%SZ)"
   mkdir -p "$BACKUP_DIR"
@@ -49,7 +51,7 @@ APPWRITE_API_KEY="cle-serveur-de-provisionnement"
 ```
 
 - `tablesdb` correspond à l'API TablesDB 2.x ; si l'instance utilise les collections héritées, employer `databases` de manière cohérente dans le fichier et les commandes ci-dessous. L'endpoint doit être celui de l'instance, avec `/v1` une seule fois.
-- La clé serveur doit avoir les droits de lecture et d'écriture du schéma nécessaires au script pour la base, les tables/collections, colonnes/attributs, index et permissions. Elle sert au **provisionnement seulement** : elle n'est pas copiée par le script dans Cloud Run et ne doit jamais être exposée au frontend ni préfixée par `VITE_`.
+- La clé serveur doit avoir les droits de lecture et d'écriture du schéma nécessaires au script pour la base, les tables/collections, colonnes/attributs, index et permissions. Pour TablesDB, les scopes Appwrite actuels sont `databases.read`, `databases.write`, `tables.read`, `tables.write`, `columns.read`, `columns.write`, `indexes.read` et `indexes.write` ; vérifier les noms disponibles sur votre version. La clé sert au **provisionnement seulement** : elle n'est pas copiée par le script dans Cloud Run et ne doit jamais être exposée au frontend ni préfixée par `VITE_`.
 - La nouvelle table est `pdf_annotations_v2` par défaut. Si un ID différent est requis, renseigner `APPWRITE_PDF_ANNOTATIONS_TABLE_ID` **avant** le provisioning et le déploiement ; il doit être distinct de toutes les autres tables. Les IDs personnalisés des profils, favoris, conversations, messages et annotations historiques (`APPWRITE_*_TABLE_ID`) doivent également être identiques entre les deux opérations.
 - Si l'assistant IA est requis, renseigner aussi dans `.dev.vars` les variables serveur d'un fournisseur disponible, par exemple `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`, ou les variables Cloudflare AI. Sans fournisseur, la rédaction IA ne sera pas disponible. Ne pas mettre de clé dans les variables `VITE_`, dans Git, dans une capture ou dans le navigateur.
 - **Attention aux priorités différentes :** le script Appwrite privilégie les variables déjà exportées dans le shell sur `.dev.vars`, puis lit aussi `.env` et `.env.local` ; le script Cloud Run privilégie `.dev.vars` et complète depuis le shell. Une variable résiduelle peut donc cibler une autre base. Vérifier les noms exportés avec `env | cut -d= -f1 | grep -E '^(APPWRITE_|VITE_APPWRITE_)'` et supprimer/aligner les valeurs conflictuelles sans les afficher. Le dry-run ci-dessous affiche l'endpoint, le projet et les chemins de base effectivement visés.
@@ -64,11 +66,21 @@ npm run appwrite:setup -- --dry-run --flavor=tablesdb
 
 Lire le plan entier avant confirmation : projet, base, IDs, colonnes, index et surtout permissions de chaque table. **Ce n'est pas une migration limitée à la nouvelle table : le script réapplique les permissions et l'activation de toutes les tables connues, y compris celles qui existent déjà.** Vérifier les conséquences sur la configuration actuelle ; si elles sont inacceptables, ne pas exécuter le script sur cette base et créer le schéma voulu séparément après revue.
 
-Après sauvegarde et validation du plan :
+Après sauvegarde et validation du plan, vérifier la connectivité. Ce ping ne valide ni la clé ni les permissions :
 
 ```sh
 npm run appwrite:ping
+```
+
+Seulement après avoir confirmé la cible, la clé et l'impact du plan, appliquer le schéma :
+
+```sh
 npm run appwrite:setup -- --flavor=tablesdb
+```
+
+Si la commande a réussi, examiner le statut :
+
+```sh
 npm run appwrite:status -- --flavor=tablesdb
 ```
 
@@ -84,18 +96,31 @@ Utiliser d'abord un service de staging distinct. Le script construit l'image dep
 
 **Sécurité :** l'URL Cloud Run est publiquement joignable. Un client direct peut forger des en-têtes d'adresse IP que le backend croit venir du proxy : ne pas considérer la limitation par IP comme une protection suffisante. Fixer `APPWRITE_PUBLIC_ORIGIN` à l'origine HTTPS légitime, revoir IAM/ingress et mettre en place une frontière d'accès fiable compatible avec le Worker et les clients Tauri avant une utilisation sensible.
 
-```sh
-export PROJECT_ID="identifiant-du-projet-google-de-staging"
-export REGION="europe-west1"
-export SERVICE="enise-docs-api-staging"
+Remplacer les valeurs d'exemple par l'ID Google et le nom de service réellement choisis :
 
-# --no-origin évite de modifier le wrangler.jsonc de production.
+```sh
+export PROJECT_ID="identifiant-reel-du-projet-google-de-staging"
+export REGION="europe-west1"
+export SERVICE="nom-reel-du-service-staging"
+```
+
+Lancer d'abord la simulation seule. L'option `--no-origin` évite de modifier le `wrangler.jsonc` de production :
+
+```sh
 npm run deploy:api:firebase -- --project "$PROJECT_ID" --region "$REGION" \
   --service "$SERVICE" --no-origin --dry-run
-# Après revue et uniquement avec les bons accès et la bonne configuration :
+```
+
+Après revue, avec les bons accès et la bonne configuration, exécuter le déploiement réel séparément :
+
+```sh
 npm run deploy:api:firebase -- --project "$PROJECT_ID" --region "$REGION" \
   --service "$SERVICE" --no-origin
+```
 
+Seulement si le déploiement a réussi, récupérer l'URL et tester la santé :
+
+```sh
 API_ORIGIN="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" \
   --region "$REGION" --format='value(status.url)')"
 curl -fsS "$API_ORIGIN/api/health"
@@ -117,8 +142,9 @@ cp -n wrangler.jsonc wrangler.staging.jsonc
 
 Dans cette copie, changer le `name` pour un Worker de staging, renseigner `vars.GO_API_ORIGIN` avec l'URL Cloud Run **staging** obtenue ci-dessus, et retirer le binding KV de production ou le remplacer par une KV de staging. Contrôler aussi le compte, les domaines/routes, les secrets Worker et tous les autres bindings. Le binding `METADATA_KV` est facultatif ; ne pas partager une KV de production par inadvertance. Si le nom de domaine staging a changé, répercuter l'origine correcte dans `APPWRITE_PUBLIC_ORIGIN` sur le service Cloud Run ainsi que dans `.dev.vars` pour les déploiements suivants, et mettre à jour la configuration Appwrite.
 
+Renseigner le chemin exact d'un PDF présent dans le bucket, pas une URL :
+
 ```sh
-# Chemin exact d'un PDF présent dans le bucket, pas une URL :
 export PILOT_PATH="chemin/exact/vers/un-test.pdf"
 VITE_API_ORIGIN="" VITE_READER_ROLLOUT=pilot \
   VITE_READER_PILOT_PATHS="$PILOT_PATH" npm run build

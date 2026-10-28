@@ -71,7 +71,9 @@ APS_CLIENT_SECRET="your_aps_client_secret"
 # À activer seulement si Go n’est joignable que par le Worker.
 # CHAT_TRUST_PROXY="1"
 # Clé serveur Appwrite, uniquement pour `npm run appwrite:setup`.
-# Console → API Keys, scope databases.write (et tablesdb.write). Jamais en VITE_.
+# Console → API Keys : scopes de lecture/écriture databases, tables, columns et indexes.
+# Pour TablesDB : databases.read/write, tables.read/write, columns.read/write,
+# indexes.read/write (les noms peuvent dépendre de la version). Jamais en VITE_.
 # APPWRITE_API_KEY=""
 # Optionnel : les identifiants par défaut sont profiles, favorites,
 # conversations, messages et annotations.
