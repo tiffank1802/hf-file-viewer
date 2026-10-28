@@ -18,6 +18,19 @@ for file in \
   test -s "$ASSET_DIR/$file" || { echo "Fichier manquant ou vide : $file" >&2; exit 1; }
 done
 
+# Les annotations exposent l'erreur de GitHub même lorsque les logs détaillés
+# Actions ne sont pas accessibles ; les secrets ne sont jamais affichés.
+run_gh() {
+  local output
+  if output=$(gh "$@" 2>&1); then
+    printf '%s\n' "$output"
+  else
+    printf '%s\n' "$output" >&2
+    printf '::error::Échec gh %s %s : %s\n' "$1" "$2" "${output//$'\n'/ }" >&2
+    return 1
+  fi
+}
+
 # Un rerun peut reprendre un brouillon ; une release déjà publique est
 # immuable pour ne jamais remplacer silencieusement les téléchargements.
 if state=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
@@ -26,10 +39,10 @@ if state=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); the
     exit 1
   fi
 else
-  gh release create "$TAG" --target "$TARGET" --draft \
+  run_gh release create "$TAG" --target "$TARGET" --draft \
     --title "ENISE Docs $TAG — applications de test" \
     --notes-file .github/APP_RELEASE_NOTES.md
 fi
 
-gh release upload "$TAG" "$ASSET_DIR"/* --clobber
-gh release edit "$TAG" --draft=false --latest
+run_gh release upload "$TAG" "$ASSET_DIR"/* --clobber
+run_gh release edit "$TAG" --draft=false --latest
