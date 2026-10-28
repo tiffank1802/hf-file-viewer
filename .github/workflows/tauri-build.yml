@@ -32,7 +32,7 @@ jobs:
   # 1. macOS (Universal Binary : Apple Silicon arm64 + Intel x86_64 -> .dmg/.app)
   # ---------------------------------------------------------------------------
   build-macos:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[publish-initial-app]')
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[test-release-permissions]')
     name: macOS (Universal .dmg & .app)
     runs-on: macos-latest
     steps:
@@ -80,7 +80,7 @@ jobs:
   # 2. iOS (Physical Device .ipa + Simulator arm64 .app.zip)
   # ---------------------------------------------------------------------------
   build-ios:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[publish-initial-app]')
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[test-release-permissions]')
     name: iOS (.ipa & Simulator .app)
     runs-on: macos-latest
     steps:
@@ -148,7 +148,7 @@ jobs:
   # 3. Android (Universal Signed .apk + Play Store .aab)
   # ---------------------------------------------------------------------------
   build-android:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[publish-initial-app]')
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[test-release-permissions]')
     name: Android (.apk & .aab)
     runs-on: ubuntu-24.04
     steps:
@@ -269,7 +269,7 @@ jobs:
   # 4. Windows (x64 NSIS -setup.exe & WiX .msi en français)
   # ---------------------------------------------------------------------------
   build-windows:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[publish-initial-app]')
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[test-release-permissions]')
     name: Windows (x64 .exe & .msi)
     runs-on: windows-latest
     steps:
@@ -349,34 +349,25 @@ jobs:
           RELEASE_TARGET: ${{ github.sha }}
         run: bash scripts/publish-app-release.sh release-assets
 
-  # Amorçage ponctuel : reprend les binaires déjà validés par le run ci-dessous.
-  # Ce job sera retiré après la publication initiale ; les versions suivantes
-  # passent exclusivement par le job publish-release et un tag de version.
-  publish-initial-release:
-    name: Publish previously verified initial build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/arena/f912a7b4-hf-file-viewer' && contains(github.event.head_commit.message, '[publish-initial-app]')
+  # Contrôle temporaire des permissions de création de release du runner.
+  verify-draft-creation:
+    name: Verify draft release creation
+    if: github.event_name == 'push' && github.ref == 'refs/heads/arena/f912a7b4-hf-file-viewer' && contains(github.event.head_commit.message, '[test-release-permissions]')
     runs-on: ubuntu-24.04
     permissions:
-      actions: read
       contents: write
     steps:
       - uses: actions/checkout@v4
-
-      - name: Download artifacts from verified run 40723205006
-        uses: actions/download-artifact@v4
-        with:
-          path: collected-artifacts
-          pattern: enise-docs-*
-          merge-multiple: true
-          run-id: 40723205006
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Prepare stable filenames and SHA-256 checksums
-        run: node scripts/prepare-app-release.mjs collected-artifacts release-assets
-
-      - name: Publish the release after every upload succeeds
+      - name: Create and remove a private draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: v1.0.0
-          RELEASE_TARGET: ffc68d4974038775457514d125192c21389508b1
-        run: bash scripts/publish-app-release.sh release-assets
+        run: |
+          TEST_TAG="ci-draft-${GITHUB_RUN_ID}"
+          if output=$(gh release create "$TEST_TAG" --target ffc68d4974038775457514d125192c21389508b1 --draft --title "CI permissions test" --notes "Draft created temporarily for CI verification." 2>&1); then
+            echo "$output"
+            gh release delete "$TEST_TAG" --yes
+          else
+            echo "$output"
+            echo "::error::Draft creation failed: ${output//$'\n'/ }"
+            exit 1
+          fi
