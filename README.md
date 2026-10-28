@@ -605,6 +605,23 @@ Le dépôt inclut une enveloppe **Tauri v2** (`src-tauri/`) permettant de compil
 - Pipeline CI parallèle multi-OS : [`.github/workflows/tauri-build.yml`](./.github/workflows/tauri-build.yml)
 - Scripts npm : `npm run tauri:dev`, `npm run tauri:build`, `npm run tauri:build:macos`, `npm run tauri:build:windows`, `npm run tauri:android:init && npm run tauri:android:build`, `npm run tauri:ios:init && npm run tauri:ios:build`.
 
+### Télécharger l’application depuis le site
+
+Sur le site, cliquer sur **Application** dans l’en-tête, ou sur **Installer** dans la navigation mobile, puis choisir son système. L’adresse `/?download=1` ouvre directement le panneau de téléchargement. Les liens ci-dessous pointent aussi vers la dernière **GitHub Release publique** : ils ne nécessitent pas de compte GitHub.
+
+| Plateforme | Téléchargement |
+|---|---|
+| Windows 10/11 x64 | [Installateur .exe](https://github.com/tiffank1802/hf-file-viewer/releases/latest/download/ENISE-Docs-windows-x64-setup.exe) · [paquet .msi](https://github.com/tiffank1802/hf-file-viewer/releases/latest/download/ENISE-Docs-windows-x64.msi) |
+| macOS 11+ Intel / Apple Silicon | [Image .dmg](https://github.com/tiffank1802/hf-file-viewer/releases/latest/download/ENISE-Docs-macos-universal.dmg) |
+| Android 7+ | [APK universel](https://github.com/tiffank1802/hf-file-viewer/releases/latest/download/ENISE-Docs-android-universal.apk) |
+| iOS / iPadOS 14+ | [IPA non signé](https://github.com/tiffank1802/hf-file-viewer/releases/latest/download/ENISE-Docs-ios-unsigned.ipa) : **signature et profil Apple requis avant installation** |
+
+Ces fichiers sont des **versions de test**, pas des applications distribuées sur les stores. Windows et macOS peuvent signaler l’absence de signature officielle ou de notarisation. L’APK Android est installé hors Play Store ; si la clé de signature change entre deux versions, il faudra éventuellement désinstaller la précédente. Les [empreintes SHA-256](https://github.com/tiffank1802/hf-file-viewer/releases/latest/download/SHA256SUMS.txt) permettent de contrôler l’intégrité des fichiers.
+
+Les artefacts temporaires d’un run Actions restent accessibles aux personnes autorisées depuis sa page, mais les téléchargements du site utilisent les **assets publics d’une release**, sans expiration des artefacts Actions. Lorsqu’un mainteneur pousse un tag stable `vMAJEUR.MINEUR.PATCH`, le workflow attend les quatre builds, vérifie les fichiers et les publie ensemble dans une nouvelle release. Il ne remplace jamais une release déjà publiée. Pour utiliser un miroir HTTPS, définir les variables publiques de build `VITE_APP_RELEASE_BASE_URL` et `VITE_APP_RELEASE_PAGE_URL` (voir `.env.example`) et y déposer tous les fichiers aux mêmes noms.
+
+Les changements frontend doivent ensuite être déployés sur le site, par exemple avec `npm run deploy` depuis un environnement autorisé sur Cloudflare.
+
 ## Structure
 
 ```text

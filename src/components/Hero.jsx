@@ -3,6 +3,7 @@ import {
   FiBookOpen,
   FiCheck,
   FiCloud,
+  FiDownload,
   FiFileText,
   FiFolder,
   FiHeadphones,
@@ -10,6 +11,8 @@ import {
   FiShield,
 } from 'react-icons/fi';
 import { formatCount } from '../utils/files';
+import { detectClientPlatform, getPlatformById } from '../utils/appDownloads';
+import { isTauriRuntime } from '../utils/runtime';
 
 function indexStat(catalog, readyLabel) {
   if (!catalog || catalog.loading) return { value: '…', label: 'Indexation…' };
@@ -19,9 +22,12 @@ function indexStat(catalog, readyLabel) {
   return { value: formatCount(catalog.totalFiles), label: readyLabel };
 }
 
-export default function Hero({ onOpenSearch, navigate, catalog, spaceCount = null }) {
+export default function Hero({ onOpenSearch, onOpenDownload, navigate, catalog, spaceCount = null }) {
   const totalStat = indexStat(catalog, 'ressources indexées');
   const spacesStat = Number.isFinite(spaceCount) ? formatCount(spaceCount) : '—';
+  const inTauri = isTauriRuntime();
+  const clientPlatform = detectClientPlatform();
+  const recommended = getPlatformById(clientPlatform.id);
   return (
     <section className="hero-section" aria-labelledby="hero-title">
       <div className="hero-copy">
@@ -49,6 +55,16 @@ export default function Hero({ onOpenSearch, navigate, catalog, spaceCount = nul
         <div className="hero-trust" aria-label="Infrastructure technique">
           <span><FiCloud aria-hidden="true" /> Stockage Hugging Face</span>
           <span><FiShield aria-hidden="true" /> Cache Cloudflare</span>
+          {!inTauri && onOpenDownload && (
+            <button type="button" className="hero-app-pill" onClick={onOpenDownload}>
+              <FiDownload aria-hidden="true" />
+              <span>
+                {clientPlatform.detected
+                  ? `Installer sur ${recommended.shortLabel}`
+                  : 'Application Windows · Mac · Mobile'}
+              </span>
+            </button>
+          )}
         </div>
 
         <dl className="hero-stats">

@@ -1557,3 +1557,382 @@ body.reader-open { overflow: hidden; }
   }
 }
 
+/* Boutons d’accès au centre de téléchargement de l’application (Web -> Desktop/Mobile) */
+.app-download-header-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 40px;
+  padding: 0 13px;
+  border: 1px solid rgba(0, 122, 94, 0.22);
+  border-radius: 12px;
+  background: var(--green-pale);
+  color: var(--green-dark);
+  font-size: 0.74rem;
+  font-weight: 750;
+  cursor: pointer;
+  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.app-download-header-btn:hover {
+  transform: translateY(-1px);
+  background: #daeee5;
+  border-color: rgba(0, 122, 94, 0.38);
+  box-shadow: 0 8px 18px rgba(0, 87, 69, 0.12);
+}
+
+.app-download-header-btn svg {
+  font-size: 0.95rem;
+}
+
+.mobile-download-link {
+  display: none;
+}
+
+.hero-app-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 1px solid rgba(0, 122, 94, 0.22);
+  border-radius: 999px;
+  background: rgba(231, 243, 238, 0.85);
+  color: var(--green-dark);
+  font-size: 0.67rem;
+  font-weight: 750;
+  cursor: pointer;
+  transition: background 160ms ease, transform 160ms ease, border-color 160ms ease;
+}
+
+.hero-app-pill:hover {
+  background: #d7ede3;
+  border-color: rgba(0, 122, 94, 0.4);
+  transform: translateY(-1px);
+}
+
+.sidebar-utility .sidebar-app-badge {
+  background: var(--green-pale);
+  color: var(--green-dark);
+}
+
+.footer-download-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 0.66rem;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+}
+
+.footer-download-link:hover {
+  color: var(--yellow);
+}
+
+/* Modale de téléchargement multi-plateforme (Windows, macOS, Android, iOS) */
+.app-download-backdrop {
+  z-index: 560;
+  align-items: center;
+  padding: 20px;
+}
+
+.app-download-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: min(640px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  padding: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  border-radius: var(--radius-lg);
+  background: rgba(252, 254, 252, 0.96);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: var(--shadow-lg);
+  animation: preview-in 220ms ease both;
+}
+
+.app-download-head {
+  display: grid;
+  gap: 7px;
+  padding-right: 40px;
+}
+
+.app-download-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--green-pale);
+  color: var(--green-dark);
+  font-size: 0.63rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.app-download-head h2 {
+  font-size: 1.38rem;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+}
+
+.app-download-head p {
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  line-height: 1.58;
+}
+
+.app-download-featured {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(0, 122, 94, 0.18);
+  border-radius: var(--radius-md);
+  background: linear-gradient(145deg, rgba(231, 243, 238, 0.7), rgba(255, 255, 255, 0.92));
+}
+
+.app-download-featured-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.app-download-os-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: var(--green-pale);
+  color: var(--green-dark);
+}
+
+.app-download-os-icon.is-featured {
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+  background: linear-gradient(135deg, var(--green), var(--green-dark));
+  color: #fff;
+  box-shadow: 0 10px 22px rgba(0, 87, 69, 0.22);
+}
+
+.app-download-featured-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-download-featured-title strong {
+  font-size: 0.98rem;
+  color: var(--ink);
+}
+
+.app-download-detected-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--yellow-pale);
+  color: #7b5d0b;
+  font-size: 0.6rem;
+  font-weight: 800;
+}
+
+.app-download-featured-info small {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+}
+
+.app-download-featured-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.app-download-primary-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 10px 18px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--green), var(--green-dark));
+  box-shadow: 0 12px 26px rgba(0, 87, 69, 0.24);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 800;
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.app-download-primary-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 30px rgba(0, 87, 69, 0.3);
+}
+
+.app-download-subactions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.app-download-secondary-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--ink-soft);
+  font-size: 0.68rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.app-download-secondary-link:hover {
+  border-color: rgba(0, 122, 94, 0.32);
+  color: var(--green-dark);
+}
+
+.app-download-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(0, 87, 69, 0.1);
+  color: var(--ink-soft);
+  font-size: 0.68rem;
+  line-height: 1.52;
+}
+
+.app-download-note svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--green);
+}
+
+.app-download-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.app-download-tile {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  text-align: left;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+
+.app-download-tile:hover {
+  border-color: rgba(0, 122, 94, 0.3);
+  box-shadow: var(--shadow-sm);
+}
+
+.app-download-tile.is-active {
+  border-color: var(--green);
+  background: rgba(231, 243, 238, 0.38);
+}
+
+.app-download-tile-meta {
+  min-width: 0;
+}
+
+.app-download-tile-meta strong {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--ink);
+}
+
+.app-download-tile-meta small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-faint);
+  font-size: 0.63rem;
+}
+
+.app-download-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.app-download-footer a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-soft);
+}
+
+.app-download-footer a:hover {
+  color: var(--green-dark);
+}
+
+@media (max-width: 980px) {
+  .app-download-header-btn span {
+    display: none;
+  }
+  .app-download-header-btn {
+    padding: 0 11px;
+  }
+  .desktop-nav.mobile-open .mobile-download-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--green-dark);
+    font-weight: 800;
+  }
+}
+
+@media (max-width: 700px) {
+  .app-download-header-btn {
+    display: none;
+  }
+  .mobile-bottom-nav.has-app-tab {
+    grid-template-columns: repeat(4, 1fr);
+    width: min(calc(100% - 20px), 420px);
+  }
+  .app-download-backdrop {
+    padding: 12px;
+    align-items: flex-end;
+  }
+  .app-download-card {
+    padding: 20px 18px;
+    max-height: 88vh;
+    border-radius: 22px;
+  }
+  .app-download-grid {
+    grid-template-columns: 1fr;
+  }
+}
+

@@ -52,10 +52,10 @@ Cinq problèmes concrets apparaîtraient avec un simple encapsulage naïf ; chac
 
 | Plateforme | Environnement de compilation | Cibles / Architectures | Artefacts produits |
 |---|---|---|---|
-| **macOS** | macOS (`macos-latest` + Xcode) | Universal Binary (`universal-apple-darwin` : Apple Silicon `arm64` + Intel `x86_64`), macOS 11.0+ | `ENISE Docs_1.0.0_universal.dmg`, `ENISE-Docs-macos-universal.app.tar.gz` |
-| **iOS** | macOS (`macos-latest` + Xcode + XcodeGen) | `aarch64-apple-ios` (iPhone / iPad, iOS 14.0+) + `iphonesimulator` (`arm64`) | `ENISE-Docs-ios-unsigned.ipa` (ou signé si secrets Apple présents), `ENISE-Docs-ios-simulator-arm64.app.zip` |
-| **Android** | Linux (`ubuntu-24.04` + JDK 21 + SDK 37 + NDK 27) | `aarch64` (`arm64-v8a`), `armv7` (`armeabi-v7a`), `x86_64`, `i686` (`minSdkVersion` 24 / Android 7.0+) | `ENISE-Docs-android-universal.apk` (aligné & signé, prêt à installer), `ENISE-Docs-android-universal.aab` (Google Play) |
-| **Windows** | Windows (`windows-latest` + MSVC + WiX + NSIS) | `x86_64-pc-windows-msvc` (installateur en français + bootstrapper WebView2 auto) | `ENISE Docs_1.0.0_x64-setup.exe` (NSIS), `ENISE Docs_1.0.0_x64_fr-FR.msi` (WiX) |
+| **macOS** | macOS (`macos-latest` + Xcode) | Universal Binary (`universal-apple-darwin` : Apple Silicon `arm64` + Intel `x86_64`), macOS 11.0+ | `ENISE-Docs-macos-universal.dmg`, `ENISE-Docs-macos-universal.app.tar.gz` |
+| **iOS** | macOS (`macos-latest` + Xcode + XcodeGen) | `aarch64-apple-ios` (iPhone / iPad, iOS 14.0+) + `iphonesimulator` (`arm64`) | `ENISE-Docs-ios-unsigned.ipa` (non signé), `ENISE-Docs-ios-simulator-arm64.app.zip` |
+| **Android** | Linux (`ubuntu-24.04` + JDK 21 + SDK 37 + NDK 27) | `aarch64` (`arm64-v8a`), `armv7` (`armeabi-v7a`), `x86_64`, `i686` (`minSdkVersion` 24 / Android 7.0+) | `ENISE-Docs-android-universal.apk` (aligné & signé), `ENISE-Docs-android-universal.aab` (signature requise avant distribution) |
+| **Windows** | Windows (`windows-latest` + MSVC + WiX + NSIS) | `x86_64-pc-windows-msvc` (installateur en français + bootstrapper WebView2 auto) | `ENISE-Docs-windows-x64-setup.exe` (NSIS), `ENISE-Docs-windows-x64.msi` (WiX) |
 
 > **Pourquoi un pipeline CI multi-OS est indispensable :** Apple impose contractuellement et techniquement **macOS + Xcode** pour compiler les cibles **macOS** (`.dmg`) et **iOS** (`.ipa` / `WKWebView` / SDK iPhoneOS). Le workflow [`.github/workflows/tauri-build.yml`](../.github/workflows/tauri-build.yml) orchestre en parallèle les 3 runners natifs (`macos-latest`, `ubuntu-latest`, `windows-latest`) et publie les installateurs prêts à télécharger.
 
@@ -128,15 +128,17 @@ Sous GitHub Actions, lancez **Actions → Tauri Multiplatform Build → Run work
 
 ---
 
-## 6. Signature de code et distribution en production (optionnel)
+## 6. Téléchargement et signature
 
-Sans secret configuré, le workflow produit déjà des installateurs fonctionnels :
-- **Windows** : `.exe` / `.msi` installables (écran SmartScreen « Informations complémentaires → Exécuter quand même » tant qu’aucun certificat EV/OV n’est attaché).
-- **macOS** : `.dmg` signé ad-hoc (au premier lancement hors notarisation Apple : `xattr -cr "/Applications/ENISE Docs.app"`).
-- **Android** : `.apk` aligné (`zipalign`) et signé v1/v2/v3, immédiatement installable sur tout appareil Android.
-- **iOS** : `.ipa` non signé installable via **AltStore / SideStore / Sideloadly** avec un simple identifiant Apple gratuit, plus le `.app.zip` pour **Simulateur iOS**.
+Le site propose **Application** (ou **Installer** sur mobile), avec des liens vers les assets publics de la [dernière release GitHub](https://github.com/tiffank1802/hf-file-viewer/releases/latest). `/?download=1` ouvre directement cette fenêtre. Après modification du site, le frontend doit être redéployé (par exemple `npm run deploy` avec un accès Cloudflare). Les artefacts Actions, eux, peuvent expirer et nécessitent généralement une connexion ; ils ne sont pas utilisés comme liens publics.
 
-Pour activer automatiquement la signature officielle App Store / Notarisation macOS / Google Play dans GitHub Actions (**Settings → Secrets and variables → Actions**) :
+Lorsqu’un mainteneur pousse un tag stable `vMAJEUR.MINEUR.PATCH`, le workflow compile les quatre plateformes puis, seulement si tous les jobs réussissent, prépare des noms de fichiers stables, génère `SHA256SUMS.txt` et publie tous les fichiers ensemble. Une release existante ne sera pas écrasée. Pour un autre hébergement, `VITE_APP_RELEASE_BASE_URL` et `VITE_APP_RELEASE_PAGE_URL` peuvent désigner un miroir HTTPS contenant les mêmes noms de fichiers.
 
-- **Apple (macOS & iOS)** : `APPLE_CERTIFICATE` (`.p12` en base64), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD` (mot de passe d’application), `APPLE_TEAM_ID`, et pour iOS App Store : `APPLE_PROVISIONING_PROFILE_BASE64`.
-- **Android (Google Play)** : `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`.
+**Limites des versions actuelles, à ne pas confondre avec une publication en production :**
+
+- **Windows** : `.exe` / `.msi` non signés par un éditeur vérifié ; SmartScreen peut afficher un avertissement.
+- **macOS** : la version n’est pas notariée Apple ; Gatekeeper peut bloquer l’ouverture.
+- **Android** : l’APK est signé pour l’installation hors Play Store. En l’absence de secrets, une clé de test différente est générée à chaque build : une mise à jour peut donc nécessiter une désinstallation. Conserver une clé de distribution stable est indispensable ; l’AAB nécessite aussi une signature adaptée avant une publication Play Store.
+- **iOS** : l’IPA est **non signé** et ne peut pas être installé directement sur un appareil. Une signature et un profil Apple compatibles sont nécessaires ; le `.app.zip` est réservé au simulateur sur Mac Apple Silicon.
+
+Le workflow utilise les secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` et `ANDROID_KEY_PASSWORD` pour signer l’APK s’ils sont définis. Pour distribuer sur les stores et éviter les avertissements, il reste à implémenter et vérifier la signature/notarisation macOS, la signature et le provisioning iOS, la signature de l’AAB Android et, si souhaité, la signature Windows. Le seul ajout de secrets Apple ne suffit pas à activer ces étapes.

@@ -63,7 +63,8 @@ jobs:
       - name: Collect macOS artifacts
         run: |
           mkdir -p artifacts
-          cp src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg artifacts/
+          DMG_FILE=$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -type f -name "*.dmg" | head -n 1)
+          cp "$DMG_FILE" artifacts/ENISE-Docs-macos-universal.dmg
           (cd src-tauri/target/universal-apple-darwin/release/bundle/macos && tar -czf "$GITHUB_WORKSPACE/artifacts/ENISE-Docs-macos-universal.app.tar.gz" "ENISE Docs.app")
           ls -lh artifacts/
 
@@ -129,10 +130,9 @@ jobs:
           cp "$IPA_FILE" artifacts/ENISE-Docs-ios-unsigned.ipa
 
           npx tauri ios build --target aarch64-sim --no-sign --ci
-          SIM_APP=$(find src-tauri/gen/apple/build -maxdepth 3 -type d -name "*.app" | head -n 1)
-          if [ -n "$SIM_APP" ]; then
-            (cd "$(dirname "$SIM_APP")" && zip -qry "$GITHUB_WORKSPACE/artifacts/ENISE-Docs-ios-simulator-arm64.app.zip" "$(basename "$SIM_APP")")
-          fi
+          SIM_APP=$(find src-tauri/gen/apple/build/arm64-sim -maxdepth 1 -type d -name "*.app" | head -n 1)
+          test -n "$SIM_APP" || { echo "Application du simulateur introuvable" >&2; exit 1; }
+          (cd "$(dirname "$SIM_APP")" && zip -qry "$GITHUB_WORKSPACE/artifacts/ENISE-Docs-ios-simulator-arm64.app.zip" "$(basename "$SIM_APP")")
           ls -lh artifacts/
 
       - name: Upload iOS artifacts
@@ -298,8 +298,10 @@ jobs:
         shell: bash
         run: |
           mkdir -p artifacts
-          cp src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe artifacts/
-          cp src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi artifacts/
+          EXE_FILE=$(find src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -type f -name "*.exe" | head -n 1)
+          MSI_FILE=$(find src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi -type f -name "*.msi" | head -n 1)
+          cp "$EXE_FILE" artifacts/ENISE-Docs-windows-x64-setup.exe
+          cp "$MSI_FILE" artifacts/ENISE-Docs-windows-x64.msi
           ls -lh artifacts/
 
       - name: Upload Windows artifacts
@@ -308,3 +310,69 @@ jobs:
           name: enise-docs-windows-x64
           path: artifacts/*
           if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 5. Publication des tags vMAJEUR.MINEUR.PATCH : aucun push de branche ne
+  #    remplace une release publique. Le brouillon n'est publié qu'une fois
+  #    tous les fichiers et leurs empreintes téléversés.
+  # ---------------------------------------------------------------------------
+  publish-release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-24.04
+    needs: [build-macos, build-ios, build-android, build-windows]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download the four build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: collected-artifacts
+          pattern: enise-docs-*
+          merge-multiple: true
+
+      - name: Prepare stable filenames and SHA-256 checksums
+        run: node scripts/prepare-app-release.mjs collected-artifacts release-assets
+
+      - name: Publish the release after every upload succeeds
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TARGET: ${{ github.sha }}
+        run: bash scripts/publish-app-release.sh release-assets
+
+  # Amorçage ponctuel : reprend les binaires déjà validés par le run ci-dessous.
+  # Ce job sera retiré après la publication initiale ; les versions suivantes
+  # passent exclusivement par le job publish-release et un tag de version.
+  publish-initial-release:
+    name: Publish previously verified initial build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/arena/f912a7b4-hf-file-viewer' && contains(github.event.head_commit.message, '[publish-initial-app]')
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts from verified run 40723205006
+        uses: actions/download-artifact@v4
+        with:
+          path: collected-artifacts
+          pattern: enise-docs-*
+          merge-multiple: true
+          run-id: 40723205006
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare stable filenames and SHA-256 checksums
+        run: node scripts/prepare-app-release.mjs collected-artifacts release-assets
+
+      - name: Publish the release after every upload succeeds
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: v1.0.0
+          RELEASE_TARGET: ffc68d4974038775457514d125192c21389508b1
+        run: bash scripts/publish-app-release.sh release-assets
