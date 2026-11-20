@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { FiEdit3, FiX } from 'react-icons/fi';
+import { geometryLabel } from './pdfGeometry';
 
 const COLORS = [
   { id: 'yellow', label: 'Jaune' },
@@ -9,6 +10,7 @@ const COLORS = [
 ];
 
 export default function AnnotationComposer({ selection, saving, error, onSave, onClose }) {
+  const shape = geometryLabel(selection?.anchor);
   const [body, setBody] = useState('');
   const [color, setColor] = useState('yellow');
   const textareaRef = useRef(null);
@@ -50,12 +52,12 @@ export default function AnnotationComposer({ selection, saving, error, onSave, o
     }}>
       <section ref={dialogRef} className="reader-note-composer" role="dialog" aria-modal="true" aria-labelledby="reader-note-title">
         <header>
-          <span><FiEdit3 aria-hidden="true" /><strong id="reader-note-title">Ajouter une note privée</strong></span>
+          <span><FiEdit3 aria-hidden="true" /><strong id="reader-note-title">{shape ? (shape === 'Zone' ? 'Enregistrer une zone privée' : 'Enregistrer un tracé privé') : 'Ajouter une note privée'}</strong></span>
           <button type="button" onClick={onClose} aria-label="Fermer"><FiX aria-hidden="true" /></button>
         </header>
-        <blockquote>{selection?.anchor?.quote}</blockquote>
+        <blockquote>{shape ? `${shape} · page ${selection.anchor.page}` : selection?.anchor?.quote}</blockquote>
         <label>
-          <span>Note</span>
+          <span>{shape ? 'Note facultative' : 'Note'}</span>
           <textarea
             ref={textareaRef}
             value={body}
@@ -67,7 +69,7 @@ export default function AnnotationComposer({ selection, saving, error, onSave, o
           <small>{Array.from(body).length} / 4 000</small>
         </label>
         <fieldset>
-          <legend>Couleur du surlignage</legend>
+          <legend>{shape ? 'Couleur' : 'Couleur du surlignage'}</legend>
           {COLORS.map((item) => (
             <label key={item.id} className={`reader-color color-${item.id}`} title={item.label}>
               <input type="radio" name="annotation-color" value={item.id} checked={color === item.id} onChange={() => setColor(item.id)} />
@@ -80,9 +82,9 @@ export default function AnnotationComposer({ selection, saving, error, onSave, o
           <button type="button" onClick={onClose}>Annuler</button>
           <button
             type="button"
-            disabled={saving || !body.trim()}
+            disabled={saving || (!shape && !body.trim())}
             onClick={() => void onSave({ body: body.trim(), color })}
-          >{saving ? 'Enregistrement…' : 'Enregistrer la note'}</button>
+          >{saving ? 'Enregistrement…' : shape ? 'Enregistrer l’annotation' : 'Enregistrer la note'}</button>
         </footer>
       </section>
     </div>

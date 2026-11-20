@@ -39,7 +39,7 @@ jobs:
       - name: Reader browser tests (mocked API)
         run: npm run test:e2e
       - name: Reader integration (real Go, simulated services)
-        run: npm run test:pdf-integration
+        run: npm run test:pdf-integration -- --reporter=list,github
       - name: Upload failure traces
         if: failure()
         uses: actions/upload-artifact@v7

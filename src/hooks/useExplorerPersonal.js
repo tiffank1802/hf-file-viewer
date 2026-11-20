@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { EMPTY_PERSONAL, movePinnedFolder, normalizeFilters, normalizePersonal, recordExplorerRecent, TAGS, toggleExplorerTag } from '../utils/explorerPersonal.js';
+import { attachExplorerTag, EMPTY_PERSONAL, MAX_CUSTOM_TAGS, movePinnedFolder, normalizeFilters, normalizePersonal, recordExplorerRecent, TAGS, toggleExplorerTag } from '../utils/explorerPersonal.js';
 
 function readPersonal(key) {
   try {
@@ -29,14 +29,19 @@ export function useExplorerPersonal(userId) {
     });
   }, [key]);
   const record = useCallback((item) => update((base) => ({ recent: recordExplorerRecent(base.recent, item) })), [update]);
-  const toggleTag = useCallback((path, tag) => update((base) => ({ labels: toggleExplorerTag(base.labels, path, tag) })), [update]);
+  const toggleTag = useCallback((path, tag) => update((base) => ({ labels: toggleExplorerTag(base.labels, path, tag, [...TAGS, ...base.customTags]) })), [update]);
+  const attachTag = useCallback((path, label, color) => {
+    const id = `custom-${crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+    update((base) => attachExplorerTag(base, path, { id, label, color }));
+  }, [update]);
   const saveSearch = useCallback((label, query, filters) => {
     const id = `${Date.now()}-${Math.random()}`;
-    update((base) => ({ searches: [{ id, label: label.trim().slice(0, 60), query, filters: normalizeFilters(filters) }, ...base.searches].slice(0, 20) }));
+    update((base) => ({ searches: [{ id, label: label.trim().slice(0, 60), query, filters: normalizeFilters(filters, [...TAGS, ...base.customTags]) }, ...base.searches].slice(0, 20) }));
   }, [update]);
   const removeSearch = useCallback((id) => update((base) => ({ searches: base.searches.filter((entry) => entry.id !== id) })), [update]);
   const movePinned = useCallback((paths, from, to) => update(() => ({ pinnedOrder: movePinnedFolder(paths, from, to) })), [update]);
   const labels = useMemo(() => new Map(data.labels), [data.labels]);
-  const tagsFor = useCallback((path) => TAGS.map((tag) => ({ ...tag, active: labels.get(path)?.includes(tag.id) ?? false })), [labels]);
-  return { key, recent: data.recent, searches: data.searches, labels, tagsFor, toggleTag, record, saveSearch, removeSearch, pinnedOrder: data.pinnedOrder, movePinned };
+  const tags = useMemo(() => [...TAGS, ...data.customTags], [data.customTags]);
+  const tagsFor = useCallback((path) => tags.map((tag) => ({ ...tag, active: labels.get(path)?.includes(tag.id) ?? false })), [labels, tags]);
+  return { key, recent: data.recent, searches: data.searches, labels, tags, tagsFor, toggleTag, attachTag, canCreateTag: data.customTags.length < MAX_CUSTOM_TAGS, record, saveSearch, removeSearch, pinnedOrder: data.pinnedOrder, movePinned };
 }

@@ -1091,8 +1091,6 @@
   resize: none;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: white;
-  color: var(--ink);
 }
 .library-chat-form button { align-self: end; width: 42px; height: 42px; border-radius: 14px; background: var(--green); color: white; cursor: pointer; }
 .library-chat-form button:disabled, .library-chat-suggestions button:disabled { opacity: 0.45; cursor: default; }
@@ -1146,8 +1144,8 @@ body.reader-open { overflow: hidden; }
 .reader-header .reader-mode-switch button { width: auto; height: 28px; gap: 4px; padding: 0 8px; border: 0; border-radius: 7px; background: transparent; font: inherit; font-size: .57rem; font-weight: 750; }
 .reader-header .reader-mode-switch button.active { background: white; box-shadow: 0 1px 5px rgba(24,58,46,.12); }
 .reader-structured-label { display: inline-flex; align-items: center; gap: 5px; color: var(--green-deep); font-size: .6rem; font-weight: 750; }
-.reader-page-controls input { width: 52px; height: 31px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); font: inherit; font-size: 0.7rem; text-align: center; }
-.reader-page-controls > span { min-width: 38px; color: var(--ink-faint); font-size: 0.64rem; text-align: center; }
+.reader-page-controls input { width: 52px; height: 31px; border: 1px solid #c6ddd1; border-radius: 8px; font: inherit; font-size: 0.7rem; text-align: center; }
+.reader-page-controls > span { min-width: 38px; color: #536c61; font-size: 0.64rem; text-align: center; }
 .reader-page-controls button { width: 30px; height: 30px; }
 .reader-body { display: grid; min-height: 0; grid-template-columns: minmax(0, 1fr); }
 .document-workspace.sidebar-open .reader-body { grid-template-columns: 246px minmax(0, 1fr); }
@@ -1187,7 +1185,7 @@ body.reader-open { overflow: hidden; }
 .reader-highlight.annotation.color-pink { background: rgba(235, 105, 165, 0.3); }
 .reader-highlight.citation { background: rgba(39, 174, 130, 0.3); animation: reader-citation-pulse 1.2s ease 2; }
 .reader-highlight-page { position: absolute; inset: 5px; border: 3px solid rgba(0, 122, 94, 0.62); border-radius: 5px; animation: reader-citation-pulse 1.2s ease 2; }
-.reader-page-number { position: absolute; z-index: 4; right: 8px; bottom: 6px; padding: 2px 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.84); color: #66746f; font-size: 0.54rem; pointer-events: none; }
+.reader-page-number { position: absolute; z-index: 4; right: 8px; bottom: 6px; padding: 2px 6px; border-radius: 999px; background: #fcfffd; color: #193c32; font-size: 0.54rem; pointer-events: none; }
 .reader-page-error { position: absolute; z-index: 5; inset: 45% 10% auto; padding: 10px; border-radius: 8px; background: var(--red-pale); color: var(--red); text-align: center; }
 .reader-pdf-loading, .reader-pdf-error { display: grid; place-items: center; align-content: center; gap: 10px; min-height: 60vh; color: var(--ink-faint); text-align: center; }
 .reader-pdf-loading > span { width: 24px; height: 24px; border: 3px solid rgba(0, 122, 94, 0.16); border-top-color: var(--green); border-radius: 50%; animation: spin 0.8s linear infinite; }
@@ -1257,10 +1255,9 @@ body.reader-open { overflow: hidden; }
 .reader-thinking svg { animation: spin 1s linear infinite; }
 .reader-answer-citations { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .reader-unverified-citation { color: var(--red); font-size: 0.58rem; }
-.reader-assistant-form { display: grid; grid-template-columns: minmax(0, 1fr) 34px; gap: 7px; margin: 8px 10px 10px; padding: 7px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+.reader-assistant-form { display: grid; grid-template-columns: minmax(0, 1fr) 34px; gap: 7px; margin: 8px 10px 10px; padding: 7px; border: 1px solid var(--line); border-radius: 12px; background: #f0f7f4; }
 .reader-assistant-form:focus-within { border-color: rgba(0, 122, 94, 0.36); box-shadow: 0 0 0 3px rgba(0, 122, 94, 0.08); }
-.reader-assistant-form textarea { resize: none; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-size: 0.66rem; line-height: 1.4; }
-.reader-assistant-form textarea:disabled { color: var(--ink-faint); cursor: not-allowed; }
+.reader-assistant-form textarea { resize: none; border: 1px solid #c6ddd1; border-radius: 8px; outline: 0; padding: 7px 9px; font: inherit; font-size: 0.66rem; line-height: 1.4; }
 .reader-assistant-form button { display: grid; width: 32px; height: 32px; place-items: center; align-self: end; border: 0; border-radius: 9px; background: var(--green-deep); color: white; cursor: pointer; }
 .reader-assistant-form button:disabled { opacity: 0.38; cursor: default; }
 .reader-annotation-list { display: grid; align-content: start; gap: 8px; padding: 2px 10px 24px; }
@@ -1339,7 +1336,6 @@ body.reader-open { overflow: hidden; }
   .reader-pdf-pages { padding: 12px 8px 74px; }
   .structured-document { width: calc(100% - 16px); margin: 8px auto 78px; padding: 22px 18px; }
   .structured-block { font-size: .84rem; }
-  .reader-selection-toolbar { right: 8px; left: 8px !important; max-width: calc(100vw - 16px); overflow-x: auto; top: auto !important; bottom: 78px; justify-content: flex-start; }
 }
 
 /* R6 — durcissement, accessibilité, reprise réseau et panneaux mobiles */
@@ -1376,7 +1372,7 @@ body.reader-open { overflow: hidden; }
   .reader-header-actions button:last-child { display: none; }
   .reader-title > svg { display: none; }
   .reader-network-status { top: 58px; font-size: .62rem; }
-  .reader-panel-backdrop { position: fixed; z-index: 5055; inset: 50px 0 0; display: block; width: 100%; border: 0; background: rgba(13,35,28,.32); backdrop-filter: blur(1px); }
+  .reader-panel-backdrop { position: fixed; z-index: 5055; inset: 50px 0 0; display: block; width: 100%; border: 0; background: rgba(247, 252, 249, .35); }
   .reader-sidebar { position: fixed; z-index: 5060; top: 50px; bottom: 70px; left: 0; display: block; width: min(88vw, 350px); border-right: 1px solid var(--line); box-shadow: 12px 0 36px rgba(20,48,39,.24); }
   .reader-sidebar > .reader-panel-close { position: sticky; z-index: 2; top: 7px; display: grid; width: 38px; height: 38px; margin: 7px 8px 0 auto; place-items: center; border: 0; border-radius: 9px; background: #eef2f0; color: var(--ink-soft); cursor: pointer; }
   .reader-assistant-head .reader-panel-close { display: grid; width: 40px; height: 40px; place-items: center; border: 0; border-radius: 9px; background: #eef2f0; color: var(--ink-soft); cursor: pointer; }
@@ -1829,3 +1825,101 @@ body.reader-open { overflow: hidden; }
 .app-update-banner button + button { background: white; color: var(--green-dark); border: 1px solid var(--line); }
 .app-update-banner button:disabled { opacity: .6; cursor: wait; }
 @media (max-width: 700px) { .app-update-banner { max-width: calc(100% - 90px); bottom: calc(88px + env(safe-area-inset-bottom)); } }
+
+.app-update-banner > div { flex-wrap: wrap; }
+.app-update-banner small { color: var(--ink-soft); }
+@media (max-width: 700px) {
+  .update-check-button span { display: none; }
+  .update-check-button { display: inline-flex; }
+}
+
+/* Light Liquid Glass surfaces never dim or blur the PDF behind the assistant. */
+.document-workspace {
+  --reader-glass: rgba(252, 255, 254, .88);
+  --reader-edge: rgba(97, 135, 121, .23);
+  --reader-elevation: 0 10px 28px rgba(66, 109, 94, .13), inset 0 1px 0 rgba(255, 255, 255, .94);
+  background: #f4f8f6;
+}
+.document-workspace .reader-document { background: linear-gradient(150deg, #fbfdfc, #eef5f1); }
+.document-workspace .reader-pdf-page { box-shadow: 0 4px 18px rgba(59, 92, 78, .12); }
+.reader-sidebar, .reader-assistant, .reader-selection-toolbar, .reader-geometry-tools {
+  border-color: var(--reader-edge);
+  background: var(--reader-glass);
+  backdrop-filter: blur(18px) saturate(145%);
+}
+.reader-header { position: relative; isolation: isolate; border-color: var(--reader-edge); background: transparent; }
+.reader-header::before { position: absolute; z-index: -1; inset: 0; content: ''; background: var(--reader-glass); backdrop-filter: blur(18px) saturate(145%); pointer-events: none; }
+.reader-sidebar, .reader-assistant { box-shadow: inset 0 1px 0 white; }
+.reader-assistant[hidden] { display: none; }
+.reader-assistant-head > div, .reader-assistant-form button { background: #e5f2ed; color: #155842; }
+.reader-message.user { border: 1px solid #cedfd8; background: #e8f4ef; color: #153b30; }
+.reader-message.assistant:not(.error) { background: rgba(255, 255, 255, .85); }
+.reader-message, .reader-assistant-disclosure { flex: none; overflow-wrap: anywhere; }
+.reader-assistant-context { grid-row: 2; min-width: 0; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.reader-assistant-context label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--ink-soft); font-size: .63rem; font-weight: 700; }
+.reader-assistant-context select { max-width: 55%; padding: 6px 9px; border: 1px solid var(--reader-edge); border-radius: 9px; background: white; color: var(--green-deep); font: inherit; }
+.reader-selection-card { margin: 6px 0 0; }
+.reader-selection-card blockquote { display: block; max-height: min(14dvh, 96px); overflow: auto; overflow-wrap: anywhere; }
+.reader-assistant-compose { grid-row: 4; min-width: 0; }
+.reader-jump-latest { margin-left: 10px; }
+/* Give editable fields an opaque light surface, including in dark WebViews. */
+.reader-page-controls input,
+:is(.library-chat-form, .reader-assistant-form, .reader-note-composer, .reader-annotation-edit) textarea {
+  color-scheme: only light;
+  background-color: #fcfffd;
+  color: #193c32;
+  caret-color: #00694f;
+}
+:is(.library-chat-form, .reader-assistant-form, .reader-note-composer, .reader-annotation-edit) textarea::placeholder {
+  color: #536c61;
+  opacity: 1;
+}
+.reader-page-controls input:focus,
+:is(.library-chat-form, .reader-assistant-form, .reader-note-composer, .reader-annotation-edit) textarea:focus {
+  border-color: #4e8e78;
+  outline: 2px solid #4e8e78;
+  outline-offset: 1px;
+}
+.reader-assistant-form textarea:disabled { background-color: #ebf4ef; color: #536c61; cursor: not-allowed; }
+.reader-assistant-form textarea { min-width: 0; }
+.reader-dock-tab, .reader-geometry-tools button { padding: 6px 9px; border: 1px solid var(--reader-edge); border-radius: 9px; background: rgba(255, 255, 255, .8); color: var(--green-deep); font: inherit; font-size: .62rem; font-weight: 750; cursor: pointer; }
+.reader-dock-tab:hover, .reader-geometry-tools button:hover, .reader-geometry-tools button[aria-pressed='true'] { background: #dcefe7; }
+.reader-assistant-head .reader-dock-tab { margin-left: auto; }
+.reader-assistant-head .reader-panel-close { margin-left: 0; }
+.reader-header .reader-header-actions button[aria-expanded] { width: auto; gap: 5px; padding-inline: 7px; font: inherit; font-size: .6rem; font-weight: 750; }
+.reader-header-actions button[aria-expanded] svg { flex: none; }
+.reader-citation-coverage { color: var(--ink-soft); }
+.reader-selection-toolbar { border-radius: 14px; box-shadow: var(--reader-elevation); }
+.reader-selection-toolbar button { color: #174739; white-space: nowrap; }
+.reader-selection-toolbar button:hover { background: #e3f2eb; }
+.reader-selection-toolbar button:disabled { color: #687b73; }
+.reader-geometry-tools { position: fixed; z-index: 5051; bottom: 14px; left: 14px; display: flex; align-items: center; gap: 4px; padding: 5px; border: 1px solid var(--reader-edge); border-radius: 12px; box-shadow: var(--reader-elevation); }
+.sidebar-open .reader-geometry-tools { left: 260px; }
+.reader-geometry-tools span { padding: 0 6px; color: var(--ink); font-size: .6rem; }
+.reader-pdf-geometry, .reader-pdf-geometry-input { position: absolute; inset: 0; width: 100%; height: 100%; }
+.reader-pdf-geometry { z-index: 2; pointer-events: none; }
+.reader-pdf-geometry-input { z-index: 5; touch-action: none; cursor: crosshair; }
+.reader-pdf-shape { stroke: #9d6b08; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+rect.reader-pdf-shape { fill: rgba(255, 205, 48, .17); }
+.reader-pdf-shape.color-green { stroke: #21794e; }
+.reader-pdf-shape.color-blue { stroke: #2859ad; }
+.reader-pdf-shape.color-pink { stroke: #aa376e; }
+.reader-pdf-shape.preview { stroke-dasharray: 4 3; }
+.reader-note-backdrop { background: rgba(237, 247, 242, .36); backdrop-filter: blur(2px); }
+@media (max-width: 760px) {
+  .reader-header-actions button[aria-expanded] span { display: none; }
+  .reader-assistant { left: 6px; right: 6px; height: min(60dvh, 620px); padding-bottom: env(safe-area-inset-bottom, 0px); border-radius: 20px 20px 0 0; box-shadow: var(--reader-elevation); background: rgba(253, 255, 254, .96); backdrop-filter: blur(12px) saturate(135%); }
+  .reader-assistant-form textarea { font-size: 16px; }
+  .reader-selection-toolbar { inset: auto; max-width: calc(100vw - 16px); }
+  .reader-selection-toolbar button, .reader-geometry-tools button { min-height: 44px; }
+  .reader-geometry-tools, .sidebar-open .reader-geometry-tools { bottom: 76px; left: 8px; }
+  .assistant-open .reader-geometry-tools, .sidebar-open .reader-geometry-tools { display: none; }
+}
+@media (forced-colors: active) {
+  .reader-pdf-shape { stroke: Highlight; }
+  rect.reader-pdf-shape { fill: none; }
+}
+
+/* PDF sources opened from the library conversation keep the same light chrome. */
+.modal-backdrop.chat-pdf-backdrop { background: rgba(236, 247, 241, .52); backdrop-filter: blur(10px) saturate(135%); }
+.chat-pdf-backdrop .pdf-reader-modal-host { background: linear-gradient(150deg, #fbfdfc, #eef5f1); }

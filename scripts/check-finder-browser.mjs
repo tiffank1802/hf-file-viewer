@@ -1,5 +1,7 @@
 /* global document, window */
 import assert from 'node:assert/strict';
+import JSZip from 'jszip';
+import XLSX from 'xlsx';
 import { chromium } from 'playwright-core';
 import { createServer } from 'vite';
 
@@ -13,9 +15,29 @@ const empty = `${lesson}/Vide`;
 const offline = `${lesson}/Hors ligne`;
 const notes = `${lesson}/Notes.txt`;
 const picture = `${lesson}/Épure.png`;
+const officeFolder = `${root}/Office`;
+const word = `${officeFolder}/Compte rendu.docx`;
+const legacyWord = `${officeFolder}/Archive.doc`;
+const workbook = `${officeFolder}/Calcul.xlsx`;
+const slides = `${officeFolder}/Cours.pptx`;
+const docArchive = new JSZip();
+const wordNamespace = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+docArchive.file('[Content_Types].xml', '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
+docArchive.file('_rels/.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
+docArchive.file('word/document.xml', `<w:document xmlns:w="${wordNamespace}"><w:body><w:p><w:r><w:t>Texte Word du volet</w:t></w:r></w:p><w:sectPr/></w:body></w:document>`);
+const pptArchive = new JSZip();
+pptArchive.file('ppt/slides/slide1.xml', '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:txBody><a:p><a:r><a:t>Texte PowerPoint du volet</a:t></a:r></a:p></p:txBody></p:sld>');
+const sheet = XLSX.utils.book_new();
+XLSX.utils.book_append_sheet(sheet, XLSX.utils.aoa_to_sheet([['Cellule Excel du volet', 42]]), 'Calcul');
+const officeFiles = new Map([
+  [word, await docArchive.generateAsync({ type: 'nodebuffer' })],
+  [workbook, XLSX.write(sheet, { type: 'buffer', bookType: 'xlsx' })],
+  [slides, await pptArchive.generateAsync({ type: 'nodebuffer' })],
+]);
 const data = new Map([
   ['', [directory(root), directory('TOEIC')]],
-  [root, [directory(lesson), directory('GM/Autre')]],
+  [root, [directory(lesson), directory('GM/Autre'), directory(officeFolder)]],
+  [officeFolder, [file(word), file(legacyWord), file(workbook), file(slides)]],
   [lesson, [directory(empty), directory(offline), file(notes), file(picture), file(`${lesson}/Cours.pdf`, 200000)]],
   [empty, []], ['GM/Autre', Array.from({ length: 30 }, (_, n) => file(`GM/Autre/Document ${n + 1}.txt`))],
 ]);
@@ -24,6 +46,7 @@ const blank = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AA
 let sse;
 const emit = (event, data) => sse.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 const vite = await createServer({
+  define: { 'import.meta.env.VITE_ENISE_PREVIEW_TAG': JSON.stringify('v1.1.0-test.4') },
   server: { host: '127.0.0.1', port: 0, hmr: false },
   plugins: [{
     name: 'test-chat-stream',
@@ -63,6 +86,7 @@ try {
       if (url.pathname === '/api/file' && url.searchParams.get('path') === picture) {
         return route.fulfill({ contentType: 'image/png', body: Buffer.from(blank, 'base64') });
       }
+      if (url.pathname === '/api/file' && officeFiles.has(url.searchParams.get('path'))) return route.fulfill({ contentType: 'application/octet-stream', body: officeFiles.get(url.searchParams.get('path')) });
       if (url.pathname === '/api/file') return route.fulfill({ contentType: 'text/plain', body: 'Un aperçu en français.' });
       return route.fulfill({ json: {} });
     });
@@ -272,8 +296,106 @@ try {
   await mobile.getByRole('complementary', { name: 'Prévisualisation' }).getByText('Un aperçu en français.', { exact: true }).waitFor();
   assert.equal(await mobile.getByRole('dialog').count(), 0);
   assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await mobile.close();
+
+  const workflow = await browser.newPage({ viewport: { width: 1450, height: 950 } });
+  await stub(workflow);
+  await workflow.goto(href(lesson));
+  await control(workflow, 'Affichage : Colonnes').click();
+  await entry(workflow, empty).click();
+  await workflow.waitForURL(href(empty));
+  assert.equal(await entry(workflow, empty).getAttribute('aria-current'), 'true');
+  await entry(workflow, notes).click();
+  await workflow.waitForURL(href(lesson));
+  assert.equal(await entry(workflow, empty).getAttribute('aria-current'), null);
+  assert.equal(await entry(workflow, notes).getAttribute('aria-pressed'), 'true');
+  assert.equal(await workflow.getByRole('region', { name: 'Vide', exact: true }).count(), 0);
+
+  await entry(workflow, notes).click({ button: 'right' });
+  const labelDialog = workflow.getByRole('dialog');
+  await control(labelDialog, 'Ajouter ou modifier les tags…').click();
+  await labelDialog.getByLabel('Nom du tag').fill('Examen blanc');
+  await labelDialog.getByLabel('Couleur du tag').selectOption({ label: 'Vert' });
+  await control(labelDialog, 'Ajouter le tag').click();
+  assert.equal(await control(labelDialog, 'Examen blanc').getAttribute('aria-pressed'), 'true');
+  await workflow.keyboard.press('Escape');
+  await workflow.reload();
+  await entry(workflow, notes).getByTitle('Examen blanc').waitFor();
+  await control(workflow, 'Rechercher depuis ce dossier').click();
+  await workflow.getByLabel('Tag', { exact: true }).selectOption({ label: 'Examen blanc' });
+  assert.equal(await workflow.locator('.search-result').count(), 1);
+  await workflow.keyboard.press('Escape');
+  await control(workflow, 'Prévisualisation').click();
+  await entry(workflow, `${lesson}/Cours.pdf`).click();
+  await control(workflow, 'Annoter et interroger le PDF').waitFor();
+
+  await workflow.goto(href(officeFolder));
+  const previewPane = workflow.getByRole('complementary', { name: 'Prévisualisation' });
+  for (const [filePath, expected] of [[word, 'Texte Word du volet'], [workbook, 'Cellule Excel du volet'], [slides, 'Texte PowerPoint du volet']]) {
+    await entry(workflow, filePath).click();
+    await previewPane.getByText(expected, { exact: true }).waitFor();
+    assert.equal(await previewPane.locator('iframe').count(), 0);
+  }
+  await entry(workflow, legacyWord).click();
+  await control(previewPane, 'Afficher avec Microsoft').waitFor();
+  assert.equal(await previewPane.locator('iframe').count(), 0);
+  await workflow.close();
+
+  // Simulate Tauri's event and updater IPC while exercising the real UI.
+  const native = await browser.newPage({ viewport: { width: 1250, height: 850 } });
+  await stub(native);
+  await native.addInitScript((origin) => {
+    const handlers = new Map();
+    let next = 0;
+    window.isTauri = true;
+    window.__nativeEvent = (payload) => handlers.forEach((fn) => fn({ payload }));
+    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: (_event, id) => handlers.delete(id) };
+    window.__nativeReleases = [{ tag_name: 'v1.1.0-test.4', prerelease: true }];
+    window.__TAURI_INTERNALS__ = {
+      convertFileSrc: () => origin,
+      transformCallback: (handler) => { handlers.set(++next, handler); return next; },
+      unregisterCallback: () => {},
+      async invoke(command, args) {
+        if (command === 'plugin:app|version') return '1.1.0';
+        if (command === 'list_app_releases') return window.__nativeReleases;
+        if (command === 'plugin:event|listen') {
+          if (args.target?.label !== 'main') throw new Error('Le menu Rust cible exclusivement la fenêtre main');
+          window.__nativeListening = true;
+          return args.handler;
+        }
+        if (command === 'plugin:opener|open_url') window.__openedRelease = args.url;
+      },
+    };
+  }, base);
+  await native.goto(href(lesson));
+  await native.waitForFunction(() => window.__nativeListening);
+  await native.evaluate(() => window.__nativeEvent('view-list'));
+  assert.equal(await control(native, 'Affichage : Liste').getAttribute('aria-pressed'), 'true');
+  await entry(native, empty).click({ button: 'right' });
+  await control(native.getByRole('dialog'), 'Ouvrir dans un nouvel onglet').click();
+  await native.waitForURL(href(empty));
+  assert.equal(await native.getByRole('tab').count(), 2);
+  await native.locator('.finder-content').click({ button: 'right' });
+  const folderActions = native.getByRole('dialog', { name: 'Actions du dossier' });
+  await control(folderActions, 'Colonnes').click();
+  assert.equal(await control(native, 'Affichage : Colonnes').getAttribute('aria-pressed'), 'true');
+  await native.getByRole('button', { name: 'Rechercher les mises à jour' }).click();
+  const updates = native.getByRole('complementary', { name: 'Mise à jour de l’application' });
+  await updates.getByText('Aucune mise à jour disponible sur votre canal.').waitFor();
+  await updates.getByText('Version installée : v1.1.0-test.4').waitFor();
+  await control(updates, 'Fermer').click();
+  await native.evaluate(() => {
+    window.__nativeReleases = [{ tag_name: 'v1.1.0-test.5', prerelease: true }];
+    window.__nativeEvent('update');
+  });
+  await updates.getByText('Nouvelle préversion 1.1.0-test.5 disponible.').waitFor();
+  await control(updates, 'Télécharger la préversion').click();
+  await native.waitForFunction(() => window.__openedRelease === 'https://github.com/tiffank1802/hf-file-viewer/releases/tag/v1.1.0-test.5');
+  await control(updates, 'Plus tard').click();
+  await updates.waitFor({ state: 'hidden' });
+  assert.equal(native.url(), href(empty));
   assert.deepEqual(runtimeErrors, []);
-  console.log('Finder : bureau et mobile ; assistant : défilement pendant un flux SSE validé.');
+  console.log('Finder : bureau, mobile, commandes natives, tags, aperçus Office et sélection en colonnes ; notifications de préversion et défilement SSE validés.');
 } finally {
   if (sse && !sse.writableEnded) sse.end();
   await browser?.close();

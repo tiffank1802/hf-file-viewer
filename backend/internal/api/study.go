@@ -33,6 +33,7 @@ type chatScope struct {
 	SourcePath     string          `json:"sourcePath"`
 	ArtifactID     string          `json:"artifactId,omitempty"`
 	SourceRevision string          `json:"sourceRevision,omitempty"`
+	Page           int             `json:"page,omitempty"`
 	PDFContext     *pdfChatContext `json:"pdfContext,omitempty"`
 	Anchor         *chatAnchor     `json:"anchor,omitempty"`
 }
@@ -51,6 +52,7 @@ type pdfChatPassage struct {
 }
 
 type chatAnchor struct {
+	Geometry       *pdfGeometry        `json:"geometry,omitempty"`
 	SchemaVersion  string              `json:"schemaVersion,omitempty"`
 	SourceRevision string              `json:"sourceRevision,omitempty"`
 	Origin         string              `json:"origin,omitempty"`
@@ -73,6 +75,7 @@ type chatAnchorRect struct {
 }
 
 type documentStudy struct {
+	RequestedPage   int
 	SourcePath      string
 	SourceRevision  string
 	ArtifactID      string
@@ -130,9 +133,16 @@ func (study *documentStudy) publicCitations() []reader.Evidence {
 }
 
 func (s *Server) prepareDocumentStudy(ctx context.Context, scope chatScope, message, intent string) (*documentStudy, error) {
-	if scope.SourceRevision != "" || scope.PDFContext != nil || (scope.Anchor != nil && scope.Anchor.SchemaVersion == pdfAnchorSchema) {
-		return s.preparePDFStudy(ctx, scope)
+	if scope.Anchor != nil && (scope.Anchor.SchemaVersion == pdfGeometrySchema || scope.Anchor.Geometry != nil) {
+		return nil, catalog.Error(http.StatusBadRequest, "Une annotation graphique ne peut pas servir de contexte IA.")
 	}
+	if scope.SourceRevision != "" || scope.Page != 0 || scope.PDFContext != nil || (scope.Anchor != nil && scope.Anchor.SchemaVersion == pdfAnchorSchema) {
+		return s.preparePDFStudy(ctx, scope, message, intent)
+	}
+	return s.prepareStructuredStudy(ctx, scope, message, intent, nil)
+}
+
+func (s *Server) prepareStructuredStudy(ctx context.Context, scope chatScope, message, intent string, matchesSource func(*reader.Manifest) bool) (*documentStudy, error) {
 	if err := normalizeChatAnchor(scope.Anchor); err != nil {
 		return nil, err
 	}
@@ -195,6 +205,9 @@ func (s *Server) prepareDocumentStudy(ctx context.Context, scope chatScope, mess
 		study.Status = "artifact-unavailable"
 		return study, nil
 	}
+	if matchesSource != nil && !matchesSource(manifest) {
+		return study, nil
+	}
 	documentPath, err := artifactFile(entry.ArtifactPrefix, manifest.Files["document"])
 	if err != nil {
 		study.Status = "artifact-unavailable"
@@ -223,6 +236,9 @@ func (s *Server) prepareDocumentStudy(ctx context.Context, scope chatScope, mess
 		log.Printf("assistant Docling: normalisation %s: %v", scope.SourcePath, err)
 		study.Status = "artifact-unavailable"
 		return study, nil
+	}
+	if scope.Page > 0 {
+		document = doclingPage(document, scope.Page)
 	}
 	queryText := message
 	if scope.Anchor != nil {
@@ -458,6 +474,12 @@ func studyDocumentPrompt(question string, study *documentStudy) string {
 	fmt.Fprintf(&b, "Titre : %s\nChemin : %s\nArtefact : %s\n", study.Title, study.SourcePath, study.ArtifactID)
 	if study.KnowledgeSource == "pdf-reader" {
 		fmt.Fprintf(&b, "Révision PDF : %s. Texte fourni par le lecteur et non vérifié côté serveur ; il peut contenir des erreurs d’extraction ou d’OCR.\n", study.SourceRevision)
+	}
+	if study.RequestedPage > 0 {
+		fmt.Fprintf(&b, "Périmètre strict : page %d.\n", study.RequestedPage)
+	}
+	if study.Anchor != nil && study.SourceRevision != "" {
+		b.WriteString("Périmètre strict : passage sélectionné.\n")
 	}
 	coverage := study.Retrieval.Coverage
 	fmt.Fprintf(&b, "Couverture : %s, %d/%d chunks, %d/%d sections.\n",

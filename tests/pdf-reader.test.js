@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getDocument, PDFDataRangeTransport } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { buildPdfSelectionAnchor, normalizedQuadsForViewport, pdfQuadsFromClientRects } from '../src/reader/selectionAnchor.js';
+import { buildGeometryAnchor, MAX_INK_POINTS } from '../src/reader/pdfGeometry.js';
 import { indexPDFPages, pdfPageText, searchPDFIndex } from '../src/reader/pdfTextIndex.js';
 import { createTauriPDFSource } from '../src/reader/tauriPdfRange.js';
 
@@ -62,6 +63,30 @@ test('les quadrilatères PDF.js survivent au zoom, à la rotation et à une Crop
     bounds(roundTrip).forEach((value, i) => closeTo(value, bounds(quads[0])[i], 0.003));
   }
   await document.destroy();
+});
+
+test('les zones et tracés restent en coordonnées PDF malgré la rotation et le zoom', async () => {
+  const document = await getDocument({ data: croppedPDF() }).promise;
+  try {
+    const page = await document.getPage(1);
+    const viewport = page.getViewport({ scale: 1.35 });
+    const sourceRevision = `sha256:${'a'.repeat(64)}`;
+    const points = [[0.1, 0.25], [0.6, 0.75]];
+    const rect = buildGeometryAnchor({ shape: 'rect', points, viewport, page: 1, sourceRevision });
+    assert.deepEqual(rect.geometry.pageView, page.view);
+    assert.equal(rect.sourceRevision, sourceRevision);
+    const zoomed = page.getViewport({ scale: 2.4 });
+    rect.geometry.points.forEach(([x, y], index) => {
+      const [left, top] = zoomed.convertToViewportPoint(x, y);
+      closeTo(left / zoomed.width, points[index][0]);
+      closeTo(top / zoomed.height, points[index][1]);
+    });
+    const ink = buildGeometryAnchor({ shape: 'ink', points: Array.from({ length: 180 }, (_, i) => [i / 180, 0.5]), viewport, page: 1, sourceRevision });
+    assert.equal(ink.geometry.points.length, MAX_INK_POINTS);
+    assert.equal(buildGeometryAnchor({ shape: 'rect', points: [[0.1, 0.1], [0.1, 0.5]], viewport, page: 1, sourceRevision }), null);
+  } finally {
+    await document.destroy();
+  }
 });
 
 test('la sélection PDF est bornée et conserve les segments multipages ordonnés', () => {

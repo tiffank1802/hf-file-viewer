@@ -1,0 +1,192 @@
+name: Verify and publish Finder test installers
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: enise-docs-test-release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.release_tag }}
+  BUILD_RUN: ${{ github.run_id }}
+  BUILD_SHA: ${{ github.sha }}
+
+jobs:
+  verify:
+    if: github.repository == 'tiffank1802/hf-file-viewer'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.BUILD_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Verify the source run and prerelease draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN" > source-run.json
+          actual=$(jq -r '[.head_repository.full_name,.path,.event,.head_branch,.head_sha] | @tsv' source-run.json)
+          expected=$(printf '%s\t%s\t%s\t%s\t%s' "$GITHUB_REPOSITORY" '.github/workflows/tauri-build.yml' push 'arena/197b0080-hf-file-viewer' "$BUILD_SHA")
+          if [ "$actual" != "$expected" ]; then
+            echo '::error::Le run source ne correspond pas au build Finder validé.'
+            exit 1
+          fi
+          version=$(node -p 'require("./src-tauri/tauri.conf.json").version')
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-test\.[0-9]+$ || "$RELEASE_TAG" != "v$version-test."* ]]; then
+            echo '::error::Le tag de préversion ne correspond pas à la version native.'
+            exit 1
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" > source-jobs.json
+          draft=$(gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,targetCommitish --jq '[.isDraft,.isPrerelease,.targetCommitish] | @tsv')
+          if [ "$draft" != "$(printf 'true\ttrue\t%s' "$BUILD_SHA")" ]; then
+            echo '::error::Le brouillon de préversion ne cible pas le commit compilé.'
+            exit 1
+          fi
+      - run: npm ci
+      - name: Rebuild the Finder and PDF reader UI from the release commit
+        shell: bash
+        run: |
+          export GITHUB_SHA="$BUILD_SHA" VITE_API_ORIGIN='' VITE_ENISE_PREVIEW_TAG="$RELEASE_TAG"
+          for mode in unset unsigned signed; do
+            case "$mode" in
+              unset) unset VITE_ENISE_SIGNED_UPDATER ;;
+              unsigned) export VITE_ENISE_SIGNED_UPDATER=0 ;;
+              signed) export VITE_ENISE_SIGNED_UPDATER=1 ;;
+            esac
+            npm run build
+            index=$(sed -nE 's|.*src="/build-assets/(index-[^"]+\.js)".*|\1|p' dist/index.html)
+            test -n "$index"
+            grep -q 'finder-toolbar' "dist/build-assets/$index"
+            grep -q 'finder-preview-toggle' "dist/build-assets/$index"
+            grep -q "$GITHUB_SHA" "dist/build-assets/$index"
+            reader=$(basename dist/build-assets/DocumentWorkspace-*.js)
+            pdf=$(basename dist/build-assets/PdfReader-*.js)
+            style=$(sed -nE 's|.*href="/build-assets/(index-[^"]+\.css)".*|\1|p' dist/index.html)
+            grep -q 'reader-selection-toolbar' "dist/build-assets/$reader"
+            grep -q 'pdf-geometry/v1' "dist/build-assets/$pdf"
+            grep -q 'chat-pdf-backdrop' "dist/build-assets/$style"
+            grep -q 'reader-page-controls input' "dist/build-assets/$style"
+            printf '%s\t%s\t%s\t%s\n' "$index" "$reader" "$pdf" "$style" >> "$RUNNER_TEMP/finder-asset-keys.txt"
+          done
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: enise-docs-*
+          path: native-builds
+          merge-multiple: true
+      - name: Prepare all five platform packages
+        run: |
+          node scripts/prepare-app-release.mjs native-builds public-bundles
+          (cd public-bundles && sha256sum -c SHA256SUMS.txt)
+          for file in ENISE-Docs-linux-x64.AppImage ENISE-Docs-linux-x64.deb; do
+            test -s "native-builds/$file"
+            cp "native-builds/$file" public-bundles/
+          done
+      - name: Extract the packaged applications
+        shell: bash
+        run: |
+          mkdir -p extracted/{android,ios,sim,mac,windows,linux-appimage,linux-deb}
+          unzip -q public-bundles/ENISE-Docs-android-universal.apk 'lib/*/*.so' -d extracted/android
+          unzip -q public-bundles/ENISE-Docs-ios-unsigned.ipa -d extracted/ios
+          unzip -q public-bundles/ENISE-Docs-ios-simulator-arm64.app.zip -d extracted/sim
+          tar -xzf public-bundles/ENISE-Docs-macos-universal.app.tar.gz -C extracted/mac
+          7z x -oextracted/windows public-bundles/ENISE-Docs-windows-x64-setup.exe
+          chmod +x public-bundles/ENISE-Docs-linux-x64.AppImage
+          (cd extracted/linux-appimage && ../../public-bundles/ENISE-Docs-linux-x64.AppImage --appimage-extract 'usr/bin/enise-docs')
+          dpkg-deb -x public-bundles/ENISE-Docs-linux-x64.deb extracted/linux-deb
+      - name: Match the Finder entry point, PDF reader and styles embedded in each application
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          import plistlib
+          from pathlib import Path
+
+          key_sets = [tuple(key.encode() for key in row.split('\t')) for row in
+                      set((Path(os.environ['RUNNER_TEMP']) / 'finder-asset-keys.txt').read_text().splitlines())]
+          root = Path('extracted')
+          android = sorted((root / 'android').glob('lib/*/libenise_docs_lib.so'))
+          if not android:
+              raise SystemExit('::error::No ENISE Android native libraries in the APK')
+          def ios_executables(base):
+              executables = []
+              for info in base.rglob('Info.plist'):
+                  if info.parent.suffix != '.app':
+                      continue
+                  with info.open('rb') as plist:
+                      name = plistlib.load(plist).get('CFBundleExecutable')
+                  if name and Path(name).name == name and (info.parent / name).is_file():
+                      executables.append(info.parent / name)
+              return executables
+
+          groups = {
+              **{f'Android {lib.parent.name}': [lib] for lib in android},
+              'iOS': ios_executables(root / 'ios'),
+              'iOS Simulator': ios_executables(root / 'sim'),
+              'macOS': list((root / 'mac').glob('*.app/Contents/MacOS/enise-docs')),
+              'Windows': list((root / 'windows').rglob('enise-docs.exe')),
+              'Linux AppImage': list((root / 'linux-appimage').rglob('enise-docs')),
+              'Linux deb': list((root / 'linux-deb').rglob('enise-docs')),
+          }
+          failed = []
+          for platform, files in groups.items():
+              matches = set()
+              for file in files:
+                  data = file.read_bytes()
+                  matches.update(" + ".join(key.decode() for key in keys) for keys in key_sets if all(key in data for key in keys))
+              if matches:
+                  print(f'::notice::{platform}: embedded Finder and PDF reader assets {", ".join(sorted(matches))}')
+              else:
+                  print(f'::error::{platform}: expected Finder and PDF reader assets not found in {files}')
+                  failed.append(platform)
+          if failed:
+              raise SystemExit(1)
+          PY
+      - name: Stamp the release filenames and verify all checksums
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          for file in public-bundles/ENISE-Docs-*; do
+            cp "$file" "release-assets/ENISE-Docs-$RELEASE_TAG-${file#public-bundles/ENISE-Docs-}"
+          done
+          jq --arg tag "$RELEASE_TAG" --slurpfile jobs source-jobs.json '
+            {release: $tag, source_commit: .head_sha, source_branch: .head_branch,
+             build_run: .id, build_url: .html_url, build_started_at: .run_started_at,
+             native_jobs: [$jobs[0].jobs[] | select(.conclusion == "success") | {name, completed_at, html_url}],
+             finder_and_pdf_reader_embedded_frontend: "verified in macOS, Windows NSIS, Android, iOS, Linux AppImage and Linux DEB binaries"}' source-run.json > release-assets/BUILD-PROVENANCE.json
+          (cd release-assets && sha256sum BUILD-PROVENANCE.json ENISE-Docs-* > SHA256SUMS.txt && sha256sum -c SHA256SUMS.txt)
+      - name: Upload all verified assets and publish the prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          run_gh() {
+            local output
+            if output=$(gh "$@" 2>&1); then
+              printf '%s\n' "$output"
+            else
+              printf '::error::Échec gh %s %s : %s\n' "$1" "$2" "${output//$'\n'/ }"
+              return 1
+            fi
+          }
+          run_gh release upload "$RELEASE_TAG" release-assets/* --clobber
+          for file in release-assets/*; do
+            printf '%s\t%s\n' "${file#release-assets/}" "$(stat -c %s "$file")"
+          done | sort > expected-assets.tsv
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[] | [.name,.size] | @tsv' | sort > uploaded-assets.tsv
+          diff -u expected-assets.tsv uploaded-assets.tsv
+          run_gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false

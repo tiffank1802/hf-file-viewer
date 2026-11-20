@@ -23,6 +23,10 @@ Bibliothèque étudiante moderne pour les ressources de **Centrale Lyon ENISE**,
 
 ## Explorer comme dans le Finder
 
+- **Tags :** clic droit sur un fichier ou un dossier → **Ajouter ou modifier les tags…**. Les tags personnalisés sont réutilisables dans la barre latérale, la recherche et le regroupement ; ils restent sur l’appareil, séparés par compte.
+- **Aperçus Office :** le volet Finder affiche les documents Word modernes et les feuilles Excel localement, et extrait le texte des diapositives PowerPoint. Le rendu PDF est proposé si la conversion LibreOffice est configurée ; dans ce volet, le service Microsoft n’est ouvert que sur demande.
+- **Étudier un PDF :** depuis le volet, **Annoter et interroger le PDF** ouvre directement le lecteur existant. Voir la [proposition de parcours inspiré d’alphaXiv](docs/PARCOURS_LECTURE_ALPHAXIV.md).
+
 - **Ordinateur :** sélectionnez au clic, ouvrez au double-clic ou avec `Entrée`, et utilisez `Espace` pour Coup d’œil sur un fichier. `Maj` étend la sélection, `⌘` / `Ctrl` ajoute ou retire un élément. Le menu `…`, le clic droit ou `Maj+F10` donne accès aux actions et à « Lire les informations ».
 - **Mobile :** un tap ouvre un élément ; avec le volet de prévisualisation ou la galerie, touchez un élément puis **Ouvrir**. Les colonnes affichent un niveau à la fois.
 - **Présentation :** ouvrez **Options de présentation** pour régler le tri, le regroupement, les tailles, les colonnes de liste, les vignettes, le fond de la grille et les barres visibles. Activez **Afficher la prévisualisation** (aussi accessible via l’icône œil) pour lire un extrait ou voir l’aperçu d’un élément sélectionné. Les réglages restent sur cet appareil, globalement ou par dossier ; les onglets gardent leur dossier, leur sélection et leur défilement pendant la session. Précédent/Suivant suit l’historique de navigation, y compris les changements d’onglet.
@@ -142,6 +146,10 @@ Le workflow [ENISE Docs Build](./.github/workflows/enise-build.yml) valide et ar
 - **Web / raccourci navigateur :** « Mettre à jour » actualise la page ; « Plus tard » ne recharge rien. Fermer puis rouvrir en ligne charge la dernière version déployée sans installateur. Les ressources Vite dont le contenu ne change pas restent en cache. Ne pas imposer une règle CDN « Cache Everything » sur le HTML ni `/version.json`.
 - **Tauri :** macOS, Windows et Linux AppImage utilisent le [plugin Updater Tauri](https://v2.tauri.app/plugin/updater/) lorsque le build embarque la clé publique et qu’un `latest.json` signé par artefact est publié. Le paquet est téléchargé seulement après accord ; il n’est pas différentiel. Pour Linux `.deb` et pour les builds sans updater signé, l’alerte ouvre la page des versions. Les anciens clients 1.0.0 doivent installer manuellement une première version équipée de l’updater.
 - **Mobile :** l’alerte ouvre les versions GitHub ; elle n’installe rien. Un APK doit conserver la clé de distribution d’origine pour remplacer un APK existant. Sur iOS, une distribution installable requiert signature et provisioning Apple, par exemple via TestFlight.
+
+Dans l’application native, le bouton **Mises à jour** vérifie immédiatement la version installée et signale une erreur réseau ou l’absence d’offre. Les préversions identifiées à la compilation suivent le canal `vX.Y.Z-test.N` et ouvrent la page de téléchargement de la version proposée. Une installation stable ignore les préversions. L’installation automatique reste réservée aux paquets desktop signés ; elle n’est pas utilisée pour les APK de test, l’IPA non signé ni les paquets Linux `.deb`.
+
+Sur macOS, la barre de menus native expose **Fichier**, **Édition**, **Présentation**, **Aller** et les mises à jour dans **ENISE Docs**. Le clic droit (Linux, Windows et macOS) distingue les actions d’un fichier/dossier et celles de l’espace vide. Dans un dossier, le ruban sépare les modes d’affichage, le classement et la présentation.
 
 Les réglages de production sont dans [`wrangler.jsonc`](./wrangler.jsonc) :
 

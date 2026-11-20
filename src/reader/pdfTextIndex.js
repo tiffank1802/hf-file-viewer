@@ -75,3 +75,13 @@ export function searchPDFIndex(index, question, limit = 6) {
     passages: selected.map(([page, text]) => ({ page, text: excerpt(text, terms), origin: 'pdf-text' })),
   };
 }
+
+export function pdfPageContext(index, page, text, question) {
+  const content = String(text || '').trim();
+  return {
+    indexedPages: index?.indexedPages || 0,
+    totalPages: index?.totalPages || 0,
+    complete: false,
+    passages: content ? [{ page, text: excerpt(content, tokens(question)), origin: 'pdf-text' }] : [],
+  };
+}

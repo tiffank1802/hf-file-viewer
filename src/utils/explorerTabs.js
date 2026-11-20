@@ -13,10 +13,10 @@ export function activateExplorerTab(state, id, path) {
   };
 }
 
-export function addExplorerTab(state, id) {
+export function addExplorerTab(state, id, path) {
   if (state.tabs.length >= MAX_EXPLORER_TABS || state.tabs.some((entry) => entry.id === id)) return state;
   const active = state.tabs.find((entry) => entry.id === state.activeId);
-  return { activeId: id, tabs: [...state.tabs, { id, path: active.path }] };
+  return { activeId: id, tabs: [...state.tabs, { id, path: path ?? active.path }] };
 }
 
 export function closeExplorerTab(state) {

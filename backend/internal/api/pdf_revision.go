@@ -95,29 +95,41 @@ func (s *Server) verifyPDFRevision(ctx context.Context, sourcePath, revision str
 		}
 		return nil
 	}
+	digest, err := s.sourcePDFDigest(ctx, sourcePath, "")
+	if err != nil {
+		return err
+	}
+	if "sha256:"+digest != revision {
+		return catalog.Error(http.StatusConflict, "Le PDF a changé depuis son ouverture. Rouvre le document.")
+	}
+	return nil
+}
+
+// For an ETag-backed viewer, only hash a GET carrying that same strong validator.
+func (s *Server) sourcePDFDigest(ctx context.Context, sourcePath, etagRevision string) (string, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, catalog.BuildHfFileURL(s.cfg.HFOrigin, s.cfg.BucketID, sourcePath), nil)
 	if err != nil {
-		return catalog.Error(http.StatusBadGateway, "Impossible de vérifier l’empreinte du PDF.")
+		return "", catalog.Error(http.StatusBadGateway, "Impossible de vérifier l’empreinte du PDF.")
 	}
 	request.Header = s.hfHeaders("application/pdf")
 	response, err := s.do(request)
 	if err != nil {
-		return catalog.Error(http.StatusBadGateway, "Impossible de vérifier l’empreinte du PDF.")
+		return "", catalog.Error(http.StatusBadGateway, "Impossible de vérifier l’empreinte du PDF.")
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return catalog.Error(http.StatusBadGateway, "Le stockage ne peut pas vérifier l’empreinte du PDF.")
+		return "", catalog.Error(http.StatusBadGateway, "Le stockage ne peut pas vérifier l’empreinte du PDF.")
+	}
+	if etagRevision != "" && strongETagRevision(response.Header.Get("ETag")) != etagRevision {
+		return "", catalog.Error(http.StatusConflict, "Le PDF a changé depuis son ouverture.")
 	}
 	if response.ContentLength > maxPDFHashBytes {
-		return catalog.Error(http.StatusRequestEntityTooLarge, "Ce PDF dépasse la limite de vérification de 64 Mio sans ETag fort.")
+		return "", catalog.Error(http.StatusRequestEntityTooLarge, "Ce PDF dépasse la limite de vérification de 64 Mio sans ETag fort.")
 	}
 	hash := sha256.New()
 	size, err := io.Copy(hash, io.LimitReader(response.Body, maxPDFHashBytes+1))
 	if err != nil || size <= 0 || size > maxPDFHashBytes || (response.ContentLength >= 0 && size != response.ContentLength) {
-		return catalog.Error(http.StatusBadGateway, "La vérification du PDF est incomplète ou le fichier est trop volumineux.")
+		return "", catalog.Error(http.StatusBadGateway, "La vérification du PDF est incomplète ou le fichier est trop volumineux.")
 	}
-	if "sha256:"+hex.EncodeToString(hash.Sum(nil)) != revision {
-		return catalog.Error(http.StatusConflict, "Le PDF a changé depuis son ouverture. Rouvre le document.")
-	}
-	return nil
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }

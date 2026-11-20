@@ -302,3 +302,34 @@
   .finder-gallery-pager button { padding: 5px 7px; border: 1px solid var(--finder-edge); border-radius: 6px; background: #f3f7fb; color: var(--finder-blue); }
   .finder-gallery-pager button:disabled { opacity: .45; cursor: default; }
 }
+
+@layer components {
+  .finder-toolbar { justify-content: flex-start; align-items: flex-end; column-gap: 16px; }
+  .finder-ribbon-group { display: grid; align-content: end; gap: 4px; min-width: 0; }
+  .finder-ribbon-label { color: var(--finder-muted); font-size: .65rem; font-weight: 720; letter-spacing: .025em; }
+  .finder-folder-actions { width: min(305px, 92vw); max-height: min(550px, 86dvh); }
+  .finder-folder-actions .finder-dialog-content { max-height: inherit; overflow: auto; }
+  .finder-context-group + .finder-context-group { border-top: 1px solid var(--finder-edge); }
+  .finder-context-group p { font-size: .67rem; font-weight: 720; padding: 5px 9px 0; color: var(--finder-muted); }
+  .finder-context-group button[aria-pressed="true"] { background: var(--finder-selection); color: var(--finder-blue); }
+  .finder-context-group button:disabled { color: var(--finder-muted); opacity: .55; cursor: default; }
+}
+
+@layer components {
+  .finder-dialog { max-height: calc(100dvh - 16px); overflow-y: auto; }
+  .finder-dialog .finder-item-tags { margin: 7px 0; }
+  .finder-tag-form { display: flex; flex-wrap: wrap; align-items: end; gap: 7px; margin: 8px 0; }
+  .finder-tag-form label { display: grid; gap: 3px; color: var(--finder-muted); font-size: .72rem; }
+  .finder-tag-form label:first-child { min-width: 130px; flex: 1; }
+  .finder-tag-form input, .finder-tag-form select { width: 100%; min-width: 0; padding: 6px; border: 1px solid var(--finder-edge); border-radius: 6px; }
+  .finder-tag-form button, .finder-office-external button { display: inline-flex; align-items: center; gap: 5px; padding: 6px 9px; border-radius: 6px; background: var(--finder-blue); color: #fff; font-size: .74rem; }
+  .finder-tag-form button:disabled { opacity: .5; }
+  .finder-tag-message { margin: 5px 0; color: var(--finder-muted); font-size: .72rem; }
+  .finder-office-external { display: grid; justify-items: start; gap: 7px; padding: 10px; font-size: .73rem; }
+  .finder-preview-pane .office-viewer-embedded { height: min(400px, 52dvh); min-height: 175px; min-width: 0; }
+  .finder-preview-pane .office-viewer-body { overflow: auto; }
+  .finder-preview-pane .office-modes { flex-wrap: wrap; padding: 5px; gap: 3px; }
+  .finder-preview-pane .office-local-scroll { min-width: 0; }
+  .finder-preview-pane .office-web-preview { flex: 1; min-height: 170px; }
+  .finder-preview-pane .docx-preview { padding: 5px; }
+}

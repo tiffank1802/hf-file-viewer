@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { FiArrowRight, FiClock, FiCommand, FiHeart, FiLoader, FiSearch, FiWifiOff, FiX } from 'react-icons/fi';
 import { FEATURED_SPACES } from '../config';
 import { applyFolderCounts, formatBytes, formatCount, formatFolderCount, getName, normalizeBucketItem, searchItems } from '../utils/files';
-import { DEFAULT_FILTERS, hasExplorerFilters, normalizeFilters, searchExplorerCatalog, TAGS } from '../utils/explorerPersonal';
+import { DEFAULT_FILTERS, hasExplorerFilters, normalizeFilters, searchExplorerCatalog } from '../utils/explorerPersonal';
 import { FileTypeIcon } from './Icons';
 
 const EMPTY = [];
@@ -26,7 +26,7 @@ function SearchFilters({ filters, onChange, folders, personal, savedId, setSaved
         <option value="">Toutes les tailles</option><option value="small">Moins de 1 Mo</option><option value="large">1 Mo ou plus</option>
       </select>
       <select aria-label="Tag" value={filters.tag} onChange={(event) => onChange('tag', event.target.value)}>
-        <option value="">Tous les tags</option>{TAGS.map((tag) => <option key={tag.id} value={tag.id}>{tag.label}</option>)}
+        <option value="">Tous les tags</option>{personal.tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.label}</option>)}
       </select>
       {personal.searches.length > 0 && <select aria-label="Dossiers intelligents" value={savedId} onChange={(event) => setSavedId(event.target.value)}>
         <option value="">Dossiers intelligents…</option>{personal.searches.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
@@ -41,7 +41,7 @@ export default function SearchPalette({
   mode = 'search', onClose, onNavigate, onOpenFile, favoriteItems, catalog, library, personal, initialFilters, initialQuery = '', initialSavedId = '',
 }) {
   const [query, setQuery] = useState(initialQuery);
-  const [filters, setFilters] = useState(() => normalizeFilters(initialFilters));
+  const [filters, setFilters] = useState(() => normalizeFilters(initialFilters, personal.tags));
   const [savedId, setSavedId] = useState(initialSavedId);
   const [saving, setSaving] = useState(false);
   const [label, setLabel] = useState('');

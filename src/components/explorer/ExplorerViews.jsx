@@ -58,7 +58,10 @@ function findNextButton(button, key, layout) {
   return buttons[index + (key === 'ArrowLeft' || key === 'ArrowUp' ? -1 : 1)];
 }
 
-function EntryButton({ item, layout, siblings, actions, current = false, children }) {
+function EntryButton({ item, layout, siblings, actions, current = false, columnPath, children }) {
+  const select = (entry, event) => layout === 'columns'
+    ? actions.selectFromColumn(entry, siblings, event, columnPath)
+    : actions.select(entry, siblings, event);
   const selected = actions.selected.has(item.path);
   const name = actions.displayName(item);
   const tags = actions.tagsFor?.(item.path)?.filter((tag) => tag.active) ?? [];
@@ -73,7 +76,7 @@ function EntryButton({ item, layout, siblings, actions, current = false, childre
       onClick={(event) => {
         if (event.detail === 0) {
           // A keyboard or assistive technology click activates the entry.
-          if (layout === 'gallery' && event.nativeEvent.pointerType !== 'touch') actions.select(item, siblings, event);
+          if (layout === 'gallery' && event.nativeEvent.pointerType !== 'touch') select(item, event);
           else actions.open(item);
           return;
         }
@@ -82,7 +85,7 @@ function EntryButton({ item, layout, siblings, actions, current = false, childre
         if (!modified && ((layout === 'columns' && item.type === 'directory') || (touch && layout !== 'gallery' && !actions.preferTouchSelection))) {
           actions.open(item, { keepFocus: layout === 'columns' });
         } else {
-          actions.select(item, siblings, event);
+          select(item, event);
         }
       }}
       onDoubleClick={(event) => {
@@ -96,7 +99,7 @@ function EntryButton({ item, layout, siblings, actions, current = false, childre
         if (event.key === ' ' && !event.altKey && !event.metaKey && !event.ctrlKey) {
           event.preventDefault();
           if (item.type === 'file') actions.open(item);
-          else actions.select(item, siblings, event);
+          else select(item, event);
         } else if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey) {
           event.preventDefault();
           actions.open(item, { keepFocus: layout === 'columns' });
@@ -109,7 +112,7 @@ function EntryButton({ item, layout, siblings, actions, current = false, childre
           event.preventDefault();
           next.focus();
           const nextItem = siblings.find((entry) => entry.path === next.dataset.finderItem);
-          if (nextItem) actions.select(nextItem, siblings, event);
+          if (nextItem) select(nextItem, event);
         }
       }}
     >
@@ -238,7 +241,7 @@ function ColumnEntries({ folder, items, path, revealed, actions }) {
       <ul data-finder-group aria-label={`Éléments de ${getName(path)}`}>
         {items.map((item) => (
           <li key={item.path}>
-            <EntryButton item={item} siblings={items} actions={actions} current={item.path === revealed} layout="columns">
+            <EntryButton item={item} siblings={items} actions={actions} current={item.path === revealed} layout="columns" columnPath={path}>
               <FileTypeIcon kind={item.kind} size={24} /> <span title={item.name}>{actions.displayName(item)}</span>
               {item.type === 'directory' && <FiChevronRight className="finder-column-arrow" aria-hidden="true" />}
             </EntryButton>

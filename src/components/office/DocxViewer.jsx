@@ -30,6 +30,7 @@ export default function DocxViewer({ file, onSwitchMode }) {
           inWrapper: true,
           breakPages: true,
           ignoreHeight: true,
+          renderAltChunks: false,
         });
       })
       .catch((renderIssue) => {

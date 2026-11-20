@@ -161,8 +161,10 @@ test('Go + PDF.js : citation réelle, confidentialité du prompt et annulation d
   await addNote(page, 'Secret privé à ne pas transmettre.');
   await selectText(page);
   await page.getByRole('button', { name: 'Expliquer', exact: true }).click();
+  await expect(page.locator('.reader-selection-card')).toContainText('Energie cinetique');
+  await page.getByRole('button', { name: 'Envoyer la question' }).click();
   await expect(page.locator('.reader-message.assistant').last()).toContainText('La vitesse intervient au carré');
-  await expect(page.getByText(/texte du lecteur n’est pas vérifié par le serveur/i)).toBeVisible();
+  await expect(page.getByText(/extraits issus de PDF.js ne sont pas vérifiés par le serveur/i)).toBeVisible();
   const prompt = JSON.stringify(stack.state.prompts[0]);
   expect(prompt).toContain('Energie cinetique');
   expect(prompt).toContain('Texte fourni par le lecteur et non vérifié côté serveur');
@@ -170,7 +172,7 @@ test('Go + PDF.js : citation réelle, confidentialité du prompt et annulation d
   await page.locator('.reader-answer-citations .library-chat-citation').first().click();
   await expect(page.locator('.reader-highlight.citation').first()).toBeVisible();
 
-  await page.getByRole('button', { name: 'Fermer les actions de sélection' }).click();
+  await page.getByLabel('Périmètre de la question').selectOption('document');
   await expect(page.getByText(/Index local : 1\/1 pages/)).toBeVisible();
   await page.getByLabel('Question à l’assistant du document').fill('Que dit le PDF sur la vitesse ?');
   const globalQuestion = page.waitForRequest((request) => new URL(request.url()).pathname === '/api/chat' && request.method() === 'POST');
@@ -262,6 +264,7 @@ test('Go + transport Tauri simulé : plages PDF, session, flux IPC et annulation
 
     await selectText(page);
     await page.getByRole('button', { name: 'Expliquer', exact: true }).click();
+    await page.getByRole('button', { name: 'Envoyer la question' }).click();
     await expect(page.locator('.reader-message.assistant').last()).toContainText('La vitesse intervient au carré');
     await page.getByLabel('Question à l’assistant du document').fill('Attends volontairement avant de répondre.');
     await page.getByRole('button', { name: 'Envoyer la question' }).click();
@@ -289,11 +292,22 @@ test('Go + PDF.js sur mobile émulé : note persistée et assistant sur la séle
     expect([...stack.state.rows.values()][0].data.userId).toBe('alice');
     await page.getByRole('button', { name: 'Fermer le plan et les notes' }).click();
     await selectText(page);
-    await page.getByRole('button', { name: 'Expliquer', exact: true }).click();
+    const reading = () => page.locator('.reader-document').evaluate((node) => [node.scrollTop, node.scrollLeft]);
+    const before = await reading();
+    await page.getByRole('button', { name: 'Poser une question', exact: true }).click();
+    await expect(page.locator('.reader-selection-card')).toContainText('Energie cinetique');
+    expect(stack.state.prompts).toHaveLength(0);
+    await expect(page.locator('.reader-panel-backdrop')).toHaveCount(0);
+    await page.getByLabel('Question à l’assistant du document').fill('Explique ce passage.');
+    await page.getByRole('button', { name: 'Envoyer la question' }).click();
     await expect(page.getByRole('complementary', { name: 'Assistant du document' })).toBeVisible();
     await expect(page.locator('.reader-message.assistant').last()).toContainText('La vitesse intervient au carré');
     await expect(page.getByText('Demande annulée.', { exact: true })).toHaveCount(0);
     expect(stack.state.prompts).toHaveLength(1);
+    await page.getByRole('button', { name: 'Masquer l’assistant' }).click();
+    expect(await reading()).toEqual(before);
+    await page.getByRole('button', { name: 'Afficher l’assistant' }).click();
+    await expect(page.locator('.reader-message.assistant').last()).toContainText('La vitesse intervient au carré');
     await page.reload();
     await page.getByRole('button', { name: 'Afficher le plan et les notes' }).click();
     await openNotes(page);
@@ -301,4 +315,49 @@ test('Go + PDF.js sur mobile émulé : note persistée et assistant sur la séle
   } finally {
     await mobile.close();
   }
+});
+
+test('Go + PDF.js : zone et dessin privés, export local et contexte d’une page', async ({ page, context, stack }) => {
+  await isolateContext(context, stack.base, 'alice');
+  await openPDF(page, stack);
+  for (const [button, shape, title] of [['Zone', 'rect', 'Enregistrer une zone privée'], ['Tracer', 'ink', 'Enregistrer un tracé privé']]) {
+    await page.getByRole('button', { name: button, exact: true }).click();
+    const surface = page.locator('.reader-pdf-geometry-input').first();
+    await expect(surface).toBeVisible();
+    const bounds = await surface.boundingBox();
+    await page.mouse.move(bounds.x + 120, bounds.y + 220);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + 165, bounds.y + 236, { steps: 6 });
+    await page.mouse.move(bounds.x + 210, bounds.y + 270, { steps: 6 });
+    await page.mouse.up();
+    const draft = page.getByRole('dialog', { name: title });
+    await draft.getByRole('button', { name: 'Enregistrer l’annotation' }).click();
+    await expect(page.locator(`.reader-pdf-geometry ${shape === 'rect' ? 'rect' : 'polyline'}`).first()).toBeVisible();
+  }
+  await openNotes(page);
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Exporter mes annotations (JSON)' }).click();
+  const exported = await download;
+  expect(exported.suggestedFilename()).toMatch(/-annotations\.json$/);
+  const chunks = [];
+  for await (const chunk of await exported.createReadStream()) chunks.push(chunk);
+  const payload = JSON.parse(Buffer.concat(chunks).toString());
+  expect(payload.schemaVersion).toBe('enise-pdf-annotations/v1');
+  const graphics = payload.annotations.filter(({ anchor }) => anchor.schemaVersion === 'pdf-geometry/v1');
+  expect(graphics.map(({ anchor }) => anchor.geometry.shape).sort()).toEqual(['ink', 'rect']);
+  expect(graphics.every(({ anchor }) => anchor.sourceRevision === payload.sourceRevision)).toBe(true);
+  expect(JSON.stringify(payload)).not.toContain('bob');
+  await page.reload();
+  await expect(page.locator('.reader-pdf-geometry rect')).toBeVisible();
+  await expect(page.locator('.reader-pdf-geometry polyline')).toBeVisible();
+  await page.getByLabel('Périmètre de la question').selectOption('page');
+  await page.getByLabel('Question à l’assistant du document').fill('Que dit cette page sur la vitesse ?');
+  const posted = page.waitForRequest((request) => new URL(request.url()).pathname === '/api/chat' && request.method() === 'POST');
+  await page.getByRole('button', { name: 'Envoyer la question' }).click();
+  const { scope } = (await posted).postDataJSON();
+  expect(scope.page).toBe(1);
+  expect(scope.pdfContext.passages.every(({ page: evidencePage }) => evidencePage === 1)).toBe(true);
+  expect(scope.anchor).toBeUndefined();
+  await expect(page.locator('.reader-message.assistant').last()).toContainText('La vitesse intervient au carré');
+  expect(JSON.stringify(stack.state.prompts[0])).not.toContain('pdf-geometry/v1');
 });

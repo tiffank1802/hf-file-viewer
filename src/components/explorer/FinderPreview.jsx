@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react';
-import { FiDownload, FiEye, FiX } from 'react-icons/fi';
+import { lazy, Suspense, useEffect, useState } from 'react';
+import { FiBookOpen, FiDownload, FiEye, FiX } from 'react-icons/fi';
 import { fileProxyUrl } from '../../services/api';
 import { canPreviewInGallery, itemType } from '../../utils/explorer';
-import { formatBytes, formatDate, formatFolderCount } from '../../utils/files';
+import { formatBytes, formatDate, formatFolderCount, isOfficeWebViewerExtension } from '../../utils/files';
 import { INLINE_TEXT_LIMIT, readTextPreview } from '../../utils/textPreview';
 import { FileTypeIcon } from '../Icons';
+import { canOpenStructuredReader } from '../../reader/route';
+
+const OfficeViewer = lazy(() => import('../OfficeViewer'));
 
 const PDF_INLINE_LIMIT = 20 * 1024 * 1024;
 const supportedAudio = new Set(['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac']);
@@ -34,8 +37,9 @@ function PreviewContent({ item, gallery }) {
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const extension = itemType(item).toLowerCase();
+  const office = item.kind === 'office' && isOfficeWebViewerExtension(extension);
   const alreadyInGallery = gallery && canPreviewInGallery(item);
-  const renderable = item.type !== 'directory' && (canPreviewInGallery(item) || item.kind === 'text'
+  const renderable = item.type !== 'directory' && (canPreviewInGallery(item) || office || item.kind === 'text'
     || (item.kind === 'pdf' && item.size > 0 && item.size <= PDF_INLINE_LIMIT)
     || (item.kind === 'audio' && supportedAudio.has(extension))
     || (item.kind === 'video' && supportedVideo.has(extension)));
@@ -53,6 +57,9 @@ function PreviewContent({ item, gallery }) {
   </div>;
   if (!ready) return <div className="finder-preview-placeholder" role="status">Préparation de l’aperçu…</div>;
 
+  if (office) return <Suspense fallback={<p className="finder-preview-note" role="status">Préparation de l’aperçu Office…</p>}>
+    <OfficeViewer file={item} embedded />
+  </Suspense>;
   const url = fileProxyUrl(item.path);
   if (item.kind === 'image') return <img className="finder-preview-image" src={url} alt={item.name} onError={() => setFailed(true)} />;
   if (item.kind === 'text') return <TextSample url={url} />;
@@ -61,7 +68,7 @@ function PreviewContent({ item, gallery }) {
   return <video className="finder-preview-media" controls preload="metadata" src={url} onError={() => setFailed(true)} />;
 }
 
-export default function FinderPreview({ item, gallery, showDetails, onClose, onOpen }) {
+export default function FinderPreview({ item, gallery, showDetails, onClose, onOpen, onRead }) {
   const directory = item?.type === 'directory';
   return (
     <aside className="finder-preview-pane" aria-label="Prévisualisation">
@@ -78,6 +85,7 @@ export default function FinderPreview({ item, gallery, showDetails, onClose, onO
           </dl>}
           <div className="finder-preview-actions">
             <button type="button" onClick={() => onOpen(item)}>{directory ? 'Ouvrir le dossier' : 'Ouvrir en grand'}</button>
+            {item.kind === 'pdf' && onRead && canOpenStructuredReader(item.path) && <button type="button" onClick={() => onRead(item)}><FiBookOpen aria-hidden="true" /> Annoter et interroger le PDF</button>}
             {!directory && <a href={fileProxyUrl(item.path, true)} download aria-label={`Télécharger ${item.name}`}><FiDownload aria-hidden="true" /></a>}
           </div>
         </div>

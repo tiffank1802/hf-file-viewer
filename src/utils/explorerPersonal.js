@@ -8,16 +8,61 @@ export const TAGS = [
   { id: 'reference', label: 'Référence', color: '#2472ca' },
   { id: 'personal', label: 'Personnel', color: '#8052bd' },
 ];
-export const DEFAULT_FILTERS = { folder: '', kind: '', date: '', size: '', tag: '' };
-export const EMPTY_PERSONAL = { recent: [], labels: [], searches: [], pinnedOrder: [] };
+export const TAG_COLORS = [
+  ...TAGS.map(({ color }, index) => ({ color, label: ['Rouge', 'Orange', 'Vert', 'Bleu', 'Violet'][index] })),
+  { color: '#596876', label: 'Gris' },
+];
+export const MAX_CUSTOM_TAGS = 32;
+export const MAX_TAG_NAME = 28;
+const CUSTOM_TAG_ID = /^custom-[a-z0-9-]{1,64}$/;
+const canonicalTagName = (name) => name.toLocaleLowerCase('fr');
 
-export function normalizeFilters(value) {
+export function normalizeTagName(value) {
+  return typeof value === 'string' ? value.normalize('NFC').trim().replace(/\s+/gu, ' ').slice(0, MAX_TAG_NAME) : '';
+}
+
+export function normalizeCustomTags(value) {
+  const ids = new Set(TAGS.map(({ id }) => id));
+  const names = new Set(TAGS.map(({ label }) => canonicalTagName(label)));
+  const custom = [];
+  for (const input of Array.isArray(value) ? value : []) {
+    if (custom.length >= MAX_CUSTOM_TAGS) break;
+    const label = normalizeTagName(input?.label);
+    const id = input?.id;
+    const color = input?.color;
+    const canonical = canonicalTagName(label);
+    if (!label || typeof id !== 'string' || !CUSTOM_TAG_ID.test(id) || ids.has(id) || names.has(canonical) || !TAG_COLORS.some((entry) => entry.color === color)) continue;
+    custom.push({ id, label, color });
+    ids.add(id);
+    names.add(canonical);
+  }
+  return custom;
+}
+
+export function attachExplorerTag(personal, path, { id, label, color }) {
+  const name = normalizeTagName(label);
+  if (!path || !name) return personal;
+  const known = [...TAGS, ...personal.customTags];
+  const existing = known.find((entry) => canonicalTagName(entry.label) === canonicalTagName(name));
+  if (!existing && known.some((entry) => entry.id === id)) return personal;
+  const customTags = existing ? personal.customTags : normalizeCustomTags([...personal.customTags, { id, label: name, color }]);
+  const tag = existing ?? customTags.find((entry) => entry.id === id);
+  if (!tag) return personal;
+  const labels = new Map(personal.labels);
+  labels.set(path, [...new Set([...(labels.get(path) ?? []), tag.id])]);
+  return { ...personal, labels: [...labels].slice(-500), customTags };
+}
+
+export const DEFAULT_FILTERS = { folder: '', kind: '', date: '', size: '', tag: '' };
+export const EMPTY_PERSONAL = { recent: [], labels: [], searches: [], pinnedOrder: [], customTags: [] };
+
+export function normalizeFilters(value, tags = TAGS) {
   return {
     folder: typeof value?.folder === 'string' ? value.folder : '',
     kind: ['folder', 'pdf', 'office', 'image', 'model', 'audio', 'video', 'text', 'archive', 'file'].includes(value?.kind) ? value.kind : '',
     date: ['7', '30', '365'].includes(value?.date) ? value.date : '',
     size: ['small', 'large'].includes(value?.size) ? value.size : '',
-    tag: TAGS.some(({ id }) => id === value?.tag) ? value.tag : '',
+    tag: tags.some(({ id }) => id === value?.tag) ? value.tag : '',
   };
 }
 
@@ -26,12 +71,17 @@ export function hasExplorerFilters(filters) {
 }
 
 export function normalizePersonal(value) {
+  const customTags = normalizeCustomTags(value?.customTags);
+  const tags = [...TAGS, ...customTags];
+  const known = new Set(tags.map(({ id }) => id));
   const recent = Array.isArray(value?.recent) ? value.recent.filter((item) => typeof item?.path === 'string' && item.path).slice(0, 30).map(normalizeBucketItem) : [];
-  const labels = Array.isArray(value?.labels) ? value.labels.filter((entry) => Array.isArray(entry) && typeof entry[0] === 'string' && Array.isArray(entry[1])).slice(0, 500) : [];
+  const labels = Array.isArray(value?.labels) ? value.labels.filter((entry) => Array.isArray(entry) && typeof entry[0] === 'string' && Array.isArray(entry[1])).slice(0, 500)
+    .map(([path, ids]) => [path, [...new Set(ids.filter((id) => known.has(id)))]])
+    .filter(([, ids]) => ids.length > 0) : [];
   const searches = Array.isArray(value?.searches) ? value.searches.filter((entry) => typeof entry?.id === 'string' && typeof entry?.label === 'string' && typeof entry?.query === 'string').slice(0, 20)
-    .map((entry) => ({ ...entry, filters: normalizeFilters(entry.filters) })) : [];
+    .map((entry) => ({ ...entry, filters: normalizeFilters(entry.filters, tags) })) : [];
   const pinnedOrder = Array.isArray(value?.pinnedOrder) ? value.pinnedOrder.filter((entry) => typeof entry === 'string').slice(0, 500) : [];
-  return { recent, labels, searches, pinnedOrder };
+  return { recent, labels, searches, pinnedOrder, customTags };
 }
 
 export function recordExplorerRecent(recent, item) {
@@ -40,8 +90,8 @@ export function recordExplorerRecent(recent, item) {
     ...recent.filter((entry) => entry.path !== item.path)].slice(0, 30);
 }
 
-export function toggleExplorerTag(labels, path, tag) {
-  if (!TAGS.some(({ id }) => id === tag)) return labels;
+export function toggleExplorerTag(labels, path, tag, tags = TAGS) {
+  if (!tags.some(({ id }) => id === tag)) return labels;
   const next = new Map(labels);
   const current = new Set(next.get(path));
   if (current.has(tag)) current.delete(tag);

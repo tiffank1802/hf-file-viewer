@@ -4,7 +4,6 @@ import { isTauriRuntime } from '../utils/runtime';
 import { NavigationIcon } from './Icons';
 import FolderIcon from './explorer/FolderIcon';
 import PinnedFolders from './explorer/PinnedFolders';
-import { TAGS } from '../utils/explorerPersonal';
 
 function isActiveLink(currentPath, linkPath) {
   if (!linkPath) return currentPath === '';
@@ -25,6 +24,7 @@ export default function SideNav({
   searches = [],
   onOpenRecent,
   onOpenTag,
+  tags = [],
   onOpenSaved,
 }) {
   // Dossiers présents dans le bucket mais absents des liens fixes : ils
@@ -101,7 +101,7 @@ export default function SideNav({
       <div className="sidebar-section sidebar-tags">
         <span className="sidebar-label">Tags</span>
         <nav className="sidebar-links finder-personal-list" aria-label="Tags">
-          {TAGS.map((tag) => <button type="button" key={tag.id} onClick={() => onOpenTag(tag.id)}>
+          {tags.map((tag) => <button type="button" key={tag.id} onClick={() => onOpenTag(tag.id)}>
             <span><i className="finder-tag-dot" style={{ background: tag.color }} aria-hidden="true" /></span><span>{tag.label}</span>
           </button>)}
         </nav>

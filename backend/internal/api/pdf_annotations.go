@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
-	"strings"
 	"time"
 
 	"enise-docs/backend/internal/appwrite"
@@ -79,7 +78,7 @@ func (s *Server) handlePDFAnnotationCreate(w http.ResponseWriter, r *http.Reques
 	if _, err := s.readerSourcePath(query); err != nil {
 		return err
 	}
-	if err := validatePDFAnchor(&body.Anchor, body.SourceRevision); err != nil {
+	if err := validatePDFAnnotationAnchor(&body.Anchor, body.SourceRevision); err != nil {
 		return err
 	}
 	kind, color, note, err := normalizeAnnotationFields(body.Kind, body.Color, body.Body)
@@ -112,8 +111,7 @@ func publicPDFAnnotation(item appwrite.Annotation, currentRevision string) map[s
 	out["id"] = pdfAnnotationIDPrefix + item.RowID
 	out["sourceRevision"] = item.SourceRevision
 	anchor, ok := out["anchor"].(chatAnchor)
-	if !ok || anchor.SchemaVersion != pdfAnchorSchema || anchor.SourceRevision != item.SourceRevision ||
-		strings.TrimSpace(item.SourceRevision) == "" || validatePDFAnchor(&anchor, item.SourceRevision) != nil ||
+	if !ok || validatePDFAnnotationAnchor(&anchor, item.SourceRevision) != nil ||
 		(currentRevision != "" && item.SourceRevision != currentRevision) {
 		if out["status"] == "active" {
 			out["status"] = "needs-review"
