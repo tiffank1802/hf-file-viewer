@@ -1,0 +1,60 @@
+name: ENISE Docs Build
+
+on:
+  push:
+    branches: [master, main, 'arena/**']
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: enise-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Web (Vite / Cloudflare assets)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npx playwright-core install --with-deps chromium
+      - run: npm run test:finder-browser
+      - name: Archive web build
+        run: tar -czf enise-docs-web.tar.gz -C dist .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: enise-docs-web
+          path: enise-docs-web.tar.gz
+          if-no-files-found: error
+
+  api:
+    name: Backend Go (Linux x64)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          # The module only uses the standard library; no go.sum to cache.
+          cache: false
+      - run: go test ./...
+      - run: CGO_ENABLED=0 go build -trimpath -o ../enise-api-linux-amd64 ./cmd/enise-api
+      - name: Archive backend executable
+        run: tar -czf ../enise-docs-api-linux-amd64.tar.gz -C .. enise-api-linux-amd64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: enise-docs-api-linux-amd64
+          path: enise-docs-api-linux-amd64.tar.gz
+          if-no-files-found: error
