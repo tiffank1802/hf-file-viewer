@@ -1,8 +1,8 @@
 /** Noms stables des fichiers publiés par le workflow Tauri dans GitHub Releases. */
 export const DEFAULT_RELEASE_BASE_URL = 'https://github.com/tiffank1802/hf-file-viewer/releases/latest/download';
 export const FINDER_PREVIEW_RELEASE = Object.freeze({
-  tag: 'v1.1.0-test.1',
-  url: 'https://github.com/tiffank1802/hf-file-viewer/releases/tag/v1.1.0-test.1',
+  tag: 'v1.1.0-test.2',
+  url: 'https://github.com/tiffank1802/hf-file-viewer/releases/tag/v1.1.0-test.2',
 });
 export const DEFAULT_RELEASE_PAGE_URL = 'https://github.com/tiffank1802/hf-file-viewer/releases';
 
