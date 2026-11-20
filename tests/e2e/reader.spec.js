@@ -720,6 +720,13 @@ test('le texte saisi reste lisible sur les champs du lecteur en mode système so
   await page.emulateMedia({ colorScheme: 'dark' });
   await mockUnifiedPDF(page);
   await page.goto(`/read?path=${encodeURIComponent(PDF_PATH)}`);
+  const pageNumber = page.getByRole('spinbutton', { name: 'Page', exact: true });
+  await expect(pageNumber).toHaveValue('1');
+  await pageNumber.focus();
+  await expect(pageNumber).toHaveCSS('background-color', 'rgb(252, 255, 253)');
+  await expect(pageNumber).toHaveCSS('color', 'rgb(25, 60, 50)');
+  await expect(pageNumber).toHaveCSS('color-scheme', /only light|light only/);
+  await expect(page.locator('.reader-page-number').first()).toHaveCSS('color', 'rgb(25, 60, 50)');
   const showAssistant = page.getByRole('button', { name: 'Afficher l’assistant' });
   if (testInfo.project.name === 'mobile-chromium') await showAssistant.click();
   const question = page.getByRole('textbox', { name: 'Question à l’assistant du document' });
