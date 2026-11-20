@@ -434,3 +434,18 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
           RELEASE_TARGET: ${{ github.sha }}
         run: bash scripts/publish-app-release.sh release-assets
+
+  publish-finder-test:
+    name: Publish Finder test installers
+    needs: [build-macos, build-ios, build-android, build-windows, build-linux]
+    if: >-
+      github.repository == 'tiffank1802/hf-file-viewer' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/arena/197b0080-hf-file-viewer' &&
+      contains(github.event.head_commit.message, '[publish-finder-test.3]')
+    permissions:
+      actions: read
+      contents: write
+    uses: ./.github/workflows/verify-v110-finder.yml
+    with:
+      release_tag: v1.1.0-test.3

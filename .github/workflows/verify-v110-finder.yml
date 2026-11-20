@@ -1,22 +1,24 @@
-name: Verify and publish Finder installers v1.1.0-test.2
+name: Verify and publish Finder test installers
 
 on:
-  push:
-    branches: ['arena/197b0080-hf-file-viewer']
-    paths: ['.github/workflows/verify-v110-finder.yml']
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
 
 permissions:
   actions: read
   contents: write
 
 concurrency:
-  group: enise-docs-v110-test2-publication
+  group: enise-docs-test-release-${{ inputs.release_tag }}
   cancel-in-progress: false
 
 env:
-  RELEASE_TAG: v1.1.0-test.2
-  BUILD_RUN: '44770517424'
-  BUILD_SHA: 651fb5745bef0fa87443fcd39230dda77ce68ebb
+  RELEASE_TAG: ${{ inputs.release_tag }}
+  BUILD_RUN: ${{ github.run_id }}
+  BUILD_SHA: ${{ github.sha }}
 
 jobs:
   verify:
@@ -38,12 +40,18 @@ jobs:
         shell: bash
         run: |
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN" > source-run.json
-          actual=$(jq -r '[.head_repository.full_name,.path,.event,.head_branch,.head_sha,.conclusion] | @tsv' source-run.json)
-          expected=$(printf '%s\t%s\t%s\t%s\t%s\t%s' "$GITHUB_REPOSITORY" '.github/workflows/tauri-build.yml' push 'arena/197b0080-hf-file-viewer' "$BUILD_SHA" success)
+          actual=$(jq -r '[.head_repository.full_name,.path,.event,.head_branch,.head_sha] | @tsv' source-run.json)
+          expected=$(printf '%s\t%s\t%s\t%s\t%s' "$GITHUB_REPOSITORY" '.github/workflows/tauri-build.yml' push 'arena/197b0080-hf-file-viewer' "$BUILD_SHA")
           if [ "$actual" != "$expected" ]; then
             echo '::error::Le run source ne correspond pas au build Finder validé.'
             exit 1
           fi
+          version=$(node -p 'require("./src-tauri/tauri.conf.json").version')
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-test\.[0-9]+$ || "$RELEASE_TAG" != "v$version-test."* ]]; then
+            echo '::error::Le tag de préversion ne correspond pas à la version native.'
+            exit 1
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" > source-jobs.json
           draft=$(gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,targetCommitish --jq '[.isDraft,.isPrerelease,.targetCommitish] | @tsv')
           if [ "$draft" != "$(printf 'true\ttrue\t%s' "$BUILD_SHA")" ]; then
             echo '::error::Le brouillon de préversion ne cible pas le commit compilé.'
@@ -70,24 +78,29 @@ jobs:
           done
       - uses: actions/download-artifact@v7
         with:
-          github-token: ${{ github.token }}
-          run-id: ${{ env.BUILD_RUN }}
           pattern: enise-docs-*
           path: native-builds
           merge-multiple: true
-      - name: Prepare the Apple, Windows and Android packages
+      - name: Prepare all five platform packages
         run: |
           node scripts/prepare-app-release.mjs native-builds public-bundles
           (cd public-bundles && sha256sum -c SHA256SUMS.txt)
+          for file in ENISE-Docs-linux-x64.AppImage ENISE-Docs-linux-x64.deb; do
+            test -s "native-builds/$file"
+            cp "native-builds/$file" public-bundles/
+          done
       - name: Extract the packaged applications
         shell: bash
         run: |
-          mkdir -p extracted/{android,ios,sim,mac,windows}
+          mkdir -p extracted/{android,ios,sim,mac,windows,linux-appimage,linux-deb}
           unzip -q public-bundles/ENISE-Docs-android-universal.apk 'lib/*/*.so' -d extracted/android
           unzip -q public-bundles/ENISE-Docs-ios-unsigned.ipa -d extracted/ios
           unzip -q public-bundles/ENISE-Docs-ios-simulator-arm64.app.zip -d extracted/sim
           tar -xzf public-bundles/ENISE-Docs-macos-universal.app.tar.gz -C extracted/mac
           7z x -oextracted/windows public-bundles/ENISE-Docs-windows-x64-setup.exe
+          chmod +x public-bundles/ENISE-Docs-linux-x64.AppImage
+          (cd extracted/linux-appimage && ../../public-bundles/ENISE-Docs-linux-x64.AppImage --appimage-extract 'usr/bin/enise-docs')
+          dpkg-deb -x public-bundles/ENISE-Docs-linux-x64.deb extracted/linux-deb
       - name: Match the embedded entry point of each application to the Finder frontend
         shell: bash
         run: |
@@ -118,6 +131,8 @@ jobs:
               'iOS Simulator': ios_executables(root / 'sim'),
               'macOS': list((root / 'mac').glob('*.app/Contents/MacOS/enise-docs')),
               'Windows': list((root / 'windows').rglob('enise-docs.exe')),
+              'Linux AppImage': list((root / 'linux-appimage').rglob('enise-docs')),
+              'Linux deb': list((root / 'linux-deb').rglob('enise-docs')),
           }
           failed = []
           for platform, files in groups.items():
@@ -140,7 +155,11 @@ jobs:
           for file in public-bundles/ENISE-Docs-*; do
             cp "$file" "release-assets/ENISE-Docs-$RELEASE_TAG-${file#public-bundles/ENISE-Docs-}"
           done
-          jq --arg tag "$RELEASE_TAG" '{release: $tag, source_commit: .head_sha, source_branch: .head_branch, build_run: .id, build_url: .html_url, build_created_at: .created_at, build_started_at: .run_started_at, build_completed_at: .updated_at, result: .conclusion, finder_embedded_frontend: "verified in macOS, Windows NSIS, Android and iOS binaries"}' source-run.json > release-assets/BUILD-PROVENANCE.json
+          jq --arg tag "$RELEASE_TAG" --slurpfile jobs source-jobs.json '
+            {release: $tag, source_commit: .head_sha, source_branch: .head_branch,
+             build_run: .id, build_url: .html_url, build_started_at: .run_started_at,
+             native_jobs: [$jobs[0].jobs[] | select(.conclusion == "success") | {name, completed_at, html_url}],
+             finder_embedded_frontend: "verified in macOS, Windows NSIS, Android, iOS, Linux AppImage and Linux DEB binaries"}' source-run.json > release-assets/BUILD-PROVENANCE.json
           (cd release-assets && sha256sum BUILD-PROVENANCE.json ENISE-Docs-* > SHA256SUMS.txt && sha256sum -c SHA256SUMS.txt)
       - name: Upload all verified assets and publish the prerelease
         env:
