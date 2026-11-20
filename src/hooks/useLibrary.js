@@ -90,11 +90,12 @@ export function useLibrary() {
     }
   }, [commit]);
 
-  const addTab = useCallback(() => {
+  const addTab = useCallback((path) => {
     const state = session.current;
     if (state.route.tabs.length >= MAX_EXPLORER_TABS) return;
     state.nextTab += 1;
-    commit(addExplorerTab(state.route, `finder-${state.nextTab}`), { keepUrl: true });
+    const next = addExplorerTab(state.route, `finder-${state.nextTab}`, path);
+    commit(next, { keepUrl: activePath(next) === activePath(state.route) });
   }, [commit]);
   const switchTab = useCallback((id) => {
     const { route: current } = session.current;

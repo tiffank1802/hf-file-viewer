@@ -3,6 +3,7 @@ import {
   FiDownload,
   FiExternalLink,
   FiMenu,
+  FiRefreshCw,
   FiSearch,
   FiUploadCloud,
   FiX,
@@ -17,6 +18,7 @@ export default function Header({
   onOpenAuth,
   onOpenFavorites,
   onOpenDownload,
+  onCheckUpdates,
   favoriteCount = 0,
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -97,6 +99,9 @@ export default function Header({
               <span>Application</span>
             </button>
           )}
+          {inTauri && <button className="app-download-header-btn update-check-button" type="button" onClick={onCheckUpdates} aria-label="Rechercher les mises à jour" title="Rechercher les mises à jour">
+            <FiRefreshCw aria-hidden="true" /><span>Mises à jour</span>
+          </button>}
           <UserChip
             favoriteCount={favoriteCount}
             onOpenAuth={onOpenAuth}

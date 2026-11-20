@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getNativeRelease, getWebUpdate } from '../src/utils/appUpdates.js';
+import { findNativeUpdate, getNativeRelease, getWebUpdate, installedRelease } from '../src/utils/appUpdates.js';
 
 test('only a changed, valid web build offers a reload', () => {
   const current = 'a'.repeat(40);
@@ -16,6 +16,21 @@ test('native notification ignores drafts, prereleases, and older or identical ve
   for (const payload of [null, { tag_name: 'v1.9.0' }, { tag_name: 'v1.8.9' }, { tag_name: 'v2.0.0-beta.1' }, { tag_name: 'v2.0.0', prerelease: true }, { tag_name: 'v2.0.0', draft: true }]) {
     assert.equal(getNativeRelease('1.9.0', payload), null);
   }
+});
+
+test('preview updates compare the numeric build suffix and preserve channel isolation', () => {
+  const release = (tag_name, prerelease = false, draft = false) => ({ tag_name, prerelease, draft, html_url: 'https://untrusted.invalid' });
+  const feed = [release('v1.1.0-test.2', true), release('v1.1.0-test.9', true), release('v1.1.0-test.10', true),
+    release('v1.1.0-test.12', true, true), release('v1.0.0'), release('v9.0.0-beta.1', true)];
+  assert.equal(installedRelease('1.1.0', 'v1.1.0-test.4'), 'v1.1.0-test.4');
+  assert.equal(installedRelease('1.0.0', 'v1.1.0-test.4'), '1.0.0');
+  assert.equal(findNativeUpdate('1.1.0', feed), null);
+  assert.deepEqual(findNativeUpdate('v1.1.0-test.4', feed), {
+    version: '1.1.0-test.10', kind: 'preview', url: 'https://github.com/tiffank1802/hf-file-viewer/releases/tag/v1.1.0-test.10',
+  });
+  assert.equal(findNativeUpdate('v1.1.0-test.10', feed), null);
+  assert.equal(findNativeUpdate('v1.1.0-test.4', [...feed, release('v1.1.0')]).kind, 'release');
+  assert.equal(findNativeUpdate('1.1.0', [...feed, release('v1.2.0')]).version, '1.2.0');
 });
 
 test('stable feed requires every signature and pairs MSI and NSIS with the correct bundles', async (t) => {

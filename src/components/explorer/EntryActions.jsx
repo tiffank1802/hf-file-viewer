@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { FiArrowRight, FiDownload, FiEye, FiHeart, FiInfo, FiLink, FiShare2, FiX } from 'react-icons/fi';
+import { FiArrowRight, FiDownload, FiEye, FiHeart, FiInfo, FiLink, FiPlusSquare, FiShare2, FiX } from 'react-icons/fi';
 import { fileProxyUrl, huggingFaceFileUrl } from '../../services/api';
 import { itemType } from '../../utils/explorer';
 import { formatBytes, formatDate, formatFolderCount } from '../../utils/files';
 import { hrefFromLibraryPath } from '../../utils/routes';
 import { FileTypeIcon } from '../Icons';
 
-export default function EntryActions({ menu, favorite, onToggleFavorite, onOpen, onClose, tags = [], onToggleTag }) {
+export default function EntryActions({ menu, favorite, onToggleFavorite, onOpen, onOpenInTab, onClose, tags = [], onToggleTag }) {
   const dialog = useRef(null);
   const infoHeading = useRef(null);
   const [info, setInfo] = useState(menu.info ?? false);
@@ -79,6 +79,7 @@ export default function EntryActions({ menu, favorite, onToggleFavorite, onOpen,
         ) : (
           <div className="finder-action-list">
             <button type="button" onClick={() => { onClose(); onOpen(item); }}>{directory ? <FiArrowRight aria-hidden="true" /> : <FiEye aria-hidden="true" />}{directory ? 'Ouvrir le dossier' : 'Coup d’œil'}</button>
+            {directory && onOpenInTab && <button type="button" onClick={() => { onClose(); onOpenInTab(item); }}><FiPlusSquare aria-hidden="true" />Ouvrir dans un nouvel onglet</button>}
             {!directory && <a href={fileProxyUrl(item.path, true)} download><FiDownload aria-hidden="true" />Télécharger</a>}
             <button type="button" onClick={copyLink}><FiLink aria-hidden="true" />Copier le lien</button>
             {typeof navigator.share === 'function' && <button type="button" onClick={share}><FiShare2 aria-hidden="true" />Partager</button>}

@@ -61,7 +61,7 @@ jobs:
       - name: Rebuild the Finder UI from the published release commit
         shell: bash
         run: |
-          export GITHUB_SHA="$BUILD_SHA" VITE_API_ORIGIN=''
+          export GITHUB_SHA="$BUILD_SHA" VITE_API_ORIGIN='' VITE_ENISE_PREVIEW_TAG="$RELEASE_TAG"
           for mode in unset unsigned signed; do
             case "$mode" in
               unset) unset VITE_ENISE_SIGNED_UPDATER ;;

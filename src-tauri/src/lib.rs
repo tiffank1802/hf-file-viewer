@@ -1,3 +1,6 @@
+#[cfg(target_os = "macos")]
+mod finder_menu;
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -588,6 +591,19 @@ async fn handle_gateway_request(
         .unwrap_or_else(|_| Response::new(Vec::new()))
 }
 
+#[tauri::command]
+async fn list_app_releases(state: State<'_, Arc<GatewayState>>) -> Result<serde_json::Value, String> {
+    state.client
+        .get("https://api.github.com/repos/tiffank1802/hf-file-viewer/releases?per_page=20")
+        .header("Accept", "application/vnd.github+json")
+        .timeout(Duration::from_secs(10))
+        .send().await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|_| "Versions GitHub inaccessibles".to_string())?
+        .json().await
+        .map_err(|_| "Réponse de mise à jour invalide".to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let gateway_state = Arc::new(GatewayState::new());
@@ -597,6 +613,14 @@ pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(finder_menu::build).on_menu_event(|app, event| {
+        use tauri::Emitter;
+        if let Some(command) = event.id().as_ref().strip_prefix("enise:") {
+            let _ = app.emit_to("main", "enise-menu", command);
+        }
+    });
 
     builder
         .plugin(tauri_plugin_opener::init())
@@ -615,6 +639,7 @@ pub fn run() {
             });
         })
         .invoke_handler(tauri::generate_handler![
+            list_app_releases,
             get_api_origin,
             set_api_origin,
             tauri_chat_stream,

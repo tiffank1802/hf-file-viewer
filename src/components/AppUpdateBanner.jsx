@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { FiRefreshCw } from 'react-icons/fi';
 import { DEFAULT_RELEASE_PAGE_URL } from '../utils/appDownloads';
-import { fetchUpdateJson, getNativeRelease, getWebUpdate, RELEASE_API } from '../utils/appUpdates';
+import { fetchUpdateJson, findNativeUpdate, getWebUpdate, installedRelease } from '../utils/appUpdates';
+import { CHECK_UPDATE_EVENT } from '../utils/finderCommands';
 import { isTauriRuntime, openExternalUrl } from '../utils/runtime';
 
 const CHECK_PERIOD = 5 * 60_000;
@@ -10,6 +11,9 @@ const MIN_CHECK_GAP = 30_000;
 export default function AppUpdateBanner({ suspended = false }) {
   const [offer, setOffer] = useState(null);
   const [dismissed, setDismissed] = useState('');
+  const [manual, setManual] = useState(false);
+  const [checkState, setCheckState] = useState('');
+  const [current, setCurrent] = useState('');
   const [installState, setInstallState] = useState('');
   const signed = useRef(null);
   const running = useRef(false);
@@ -17,24 +21,29 @@ export default function AppUpdateBanner({ suspended = false }) {
   const inTauri = isTauriRuntime();
   const webBuild = import.meta.env.VITE_ENISE_BUILD_ID;
   const useUpdater = import.meta.env.VITE_ENISE_SIGNED_UPDATER === '1';
+  const previewTag = import.meta.env.VITE_ENISE_PREVIEW_TAG;
 
   useEffect(() => {
     if (!inTauri && !webBuild) return undefined;
     const controller = new AbortController();
     const { signal } = controller;
     let lastCheck = -Infinity;
-    let timedCheck = false;
-    const check = async () => {
-      if (signal.aborted || document.visibilityState === 'hidden' || running.current || installedVersion.current || timedCheck || Date.now() - lastCheck < MIN_CHECK_GAP) return;
-      timedCheck = true;
+    let checking = false;
+    const check = async (force = false) => {
+      if (signal.aborted || document.visibilityState === 'hidden' || running.current || installedVersion.current || checking || (!force && Date.now() - lastCheck < MIN_CHECK_GAP)) return;
+      checking = true;
       lastCheck = Date.now();
+      setCheckState('checking');
       try {
         if (!inTauri) {
           const payload = await fetchUpdateJson('/version.json', signal);
-          const version = getWebUpdate(webBuild, payload);
-          if (!signal.aborted && payload?.id) setOffer(version ? { version, kind: 'web' } : null);
+          if (!signal.aborted && payload?.id) setOffer(getWebUpdate(webBuild, payload) ? { version: payload.id, kind: 'web' } : null);
           return;
         }
+        const { getVersion } = await import('@tauri-apps/api/app');
+        const version = installedRelease(await getVersion(), previewTag);
+        if (signal.aborted) return;
+        setCurrent(version);
         if (useUpdater) {
           try {
             const { check: findSignedUpdate } = await import('@tauri-apps/plugin-updater');
@@ -44,36 +53,49 @@ export default function AppUpdateBanner({ suspended = false }) {
             signed.current = update;
             void previous?.close().catch(() => {});
             if (update) { setOffer({ version: update.version, kind: 'signed' }); return; }
-          } catch { /* Unavailable signed feed: fall back to the release page. */ }
+          } catch { /* A missing signed feed must not prevent release notifications. */ }
         }
-        const { getVersion } = await import('@tauri-apps/api/app');
-        const [version, payload] = await Promise.all([getVersion(), fetchUpdateJson(RELEASE_API, signal)]);
-        const next = getNativeRelease(version, payload);
-        if (!signal.aborted && payload) setOffer(next ? { version: next, kind: 'release' } : null);
-      } catch { /* An offline or malformed response must not interrupt the app. */ }
-      finally { timedCheck = false; }
+        const { invoke } = await import('@tauri-apps/api/core');
+        const releases = await invoke('list_app_releases');
+        if (!Array.isArray(releases)) throw new Error('invalid releases');
+        if (!signal.aborted) setOffer(findNativeUpdate(version, releases));
+      } catch {
+        if (!signal.aborted) setCheckState('error');
+      } finally {
+        checking = false;
+        if (!signal.aborted) setCheckState((state) => state === 'checking' ? 'done' : state);
+      }
     };
-    void check();
-    const timer = window.setInterval(check, CHECK_PERIOD);
-    window.addEventListener('focus', check);
-    window.addEventListener('online', check);
-    document.addEventListener('visibilitychange', check);
+    const automatic = () => { void check(); };
+    const manualCheck = () => {
+      setManual(true);
+      setDismissed('');
+      void check(true);
+    };
+    automatic();
+    const timer = window.setInterval(automatic, CHECK_PERIOD);
+    window.addEventListener(CHECK_UPDATE_EVENT, manualCheck);
+    window.addEventListener('focus', automatic);
+    window.addEventListener('online', automatic);
+    document.addEventListener('visibilitychange', automatic);
     return () => {
       controller.abort();
       window.clearInterval(timer);
-      window.removeEventListener('focus', check);
-      window.removeEventListener('online', check);
-      document.removeEventListener('visibilitychange', check);
+      window.removeEventListener(CHECK_UPDATE_EVENT, manualCheck);
+      window.removeEventListener('focus', automatic);
+      window.removeEventListener('online', automatic);
+      document.removeEventListener('visibilitychange', automatic);
       void signed.current?.close().catch(() => {});
       signed.current = null;
     };
-  }, [inTauri, webBuild, useUpdater]);
+  }, [inTauri, previewTag, webBuild, useUpdater]);
 
-  if (suspended || !offer || offer.version === dismissed) return null;
+  const activeOffer = offer && offer.version !== dismissed ? offer : null;
+  if ((suspended && !manual) || (!manual && !activeOffer)) return null;
 
   const updateNow = async () => {
-    if (offer.kind === 'web') { window.location.reload(); return; }
-    if (offer.kind === 'release') { await openExternalUrl(DEFAULT_RELEASE_PAGE_URL); return; }
+    if (activeOffer.kind === 'web') { window.location.reload(); return; }
+    if (activeOffer.url) { await openExternalUrl(activeOffer.url); return; }
     const update = signed.current;
     if (!update || running.current) return;
     running.current = true;
@@ -81,20 +103,27 @@ export default function AppUpdateBanner({ suspended = false }) {
     try {
       await update.downloadAndInstall();
       installedVersion.current = update.version;
-      setInstallState('Mise à jour installée. Ferme puis rouvre l’application.');
+      setInstallState('Mise à jour installée. Fermez puis rouvrez l’application.');
     } catch {
-      setInstallState('Installation impossible. Tu peux réessayer ou consulter les versions publiées.');
+      setInstallState('Installation impossible. Vous pouvez réessayer ou consulter les versions publiées.');
     } finally { running.current = false; }
   };
   const installed = installState.startsWith('Mise à jour installée');
   const installing = installState.startsWith('Téléchargement');
+  const message = installState || (activeOffer
+    ? `${activeOffer.kind === 'preview' ? 'Nouvelle préversion' : 'Nouvelle version'} ${inTauri ? `${activeOffer.version} ` : ''}disponible.`
+    : checkState === 'checking' ? 'Recherche de mises à jour…'
+      : checkState === 'error' ? 'Impossible de vérifier les mises à jour. Vérifiez votre connexion et réessayez.'
+        : 'Aucune mise à jour disponible sur votre canal.');
+  const label = activeOffer?.kind === 'preview' ? 'Télécharger la préversion' : activeOffer?.kind === 'release' ? 'Voir la mise à jour' : 'Mettre à jour';
   return (
     <aside className="app-update-banner" aria-label="Mise à jour de l’application">
-      <p role="status"><FiRefreshCw aria-hidden="true" /><span>{installState || `Nouvelle version ${inTauri ? `${offer.version} ` : ''}disponible.`}</span></p>
+      <p role="status"><FiRefreshCw aria-hidden="true" /><span>{message}</span></p>
+      {manual && current && <small>Version installée : {current}</small>}
       <div>
-        {!installed && <button type="button" onClick={updateNow} disabled={installing}>{offer.kind === 'release' ? 'Voir la mise à jour' : 'Mettre à jour'}</button>}
+        {activeOffer && !installed && <button type="button" onClick={updateNow} disabled={installing || checkState === 'checking'}>{label}</button>}
         {installState.startsWith('Installation impossible') && <button type="button" onClick={() => openExternalUrl(DEFAULT_RELEASE_PAGE_URL)}>Versions publiées</button>}
-        {!installing && <button type="button" onClick={() => { setDismissed(offer.version); setInstallState(''); }}>{installed ? 'Fermer' : 'Plus tard'}</button>}
+        {!installing && <button type="button" onClick={() => { if (offer) setDismissed(offer.version); setManual(false); if (!installed) setInstallState(''); }}>{activeOffer && !installed ? 'Plus tard' : 'Fermer'}</button>}
       </div>
     </aside>
   );

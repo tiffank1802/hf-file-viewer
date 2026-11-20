@@ -143,6 +143,10 @@ Le workflow [ENISE Docs Build](./.github/workflows/enise-build.yml) valide et ar
 - **Tauri :** macOS, Windows et Linux AppImage utilisent le [plugin Updater Tauri](https://v2.tauri.app/plugin/updater/) lorsque le build embarque la clé publique et qu’un `latest.json` signé par artefact est publié. Le paquet est téléchargé seulement après accord ; il n’est pas différentiel. Pour Linux `.deb` et pour les builds sans updater signé, l’alerte ouvre la page des versions. Les anciens clients 1.0.0 doivent installer manuellement une première version équipée de l’updater.
 - **Mobile :** l’alerte ouvre les versions GitHub ; elle n’installe rien. Un APK doit conserver la clé de distribution d’origine pour remplacer un APK existant. Sur iOS, une distribution installable requiert signature et provisioning Apple, par exemple via TestFlight.
 
+Dans l’application native, le bouton **Mises à jour** vérifie immédiatement la version installée et signale une erreur réseau ou l’absence d’offre. Les préversions identifiées à la compilation suivent le canal `vX.Y.Z-test.N` et ouvrent la page de téléchargement de la version proposée. Une installation stable ignore les préversions. L’installation automatique reste réservée aux paquets desktop signés ; elle n’est pas utilisée pour les APK de test, l’IPA non signé ni les paquets Linux `.deb`.
+
+Sur macOS, la barre de menus native expose **Fichier**, **Édition**, **Présentation**, **Aller** et les mises à jour dans **ENISE Docs**. Le clic droit (Linux, Windows et macOS) distingue les actions d’un fichier/dossier et celles de l’espace vide. Dans un dossier, le ruban sépare les modes d’affichage, le classement et la présentation.
+
 Les réglages de production sont dans [`wrangler.jsonc`](./wrangler.jsonc) :
 
 ```jsonc

@@ -1829,3 +1829,10 @@ body.reader-open { overflow: hidden; }
 .app-update-banner button + button { background: white; color: var(--green-dark); border: 1px solid var(--line); }
 .app-update-banner button:disabled { opacity: .6; cursor: wait; }
 @media (max-width: 700px) { .app-update-banner { max-width: calc(100% - 90px); bottom: calc(88px + env(safe-area-inset-bottom)); } }
+
+.app-update-banner > div { flex-wrap: wrap; }
+.app-update-banner small { color: var(--ink-soft); }
+@media (max-width: 700px) {
+  .update-check-button span { display: none; }
+  .update-check-button { display: inline-flex; }
+}

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { FiDownload, FiHeart, FiHome, FiSearch } from 'react-icons/fi';
 import AppDownloadModal from './components/AppDownloadModal';
 import AppUpdateBanner from './components/AppUpdateBanner';
@@ -24,6 +24,7 @@ import { useExplorerPersonal } from './hooks/useExplorerPersonal';
 import { getName, normalizeBucketItem } from './utils/files';
 import { orderPinnedFolders } from './utils/explorerPersonal';
 import { isTauriRuntime } from './utils/runtime';
+import { requestUpdateCheck, sendFinderCommand } from './utils/finderCommands';
 import './index.css';
 import './components/explorer/explorer.css';
 
@@ -148,6 +149,25 @@ export default function App() {
 
   const selectedIsFavorite = selectedFile ? favoritePaths.includes(selectedFile.path) : false;
 
+  const nativeMenuAction = useEffectEvent((command) => {
+    if (command === 'update') { requestUpdateCheck(); return; }
+    if (readerFile || selectedFile || studyFile || searchState.open || authPanel.open || downloadOpen || document.querySelector('.finder-dialog[open]')) return;
+    if (command === 'search') openSearch('search');
+    else sendFinderCommand(command);
+  });
+  useEffect(() => {
+    if (!inTauri) return undefined;
+    let stopped = false;
+    let unlisten;
+    void import('@tauri-apps/api/event').then(async ({ listen }) => {
+      const off = await listen('enise-menu', ({ payload }) => nativeMenuAction(payload));
+      if (stopped) void off().catch(() => {});
+      else unlisten = off;
+    }).catch(() => {});
+    return () => { stopped = true; void unlisten?.().catch(() => {}); };
+  }, [inTauri]);
+
+
   if (readerFile) {
     const params = new URLSearchParams(window.location.search);
     return (
@@ -192,6 +212,7 @@ export default function App() {
         onOpenFavorites={() => openSearch('favorites')}
         onOpenDownload={openDownload}
         favoriteCount={favoriteItems.length}
+        onCheckUpdates={requestUpdateCheck}
       />
 
       {favoritesAlertKey && favoritesAlertKey !== dismissedAlertKey && (

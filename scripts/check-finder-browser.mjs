@@ -24,6 +24,7 @@ const blank = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AA
 let sse;
 const emit = (event, data) => sse.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 const vite = await createServer({
+  define: { 'import.meta.env.VITE_ENISE_PREVIEW_TAG': JSON.stringify('v1.1.0-test.4') },
   server: { host: '127.0.0.1', port: 0, hmr: false },
   plugins: [{
     name: 'test-chat-stream',
@@ -272,8 +273,59 @@ try {
   await mobile.getByRole('complementary', { name: 'Prévisualisation' }).getByText('Un aperçu en français.', { exact: true }).waitFor();
   assert.equal(await mobile.getByRole('dialog').count(), 0);
   assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await mobile.close();
+
+  // Simulate Tauri's event and updater IPC while exercising the real UI.
+  const native = await browser.newPage({ viewport: { width: 1250, height: 850 } });
+  await stub(native);
+  await native.addInitScript((origin) => {
+    const handlers = new Map();
+    let next = 0;
+    window.isTauri = true;
+    window.__nativeEvent = (payload) => handlers.forEach((fn) => fn({ payload }));
+    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: (_event, id) => handlers.delete(id) };
+    window.__nativeReleases = [{ tag_name: 'v1.1.0-test.4', prerelease: true }];
+    window.__TAURI_INTERNALS__ = {
+      convertFileSrc: () => origin,
+      transformCallback: (handler) => { handlers.set(++next, handler); return next; },
+      unregisterCallback: () => {},
+      async invoke(command, args) {
+        if (command === 'plugin:app|version') return '1.1.0';
+        if (command === 'list_app_releases') return window.__nativeReleases;
+        if (command === 'plugin:event|listen') { window.__nativeListening = true; return args.handler; }
+        if (command === 'plugin:opener|open_url') window.__openedRelease = args.url;
+      },
+    };
+  }, base);
+  await native.goto(href(lesson));
+  await native.waitForFunction(() => window.__nativeListening);
+  await native.evaluate(() => window.__nativeEvent('view-list'));
+  assert.equal(await control(native, 'Affichage : Liste').getAttribute('aria-pressed'), 'true');
+  await entry(native, empty).click({ button: 'right' });
+  await control(native.getByRole('dialog'), 'Ouvrir dans un nouvel onglet').click();
+  await native.waitForURL(href(empty));
+  assert.equal(await native.getByRole('tab').count(), 2);
+  await native.locator('.finder-content').click({ button: 'right' });
+  const folderActions = native.getByRole('dialog', { name: 'Actions du dossier' });
+  await control(folderActions, 'Colonnes').click();
+  assert.equal(await control(native, 'Affichage : Colonnes').getAttribute('aria-pressed'), 'true');
+  await native.getByRole('button', { name: 'Rechercher les mises à jour' }).click();
+  const updates = native.getByRole('complementary', { name: 'Mise à jour de l’application' });
+  await updates.getByText('Aucune mise à jour disponible sur votre canal.').waitFor();
+  await updates.getByText('Version installée : v1.1.0-test.4').waitFor();
+  await control(updates, 'Fermer').click();
+  await native.evaluate(() => {
+    window.__nativeReleases = [{ tag_name: 'v1.1.0-test.5', prerelease: true }];
+    window.__nativeEvent('update');
+  });
+  await updates.getByText('Nouvelle préversion 1.1.0-test.5 disponible.').waitFor();
+  await control(updates, 'Télécharger la préversion').click();
+  await native.waitForFunction(() => window.__openedRelease === 'https://github.com/tiffank1802/hf-file-viewer/releases/tag/v1.1.0-test.5');
+  await control(updates, 'Plus tard').click();
+  await updates.waitFor({ state: 'hidden' });
+  assert.equal(native.url(), href(empty));
   assert.deepEqual(runtimeErrors, []);
-  console.log('Finder : bureau et mobile ; assistant : défilement pendant un flux SSE validé.');
+  console.log('Finder : bureau, mobile, commandes natives et menus contextuels ; notifications de préversion et défilement SSE validés.');
 } finally {
   if (sse && !sse.writableEnded) sse.end();
   await browser?.close();
