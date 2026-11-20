@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { FiDownload, FiExternalLink, FiInfo, FiShield, FiX } from 'react-icons/fi';
 import {
   APP_PLATFORMS,
+  FINDER_PREVIEW_RELEASE,
   buildAppAssetUrl,
   detectClientPlatform,
   getPlatformById,
@@ -114,7 +115,19 @@ export default function AppDownloadModal({ open, onClose }) {
         <div className="app-download-head">
           <span className="app-download-badge">Application pour ordinateur et mobile</span>
           <h2 id="app-download-title">Télécharger ENISE Docs</h2>
-          <p id="app-download-intro">Choisissez votre appareil pour télécharger l’application. Les fichiers sont hébergés sur GitHub Releases.</p>
+          <p id="app-download-intro">Les boutons par plateforme téléchargent la dernière version stable. Pour essayer l’explorateur Finder, utilisez la préversion ci-dessous.</p>
+        </div>
+
+        <div className="app-download-featured">
+          <p className="app-download-note">
+            <FiInfo aria-hidden="true" />
+            <span><strong>Explorer comme dans Finder</strong> · préversion {FINDER_PREVIEW_RELEASE.tag}. Consultez les conditions d’installation pour votre appareil.</span>
+          </p>
+          <div className="app-download-footer">
+            <a href={FINDER_PREVIEW_RELEASE.url} target="_blank" rel="noopener noreferrer" onClick={(event) => handleExternalClick(event, FINDER_PREVIEW_RELEASE.url)}>
+              Télécharger la préversion Finder <FiExternalLink aria-hidden="true" />
+            </a>
+          </div>
         </div>
 
         <div className="app-download-featured" aria-live="polite">

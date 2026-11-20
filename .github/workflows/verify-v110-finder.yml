@@ -1,0 +1,90 @@
+name: Verify Finder in published v1.1.0 installers
+
+on:
+  push:
+    branches: ['arena/197b0080-hf-file-viewer']
+    paths: ['.github/workflows/verify-v110-finder.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: 9278581860b8a90fe124b772391aafd48a709ffc
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Rebuild the Finder UI from the published release commit
+        shell: bash
+        run: |
+          export GITHUB_SHA=9278581860b8a90fe124b772391aafd48a709ffc VITE_API_ORIGIN=''
+          for mode in unset unsigned signed; do
+            case "$mode" in
+              unset) unset VITE_ENISE_SIGNED_UPDATER ;;
+              unsigned) export VITE_ENISE_SIGNED_UPDATER=0 ;;
+              signed) export VITE_ENISE_SIGNED_UPDATER=1 ;;
+            esac
+            npm run build
+            index=$(sed -nE 's|.*src="/build-assets/(index-[^"]+\.js)".*|\1|p' dist/index.html)
+            test -n "$index"
+            grep -q 'finder-toolbar' "dist/build-assets/$index"
+            grep -q 'finder-preview-toggle' "dist/build-assets/$index"
+            grep -q "$GITHUB_SHA" "dist/build-assets/$index"
+            printf '%s\n' "$index" >> "$RUNNER_TEMP/finder-asset-keys.txt"
+          done
+      - name: Download and verify the public release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v1.1.0-test.1 --dir public-bundles
+          (cd public-bundles && sha256sum -c SHA256SUMS.txt)
+      - name: Extract the packaged applications
+        shell: bash
+        run: |
+          mkdir -p extracted/{android,ios,sim,mac,windows}
+          unzip -q public-bundles/ENISE-Docs-android-universal.apk 'lib/*/*.so' -d extracted/android
+          unzip -q public-bundles/ENISE-Docs-ios-unsigned.ipa -d extracted/ios
+          unzip -q public-bundles/ENISE-Docs-ios-simulator-arm64.app.zip -d extracted/sim
+          tar -xzf public-bundles/ENISE-Docs-macos-universal.app.tar.gz -C extracted/mac
+          7z x -oextracted/windows public-bundles/ENISE-Docs-windows-x64-setup.exe
+      - name: Match the embedded entry point of each application to the Finder frontend
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          keys = [key.encode() for key in set((Path(os.environ['RUNNER_TEMP']) / 'finder-asset-keys.txt').read_text().splitlines())]
+          root = Path('extracted')
+          android = sorted((root / 'android').glob('lib/*/libenise_docs_lib.so'))
+          if not android:
+              raise SystemExit('::error::No ENISE Android native libraries in the APK')
+          groups = {
+              **{f'Android {lib.parent.name}': [lib] for lib in android},
+              'iOS': list((root / 'ios').glob('Payload/*.app/enise-docs')),
+              'iOS Simulator': list((root / 'sim').glob('*.app/enise-docs')),
+              'macOS': list((root / 'mac').glob('*.app/Contents/MacOS/enise-docs')),
+              'Windows': list((root / 'windows').rglob('enise-docs.exe')),
+          }
+          failed = []
+          for platform, files in groups.items():
+              matches = set()
+              for file in files:
+                  data = file.read_bytes()
+                  matches.update(key.decode() for key in keys if key in data)
+              if matches:
+                  print(f'{platform}: embedded Finder entry point {", ".join(sorted(matches))}')
+              else:
+                  print(f'::error::{platform}: expected Finder asset not found in {files}')
+                  failed.append(platform)
+          if failed:
+              raise SystemExit(1)
+          PY
