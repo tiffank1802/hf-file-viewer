@@ -86,20 +86,7 @@ func (s *Server) preparePDFStudy(ctx context.Context, scope chatScope, message, 
 	// A selection remains exactly the visible excerpt; do not silently add
 	// surrounding passages or label browser-supplied geometry as verified.
 	if scope.Anchor == nil && s.cfg.DerivedBucketID != "" {
-		structuredScope := chatScope{SourcePath: scope.SourcePath, Page: scope.Page}
-		doclingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		structured, err := s.prepareStructuredStudy(doclingCtx, structuredScope, message, intent, func(manifest *reader.Manifest) bool {
-			digest := manifest.SourceSHA256
-			if !validPDFRevision("sha256:" + digest) {
-				return false
-			}
-			if strings.HasPrefix(scope.SourceRevision, "sha256:") {
-				return scope.SourceRevision == "sha256:"+digest // bytes already verified above
-			}
-			actual, err := s.sourcePDFDigest(doclingCtx, scope.SourcePath, scope.SourceRevision)
-			return err == nil && actual == digest
-		})
-		cancel()
+		structured, err := s.prepareMatchedPDFStructure(ctx, scope, message, intent)
 		if err == nil && structured.ready() {
 			structured.SourceRevision = scope.SourceRevision
 			structured.RequestedPage = scope.Page
@@ -167,6 +154,25 @@ func (s *Server) preparePDFStudy(ctx context.Context, scope chatScope, message, 
 	study.Retrieval.Coverage.SelectedChunks = len(evidence)
 	study.Retrieval.Coverage.TotalChunks = study.Retrieval.Coverage.TotalPages
 	return study, nil
+}
+
+// The caller has already verified the PDF revision against the source.
+// A strong ETag identifies the opened revision, but only the digest of its
+// actual bytes can be compared with the digest issued by Docling.
+func (s *Server) prepareMatchedPDFStructure(ctx context.Context, scope chatScope, message, intent string) (*documentStudy, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return s.prepareStructuredStudy(ctx, chatScope{SourcePath: scope.SourcePath, ArtifactID: scope.ArtifactID, Page: scope.Page}, message, intent, func(manifest *reader.Manifest) bool {
+		digest := manifest.SourceSHA256
+		if !validPDFRevision("sha256:" + digest) {
+			return false
+		}
+		if strings.HasPrefix(scope.SourceRevision, "sha256:") {
+			return scope.SourceRevision == "sha256:"+digest
+		}
+		actual, err := s.sourcePDFDigest(ctx, scope.SourcePath, scope.SourceRevision)
+		return err == nil && actual == digest
+	})
 }
 
 // Page scope excludes multi-page chunks even when they rank highly.

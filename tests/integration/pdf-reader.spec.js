@@ -361,3 +361,21 @@ test('Go + PDF.js : zone et dessin privés, export local et contexte d’une pag
   await expect(page.locator('.reader-message.assistant').last()).toContainText('La vitesse intervient au carré');
   expect(JSON.stringify(stack.state.prompts[0])).not.toContain('pdf-geometry/v1');
 });
+
+
+test('Go + PDF.js : les métadonnées vérifiées naviguent dans le PDF sans vue alternative', async ({ page, context, stack }) => {
+  stack.state.docling = true;
+  await isolateContext(context, stack.base, 'alice');
+  await openPDF(page, stack);
+  await page.getByRole('tab', { name: 'Plan', exact: true }).click();
+  await page.getByRole('button', { name: /Energie cinetique - lecteur R6/ }).click();
+  await expect(page.locator('.reader-highlight.citation')).toBeVisible();
+  const firstPosition = await page.locator('.reader-highlight.citation').evaluate((node) => node.style.top);
+  await expect(page.getByRole('group', { name: 'Mode de lecture' })).toHaveCount(0);
+  await page.getByLabel('Question à l’assistant du document').fill('Que dit le cours sur la vitesse ?');
+  await page.getByRole('button', { name: 'Envoyer la question' }).click();
+  await page.locator('.reader-answer-citations').getByRole('button', { name: /Docling vérifié/ }).click();
+  await expect(page.locator('.reader-highlight.citation')).toBeVisible();
+  await expect.poll(() => page.locator('.reader-highlight.citation').evaluate((node) => node.style.top)).not.toBe(firstPosition);
+  await expect(page.locator('.structured-reader')).toHaveCount(0);
+});

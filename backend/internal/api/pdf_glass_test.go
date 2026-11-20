@@ -7,8 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
+
+	"enise-docs/backend/internal/catalog"
 
 	"enise-docs/backend/internal/config"
 )
@@ -38,7 +42,7 @@ func TestPDFDoclingSameRevisionAndPageScope(t *testing.T) {
 				case strings.HasSuffix(r.URL.Path, "/manifest.json"):
 					_, _ = fmt.Fprintf(w, `{"sourcePath":"%s","artifactId":"a","status":"ready","sourceSha256":"%s","files":{"document":"document.json","chunks":"chunks.jsonl"}}`, source, manifestDigest)
 				case strings.HasSuffix(r.URL.Path, "/document.json"):
-					_, _ = fmt.Fprint(w, `{"artifactId":"a","blocks":[{"id":"p1","type":"paragraph","text":"Secret autre page","provenance":[{"page_no":1}]},{"id":"p2","type":"paragraph","text":"Texte Docling page deux","provenance":[{"page_no":2}]},{"id":"p3","type":"paragraph","text":"Secret autre page dans un bloc multipage","provenance":[{"page_no":2},{"page_no":3}]}]}`)
+					_, _ = fmt.Fprint(w, `{"artifactId":"a","blocks":[{"id":"p1","type":"section_header","text":"Secret autre page","provenance":[{"page_no":1}]},{"id":"p2","type":"paragraph","text":"Texte Docling page deux","provenance":[{"page_no":2}]},{"id":"p3","type":"paragraph","text":"Secret autre page dans un bloc multipage","provenance":[{"page_no":2},{"page_no":3}]}]}`)
 				case strings.HasSuffix(r.URL.Path, "/chunks.jsonl"):
 					_, _ = fmt.Fprintln(w, `{"id":"cross","text":"Secret autre page et deuxième page","blockIds":["p1","p2"],"pages":[1,2]}`)
 				default:
@@ -50,6 +54,23 @@ func TestPDFDoclingSameRevisionAndPageScope(t *testing.T) {
 			revision := strongETagRevision(`"identity"`)
 			if state == "sha256" {
 				revision = "sha256:" + digest
+			}
+			s.cache.SetIndex(&catalog.IndexDocument{BucketID: "source", Complete: true, Items: []catalog.BucketItem{{Type: "file", Path: source}}}, time.Hour, time.Hour)
+			query := url.Values{"path": {source}, "sourceRevision": {revision}}
+			response := pdfTestRequest(s, http.MethodGet, "/api/reader/document?"+query.Encode(), nil, "")
+			var meta struct {
+				SourceRevision string
+				Outline        []readerOutlineItem
+			}
+			if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &meta) != nil {
+				t.Fatalf("metadata request failed: %d %s", response.Code, response.Body)
+			}
+			if state == "stale-artifact" || state == "different-get-etag" {
+				if meta.SourceRevision != "" || len(meta.Outline) != 0 {
+					t.Fatalf("stale outline exposed: %+v", meta)
+				}
+			} else if meta.SourceRevision != revision || len(meta.Outline) != 1 || meta.Outline[0].Page != 1 {
+				t.Fatalf("matched outline missing: %+v", meta)
 			}
 			scope := chatScope{SourcePath: source, SourceRevision: revision, Page: 2}
 			if state == "stale-artifact" || state == "different-get-etag" {

@@ -46,7 +46,7 @@ async function waitUntilReady(base, child) {
 }
 
 /** Real Go and static frontend; only storage, Appwrite and the AI are fake. */
-export async function startPDFStack() {
+export async function startPDFStack({ docling = false } = {}) {
   const binary = process.env.PDF_INTEGRATION_GO_BIN;
   if (!binary) throw new Error('Utilisez npm run test:pdf-integration pour compiler le backend de test.');
   const temp = await mkdtemp(path.join(tmpdir(), 'enise-pdf-stack-'));
@@ -62,6 +62,7 @@ export async function startPDFStack() {
     permissions: [],
     prompts: [],
     providerAborts: 0,
+    docling,
     doclingRequests: 0,
     fileRequests: [],
     pdfListCalls: 0,
@@ -152,7 +153,30 @@ async function handleFake(request, response, state, pdf) {
   }
   if (url.pathname.includes('/reader/v1/')) {
     state.doclingRequests += 1;
-    return replyJSON(response, { message: 'Docling volontairement indisponible' }, 503);
+    if (!state.docling) return replyJSON(response, { message: 'Docling volontairement indisponible' }, 503);
+    const artifactId = 'pdf-overlay-fixture';
+    const artifactPrefix = `reader/v1/${artifactId}`;
+    const manifestPath = `${artifactPrefix}/manifest.json`;
+    const sourceSha256 = createHash('sha256').update(pdf).digest('hex');
+    if (url.pathname.endsWith('/reader/v1/catalog.json')) {
+      return replyJSON(response, { documents: { [PDF_PATH]: { status: 'ready', artifactId, artifactPrefix, manifestPath } } });
+    }
+    if (url.pathname.endsWith(`/${manifestPath}`)) {
+      return replyJSON(response, { sourcePath: PDF_PATH, status: 'ready', artifactId, sourceSha256, files: { document: 'document.json', chunks: 'chunks.jsonl' } });
+    }
+    const heading = 'Energie cinetique - lecteur R6';
+    const paragraph = 'La vitesse intervient au carre.';
+    if (url.pathname.endsWith(`/${artifactPrefix}/document.json`)) {
+      return replyJSON(response, { artifactId, blocks: [
+        { id: 'titre', type: 'title', text: heading, provenance: [{ page_no: 1 }] },
+        { id: 'paragraphe', type: 'paragraph', text: paragraph, provenance: [{ page_no: 1 }] },
+      ] });
+    }
+    if (url.pathname.endsWith(`/${artifactPrefix}/chunks.jsonl`)) {
+      response.writeHead(200, { 'Content-Type': 'application/jsonl' });
+      return response.end(`${JSON.stringify({ id: 'p1', text: paragraph, blockIds: ['paragraphe'], pages: [1] })}\n`);
+    }
+    return replyJSON(response, { message: 'Artefact de test introuvable' }, 404);
   }
   if (url.pathname.endsWith(`/resolve/${PDF_PATH}`)) {
     state.fileRequests.push({ method: request.method, range: request.headers.range || '' });

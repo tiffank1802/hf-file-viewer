@@ -2,6 +2,7 @@ import {
   forwardRef,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -12,6 +13,7 @@ import { GlobalWorkerOptions, PDFDataRangeTransport, TextLayer, getDocument } fr
 import workerSource from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import 'pdfjs-dist/web/pdf_viewer.css';
 import { isTauriRuntime } from '../utils/runtime';
+import { findPDFTextRange } from './pdfTextOverlay';
 import { PdfGeometryInput, PdfShape } from './PdfGeometryLayer';
 import { normalizedQuadsForViewport, pdfQuadsFromClientRects } from './selectionAnchor';
 import { createTauriPDFSource, PDF_RANGE_CHUNK_SIZE } from './tauriPdfRange';
@@ -301,9 +303,36 @@ function PdfPage({ pdf, pageNumber, zoom, highlights, textAvailable, register, o
     };
   }, [nearViewport, onRendered, pageNumber, pdf, renderAttempt, zoom]);
 
+  const navigation = highlights.findLast((item) => item.matchText);
+  const [match, setMatch] = useState(null);
+  const positionedNavigation = useRef(null);
+  useLayoutEffect(() => {
+    const shell = shellRef.current;
+    if (!rendered || !navigation || !shell || !pageViewport) return;
+    const range = findPDFTextRange(textRef.current, navigation.matchText);
+    if (!range) return;
+    const bounds = shell.getBoundingClientRect();
+    const quads = pdfQuadsFromClientRects(range.getClientRects(), bounds, pageViewport);
+    if (!quads.length) return;
+    setMatch({ id: navigation.navigationId, quads });
+    if (positionedNavigation.current === navigation.navigationId) return;
+    positionedNavigation.current = navigation.navigationId;
+    const container = shell.closest('.reader-document');
+    const marker = range.getBoundingClientRect();
+    if (!container) return;
+    const frame = container.getBoundingClientRect();
+    const x = marker.left - frame.left;
+    container.scrollTo({
+      top: container.scrollTop + marker.top - frame.top - Math.min(70, container.clientHeight / 6),
+      left: x >= 0 && x < container.clientWidth - 24 ? container.scrollLeft : container.scrollLeft + x - 24,
+      behavior: 'auto',
+    });
+  }, [navigation, pageViewport, rendered]);
+
   const positionedHighlights = highlights.flatMap((highlight, highlightIndex) => {
     const segment = highlight.segments?.find((item) => Number(item.page) === pageNumber);
-    const pdfRegions = segment ? normalizedQuadsForViewport(segment.quads, pageViewport) : [];
+    const matchQuads = highlight.navigationId && match?.id === highlight.navigationId ? match.quads : undefined;
+    const pdfRegions = normalizedQuadsForViewport(segment?.quads ?? matchQuads, pageViewport);
     const regions = pdfRegions.length ? pdfRegions : (highlight.rects?.length ? highlight.rects : (highlight.bbox ? [highlight.bbox] : []));
     return regions
       .map((region, rectIndex) => ({

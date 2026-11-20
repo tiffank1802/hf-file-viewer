@@ -206,7 +206,7 @@ test('les panneaux du lecteur restent accessibles sur mobile', async ({ page }, 
 async function mockUnifiedPDF(page, { ranges = false, scanned = false, fixture = PDF_FIXTURE } = {}) {
   const state = {
     revision: `etag-sha256:${'a'.repeat(64)}`, strategy: 'strong-etag', annotations: [], chats: [],
-    doclingCalls: 0, ranges: [], failFile: false, structuredReady: false,
+    doclingCalls: 0, blockCalls: 0, metadataRevision: undefined, ranges: [], failFile: false, structuredReady: false,
     doclingGate: null, annotationGate: null, annotationWrites: 0,
     annotationListGate: null, annotationLists: 0, annotationWarning: '',
   };
@@ -231,12 +231,15 @@ async function mockUnifiedPDF(page, { ranges = false, scanned = false, fixture =
       state.doclingCalls += 1;
       if (state.doclingGate) await state.doclingGate;
       if (!state.structuredReady) return json({ error: 'Docling indisponible' }, 503);
-      return json({ sourcePath: PDF_PATH, kind: 'pdf', status: 'structured-ready', artifactId: 'docling-test', pageCount: 1, capabilities: { pdf: true, structured: true }, outline: [] });
+      return json({ sourcePath: PDF_PATH, sourceRevision: state.metadataRevision ?? url.searchParams.get('sourceRevision'), title: 'Titre vérifié de la fixture', kind: 'pdf', status: 'structured-ready', artifactId: 'docling-test', pageCount: 1, capabilities: { pdf: true, structured: true }, outline: [
+        { blockId: 'title', label: 'Energie cinetique - lecteur R6', page: 1, level: 1 },
+        { blockId: 'unmatched', label: 'Un intitulé absent de la couche texte', page: 1, level: 2 },
+      ] });
     }
-    if (url.pathname === '/api/reader/blocks') return json({
-      sourcePath: PDF_PATH, artifactId: 'docling-test', total: 1, nextFrom: 0,
-      blocks: [{ id: 'b-structured', ordinal: 1, type: 'text', page: 1, text: 'Un passage restructuré par Docling.' }],
-    });
+    if (url.pathname === '/api/reader/blocks') {
+      state.blockCalls += 1;
+      return json({ blocks: [] });
+    }
     if (url.pathname === '/api/reader/pdf-revision') return json({ sourcePath: PDF_PATH, revision: state.revision, strategy: state.strategy, size: pdfBytes.length, maxHashBytes: 67108864 });
     if (url.pathname === '/api/file') {
       if (state.failFile) return json({ error: 'Le PDF a changé pendant sa lecture.' }, 409);
@@ -519,22 +522,28 @@ test('PDF unifié : sélection multipages avec rotation et CropBox conserve deux
   await expect(page.locator('[data-reader-page="2"] .reader-highlight.annotation').first()).toBeAttached();
 });
 
-test('PDF unifié : changer de mode abandonne la sélection précédente sans mélanger les ancres', async ({ page }, testInfo) => {
+test('PDF unifié : le plan vérifié se superpose au PDF sans seconde vue', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium', 'Scénario desktop.');
   const state = await mockUnifiedPDF(page);
   state.structuredReady = true;
   await page.goto(`/read?path=${encodeURIComponent(PDF_PATH)}`);
-  await selectPDFText(page);
-  await page.getByRole('button', { name: 'Structuré', exact: true }).click();
-  await expect(page.getByRole('toolbar', { name: 'Actions sur la sélection' })).toHaveCount(0);
-  await expect(page.getByText('Un passage restructuré par Docling.')).toBeVisible();
-  await page.getByRole('button', { name: 'PDF', exact: true }).click();
-  await expect(page.getByRole('toolbar', { name: 'Actions sur la sélection' })).toHaveCount(0);
-  await selectPDFText(page);
-  await page.getByRole('button', { name: 'Surligner', exact: true }).click();
-  await expect.poll(() => state.annotations.length).toBe(1);
-  expect(state.annotations[0].anchor.schemaVersion).toBe('pdf-anchor/v1');
-  expect(state.annotations[0].anchor.blockId).toBeUndefined();
+  const canvas = page.locator('[data-reader-page="1"] canvas');
+  await expect(canvas).toBeVisible();
+  const originalCanvas = await canvas.elementHandle();
+  await page.getByRole('tab', { name: 'Plan', exact: true }).click();
+  await page.getByRole('button', { name: /Energie cinetique - lecteur R6/ }).click();
+  await expect(page.locator('.reader-highlight.citation').first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Structuré', exact: true })).toHaveCount(0);
+  expect(await originalCanvas.evaluate((node) => node.isConnected)).toBe(true);
+  expect(state.blockCalls).toBe(0);
+  await page.getByRole('button', { name: /Un intitulé absent/ }).click();
+  await expect(page.locator('.reader-highlight-page.citation')).toBeAttached();
+  await expect(page.locator('.reader-highlight.citation')).toHaveCount(0);
+  state.metadataRevision = `etag-sha256:${'b'.repeat(64)}`;
+  await page.reload();
+  await page.getByRole('tab', { name: 'Plan', exact: true }).click();
+  await expect(canvas).toBeVisible();
+  await expect(page.getByRole('button', { name: /Energie cinetique - lecteur R6/ })).toHaveCount(0);
 });
 
 test('PDF unifié sur mobile : expliquer une sélection ouvre le flux IA sans annulation intempestive', async ({ page }, testInfo) => {
@@ -585,7 +594,7 @@ test('PDF unifié : l’arrivée tardive de Docling ne perd pas une note PDF en 
     await expect.poll(() => state.annotationWrites).toBe(1);
     state.doclingGate = null;
     releaseMetadata();
-    await expect(page.getByRole('button', { name: 'Structuré', exact: true })).toBeVisible();
+    await expect(page.locator('.reader-title strong')).toHaveText('Titre vérifié de la fixture');
     // Let React commit the metadata-dependent effects before the write returns.
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     state.annotationGate = null;
@@ -653,46 +662,18 @@ test('PDF unifié : actualiser une liste lente ne rétablit ni une ancienne note
   }
 });
 
-test('PDF unifié : double clic et changement de mode isolent les écritures en cours', async ({ page }, testInfo) => {
+test('PDF unifié : un double clic sur Enregistrer ne crée qu’une note', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium', 'Scénario desktop.');
   const state = await mockUnifiedPDF(page);
-  state.structuredReady = true;
-  let releaseOld;
-  let releaseNew;
-  state.annotationGate = new Promise((resolve) => { releaseOld = resolve; });
-  try {
-    await page.goto(`/read?path=${encodeURIComponent(PDF_PATH)}`);
-    await expect(page.getByRole('button', { name: 'Structuré', exact: true })).toBeVisible();
-    await selectPDFText(page);
-    await page.getByRole('button', { name: 'Ajouter une note', exact: true }).click();
-    const oldComposer = page.getByRole('dialog', { name: 'Ajouter une note privée' });
-    await oldComposer.getByLabel('Note').fill('Première écriture en attente.');
-    // Two clicks in one task happen before React can repaint the disabled state.
-    await oldComposer.getByRole('button', { name: 'Enregistrer la note' }).evaluate((button) => { button.click(); button.click(); });
-    await expect.poll(() => state.annotationWrites).toBe(1);
-    await oldComposer.getByRole('button', { name: 'Fermer', exact: true }).click();
-    await page.getByRole('button', { name: 'Structuré', exact: true }).click();
-    await page.getByRole('button', { name: 'PDF', exact: true }).click();
-
-    state.annotationGate = new Promise((resolve) => { releaseNew = resolve; });
-    await selectPDFText(page);
-    await page.getByRole('button', { name: 'Ajouter une note', exact: true }).click();
-    const newComposer = page.getByRole('dialog', { name: 'Ajouter une note privée' });
-    await newComposer.getByLabel('Note').fill('Nouvelle écriture en attente.');
-    await newComposer.getByRole('button', { name: 'Enregistrer la note' }).click();
-    await expect.poll(() => state.annotationWrites).toBe(2);
-    releaseOld();
-    await expect.poll(() => state.annotations.length).toBe(1);
-    await expect(newComposer.getByRole('button', { name: 'Enregistrement…' })).toBeDisabled();
-    state.annotationGate = null;
-    releaseNew();
-    await expect(newComposer).toBeHidden();
-    await expect(page.getByText('Nouvelle écriture en attente.', { exact: true })).toBeVisible();
-    expect(state.annotations).toHaveLength(2);
-  } finally {
-    releaseOld();
-    releaseNew?.();
-  }
+  await page.goto(`/read?path=${encodeURIComponent(PDF_PATH)}`);
+  await selectPDFText(page);
+  await page.getByRole('button', { name: 'Ajouter une note', exact: true }).click();
+  const composer = page.getByRole('dialog', { name: 'Ajouter une note privée' });
+  await composer.getByLabel('Note').fill('Une seule écriture.');
+  await composer.getByRole('button', { name: 'Enregistrer la note' }).evaluate((button) => { button.click(); button.click(); });
+  await expect(composer).toBeHidden();
+  expect(state.annotationWrites).toBe(1);
+  expect(state.annotations).toHaveLength(1);
 });
 
 test('la conversation ouvre ses sources PDF dans un aperçu clair sans lecteur natif sombre', async ({ page }, testInfo) => {

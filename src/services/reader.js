@@ -53,9 +53,10 @@ export async function hashPDFBytes(pdf, maxBytes = 64 * 1024 * 1024) {
   return `sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
-export function fetchReaderDocument(sourcePath, artifactId = '', signal) {
+export function fetchReaderDocument(sourcePath, artifactId = '', signal, sourceRevision = '') {
   const params = new URLSearchParams({ path: sourcePath });
   if (artifactId) params.set('artifactId', artifactId);
+  if (sourceRevision) params.set('sourceRevision', sourceRevision);
   return readerJson(`/api/reader/document?${params}`, signal);
 }
 

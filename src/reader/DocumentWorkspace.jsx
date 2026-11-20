@@ -63,9 +63,10 @@ export default function DocumentWorkspace({
   const [pdfTargetPage, setPdfTargetPage] = useState(Math.max(1, Number(initialPage) || 1));
   const [pageCount, setPageCount] = useState(0);
   const [zoom, setZoom] = useState(() => (isMobileReader() ? 0.68 : 1.15));
-  const [viewMode, setViewMode] = useState(documentFile.kind === 'pdf' ? 'pdf' : 'structured');
+  const pdfMode = documentFile.kind === 'pdf';
+  const viewMode = pdfMode ? 'pdf' : 'structured';
   const [sidebarOpen, setSidebarOpen] = useState(() => typeof window === 'undefined' || window.innerWidth > 1100);
-  const [sidebarTab, setSidebarTab] = useState('outline');
+  const [sidebarTab, setSidebarTab] = useState(() => pdfMode ? 'annotations' : 'outline');
   const [assistantOpen, setAssistantOpen] = useState(() => !isMobileReader());
   const [selection, setSelection] = useState(null);
   const [noteSelection, setNoteSelection] = useState(null);
@@ -86,16 +87,14 @@ export default function DocumentWorkspace({
   const metadataStartedAt = useRef(0);
   const metadataErrorRef = useRef('');
   const structuredReady = metadata?.status === 'structured-ready';
-  // A Docling response (including a stale capability flag) must never hide
-  // the original PDF, whose availability is independent of that pipeline.
-  const pdfAvailable = documentFile.kind === 'pdf' || Boolean(metadata?.capabilities?.pdf);
-  const pdfMode = viewMode === 'pdf' && documentFile.kind === 'pdf';
   const pdfUrl = pdfReaderUrl(documentFile.path, pdfIdentity.revision);
   const currentPdf = pdfDocument?.url === pdfUrl ? pdfDocument.pdf : null;
   const pdfRevision = currentPdf
     ? (pdfIdentity.strategy === 'strong-etag' ? pdfIdentity.revision : pdfIdentity.strategy === 'sha256' ? pdfHash : '')
     : '';
   const ready = pdfMode ? Boolean(pdfRevision) : structuredReady;
+  const readerMetadata = pdfMode && (!pdfRevision || metadata?.sourcePath !== documentFile.path || metadata?.sourceRevision !== pdfRevision) ? null : metadata;
+  const outlineItems = (readerMetadata?.outline || []).filter((item) => !pdfMode || (item.page > 0 && item.page <= pageCount));
   const pdfIndex = usePdfTextIndex(pdfMode ? currentPdf : null, pdfRevision);
   const annotations = useReaderAnnotations({
     sourcePath: documentFile.path,
@@ -217,16 +216,15 @@ export default function DocumentWorkspace({
   }, [currentPdf, pdfIdentity]);
 
   useEffect(() => {
-    if (!documentFile.path) return undefined;
+    if (!documentFile.path || (pdfMode && !pdfRevision)) return undefined;
     const controller = new AbortController();
     metadataStartedAt.current = performance.now();
     setMetadata(null);
     setMetadataError('');
     metadataErrorRef.current = '';
-    fetchReaderDocument(documentFile.path, '', controller.signal)
+    fetchReaderDocument(documentFile.path, '', controller.signal, pdfRevision)
       .then((value) => {
         setMetadata(value);
-        if (documentFile.kind !== 'pdf' && !value.capabilities?.pdf) setViewMode('structured');
         if (documentFile.kind !== 'pdf' && Number(value.pageCount) > 0) setPageCount(Number(value.pageCount));
         emitReaderMetric('metadata', {
           kind: value.kind || documentFile.kind,
@@ -249,7 +247,7 @@ export default function DocumentWorkspace({
         }
       });
     return () => controller.abort();
-  }, [documentFile.kind, documentFile.path, metadataAttempt]);
+  }, [documentFile.kind, documentFile.path, metadataAttempt, pdfMode, pdfRevision]);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -517,11 +515,17 @@ export default function DocumentWorkspace({
   const openOutlineItem = useCallback((item) => {
     if (Number(item?.page) > 0) setPage(Number(item.page));
     if (viewMode === 'structured') void structuredRef.current?.scrollToBlock(item?.blockId, item?.ordinal);
-    else changePage(item?.page || 1);
-  }, [changePage, viewMode, setPage]);
+    else if (item.page > 0) {
+      pdfRef.current?.scrollToPage(item.page, 'auto');
+      setHighlights((current) => [...current.filter((entry) => entry.kind !== 'citation'), {
+        page: item.page, kind: 'citation', matchText: item.label, navigationId: Symbol(),
+      }]);
+      if (mobile) setSidebarOpen(false);
+    }
+  }, [mobile, viewMode, setPage, setHighlights, setSidebarOpen]);
 
   const openCitation = (citation) => {
-    if (pdfMode && citation?.sourceRevision && citation.sourceRevision !== pdfRevision) {
+    if (pdfMode && ((citation?.sourcePath && citation.sourcePath !== documentFile.path) || (citation?.sourceRevision && citation.sourceRevision !== pdfRevision))) {
       setSelectionError('Cette citation appartient à une autre version du PDF.');
       return;
     }
@@ -532,7 +536,8 @@ export default function DocumentWorkspace({
     if (viewMode === 'structured') void structuredRef.current?.scrollToBlock(blockId);
     else {
       if (!targetPage) return;
-      void pdfRef.current?.scrollToAnchor(targetPage, citation?.segments);
+      if (citation?.segments?.length) void pdfRef.current?.scrollToAnchor(targetPage, citation.segments);
+      else pdfRef.current?.scrollToPage(targetPage, 'auto');
       if (mobile) setAssistantOpen(false);
     }
     const selected = highlights.find((item) => (
@@ -542,23 +547,15 @@ export default function DocumentWorkspace({
     const marker = citation?.segments?.length ? { page: targetPage, segments: citation.segments } : (!pdfMode && selected) || {
       page: targetPage,
       blockId,
-      bbox: citation?.bbox || null,
+      bbox: pdfMode ? null : citation?.bbox || null,
+      matchText: pdfMode && citation?.origin === 'docling' && citation?.verified === true && citation.sourceRevision === pdfRevision ? citation.text : '',
+      navigationId: Symbol(),
     };
     setHighlights((current) => [
       ...current.filter((item) => item.kind !== 'citation'),
       { ...marker, kind: 'citation' },
     ]);
   };
-
-  const selectViewMode = useCallback((mode) => {
-    if (mode === 'pdf') setPdfTargetPage(page);
-    captureSequence.current += 1;
-    setSelection(null);
-    setHighlights([]);
-    window.getSelection()?.removeAllRanges();
-    setViewMode(mode);
-    emitReaderMetric('mode-change', { mode, kind: documentFile.kind });
-  }, [documentFile.kind, page, setPdfTargetPage, setSelection, setHighlights, setViewMode]);
 
   const toggleSidebar = () => {
     const next = !sidebarOpen;
@@ -644,15 +641,9 @@ export default function DocumentWorkspace({
         <button type="button" onClick={onClose} aria-label="Revenir à la bibliothèque"><FiChevronLeft aria-hidden="true" /></button>
         <div className="reader-title">
           <FiBookOpen aria-hidden="true" />
-          <span><strong>{metadata?.title || documentFile.name}</strong><small>{documentFile.path}</small></span>
+          <span><strong>{readerMetadata?.title || documentFile.name}</strong><small>{documentFile.path}</small></span>
         </div>
         <div className="reader-center-controls">
-          {pdfAvailable && structuredReady && (
-            <div className="reader-mode-switch" role="group" aria-label="Mode de lecture">
-              <button type="button" aria-pressed={viewMode === 'pdf'} className={viewMode === 'pdf' ? 'active' : ''} onClick={() => selectViewMode('pdf')}><FiBookOpen aria-hidden="true" /> PDF</button>
-              <button type="button" aria-pressed={viewMode === 'structured'} className={viewMode === 'structured' ? 'active' : ''} onClick={() => selectViewMode('structured')}><FiFileText aria-hidden="true" /> Structuré</button>
-            </div>
-          )}
           {viewMode === 'pdf' ? (
             <div className="reader-page-controls">
               <label>
@@ -728,7 +719,7 @@ export default function DocumentWorkspace({
               <div id="reader-outline-panel" role="tabpanel" aria-labelledby="reader-outline-tab">
                 <nav aria-label="Plan du document">
                   <h2>Plan du document</h2>
-                {metadata?.outline?.length > 0 ? metadata.outline.map((item) => (
+                {outlineItems.length > 0 ? outlineItems.map((item) => (
                   <button
                     key={item.blockId}
                     type="button"
@@ -741,7 +732,7 @@ export default function DocumentWorkspace({
                     {item.page > 0 && <small>{item.page}</small>}
                   </button>
                 )) : (
-                  <p>{metadataError || 'Le plan apparaîtra lorsque la structure sera disponible.'}</p>
+                  <p>{pdfMode ? 'Aucun plan vérifié disponible pour ce PDF.' : metadataError || 'Le plan apparaîtra lorsque la structure sera disponible.'}</p>
                 )}
                 </nav>
               </div>
@@ -774,7 +765,7 @@ export default function DocumentWorkspace({
             if (!geometryMode && event.shiftKey) window.setTimeout(() => void captureSelection(true), 0);
           }}
         >
-          {viewMode === 'pdf' && pdfAvailable ? (
+          {pdfMode ? (
             <PdfReader
               ref={pdfRef}
               url={pdfUrl}

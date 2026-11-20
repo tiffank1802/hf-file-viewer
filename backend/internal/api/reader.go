@@ -79,7 +79,18 @@ func (s *Server) handleReaderDocument(w http.ResponseWriter, r *http.Request) er
 		return err
 	}
 	artifactID := strings.TrimSpace(r.URL.Query().Get("artifactId"))
-	study, err := s.readerStudy(r.Context(), sourcePath, artifactID)
+	revision := strings.TrimSpace(r.URL.Query().Get("sourceRevision"))
+	var study *documentStudy
+	if revision != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), chatExcerptWait)
+		defer cancel()
+		if err := s.verifyPDFRevision(ctx, sourcePath, revision); err != nil {
+			return err
+		}
+		study, err = s.prepareMatchedPDFStructure(ctx, chatScope{SourcePath: sourcePath, ArtifactID: artifactID, SourceRevision: revision}, "Plan du document", "outline")
+	} else {
+		study, err = s.readerStudy(r.Context(), sourcePath, artifactID)
+	}
 	if err != nil {
 		return err
 	}
@@ -112,9 +123,17 @@ func (s *Server) handleReaderDocument(w http.ResponseWriter, r *http.Request) er
 	}
 	ready := study.ready()
 	kind := readerDocumentKind(sourcePath)
+	if revision != "" && !ready {
+		outline = []readerOutlineItem{}
+	}
+	matchedRevision := ""
+	if ready {
+		matchedRevision = revision
+	}
 	writeJSON(w, r, http.StatusOK, map[string]any{
 		"schemaVersion":   "reader-ui/v1",
 		"sourcePath":      study.SourcePath,
+		"sourceRevision":  matchedRevision,
 		"artifactId":      study.ArtifactID,
 		"pipelineVersion": study.PipelineVersion,
 		"title":           study.Title,
