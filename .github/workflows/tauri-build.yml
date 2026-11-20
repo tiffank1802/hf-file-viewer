@@ -62,7 +62,11 @@ jobs:
         run: npm ci
 
       - name: Build Tauri macOS Universal Binary
-        run: npx tauri build --target universal-apple-darwin --bundles app,dmg --ci
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: node scripts/build-desktop.mjs --target universal-apple-darwin --bundles app,dmg --ci
 
       - name: Test native gateway origins (development and release)
         run: |
@@ -75,6 +79,11 @@ jobs:
           DMG_FILE=$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -type f -name "*.dmg" | head -n 1)
           cp "$DMG_FILE" artifacts/ENISE-Docs-macos-universal.dmg
           (cd src-tauri/target/universal-apple-darwin/release/bundle/macos && tar -czf "$GITHUB_WORKSPACE/artifacts/ENISE-Docs-macos-universal.app.tar.gz" "ENISE Docs.app")
+          signed=$(find src-tauri/target/universal-apple-darwin/release/bundle/macos -type f -name '*.app.tar.gz.sig' -print -quit)
+          if [ -n "$signed" ]; then
+            cp "${signed%.sig}" artifacts/ENISE-Docs-macos-universal.app.tar.gz
+            cp "$signed" artifacts/ENISE-Docs-macos-universal.app.tar.gz.sig
+          fi
           ls -lh artifacts/
 
       - name: Upload macOS artifacts
@@ -221,6 +230,7 @@ jobs:
 
       - name: Align & Sign Android APK + Collect AAB
         env:
+          REQUIRE_RELEASE_KEY: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '') }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -237,6 +247,11 @@ jobs:
             KEY_ALIAS="$ANDROID_KEY_ALIAS"
             KEY_PASS="${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
           else
+            if [ "$REQUIRE_RELEASE_KEY" = true ]; then
+              echo "::error::Une release exige le keystore Android de distribution existant."
+              exit 1
+            fi
+            echo "::warning::Clé temporaire Android : artefact de test, non compatible avec un APK déjà installé."
             keytool -genkeypair -v \
               -keystore /tmp/release.keystore \
               -alias enisedocs \
@@ -259,9 +274,14 @@ jobs:
             --key-pass "pass:$KEY_PASS" \
             --out artifacts/ENISE-Docs-android-universal.apk \
             /tmp/aligned.apk
-          rm -f /tmp/release.keystore /tmp/aligned.apk
-
+          "$BUILD_TOOLS/apksigner" verify artifacts/ENISE-Docs-android-universal.apk
           cp "$AAB_FILE" artifacts/ENISE-Docs-android-universal.aab
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            export KS_PASS KEY_PASS
+            jarsigner -keystore /tmp/release.keystore -storepass:env KS_PASS -keypass:env KEY_PASS artifacts/ENISE-Docs-android-universal.aab "$KEY_ALIAS"
+            jarsigner -verify artifacts/ENISE-Docs-android-universal.aab
+          fi
+          rm -f /tmp/release.keystore /tmp/aligned.apk
           ls -lh artifacts/
 
       - name: Upload Android artifacts
@@ -301,7 +321,11 @@ jobs:
         run: npm ci
 
       - name: Build Tauri Windows Installers (NSIS .exe & WiX .msi)
-        run: npx tauri build --target x86_64-pc-windows-msvc --bundles nsis,msi --ci
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: node scripts/build-desktop.mjs --target x86_64-pc-windows-msvc --bundles nsis,msi --ci
 
       - name: Collect Windows artifacts
         shell: bash
@@ -311,12 +335,57 @@ jobs:
           MSI_FILE=$(find src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi -type f -name "*.msi" | head -n 1)
           cp "$EXE_FILE" artifacts/ENISE-Docs-windows-x64-setup.exe
           cp "$MSI_FILE" artifacts/ENISE-Docs-windows-x64.msi
+          if [ -f "$EXE_FILE.sig" ]; then
+            cp "$EXE_FILE.sig" artifacts/ENISE-Docs-windows-x64-setup.exe.sig
+          fi
+          if [ -f "$MSI_FILE.sig" ]; then
+            cp "$MSI_FILE.sig" artifacts/ENISE-Docs-windows-x64.msi.sig
+          fi
           ls -lh artifacts/
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v7
         with:
           name: enise-docs-windows-x64
+          path: artifacts/*
+          if-no-files-found: error
+
+  build-linux:
+    name: Linux (x64 AppImage & deb)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+      - name: Install desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev patchelf libfuse2t64
+      - run: npm ci
+      - name: Build Linux desktop
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: node scripts/build-desktop.mjs --bundles appimage,deb --ci
+      - name: Collect Linux artifacts
+        run: |
+          mkdir -p artifacts
+          image=$(find src-tauri/target/release/bundle/appimage -name '*.AppImage' -print -quit)
+          deb=$(find src-tauri/target/release/bundle/deb -name '*.deb' -print -quit)
+          test -n "$image" && test -n "$deb"
+          cp "$image" artifacts/ENISE-Docs-linux-x64.AppImage
+          cp "$deb" artifacts/ENISE-Docs-linux-x64.deb
+          if [ -f "$image.sig" ]; then cp "$image.sig" artifacts/ENISE-Docs-linux-x64.AppImage.sig; fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: enise-docs-linux-x64
           path: artifacts/*
           if-no-files-found: error
 
@@ -328,7 +397,7 @@ jobs:
   publish-release:
     name: Publish GitHub Release
     runs-on: ubuntu-24.04
-    needs: [build-macos, build-ios, build-android, build-windows]
+    needs: [build-macos, build-ios, build-android, build-windows, build-linux]
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     permissions:
       actions: read
@@ -337,7 +406,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Download the four build artifacts
+      - name: Download native build artifacts
         uses: actions/download-artifact@v7
         with:
           path: collected-artifacts
@@ -353,6 +422,11 @@ jobs:
         run: |
           VERSION=$(node -p 'JSON.parse(require("node:fs").readFileSync("src-tauri/tauri.conf.json", "utf8")).version')
           test "$RELEASE_TAG" = "v$VERSION" || { echo "::error::Le tag $RELEASE_TAG doit correspondre à la version v$VERSION"; exit 1; }
+
+      - name: Prepare signed update feed and Linux downloads
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: node scripts/prepare-updater-manifest.mjs collected-artifacts release-assets "$RELEASE_TAG"
 
       - name: Publish an existing draft after every upload succeeds
         env:

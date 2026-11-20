@@ -1,7 +1,7 @@
 {
   "name": "enise-docs",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "Bibliothèque documentaire Centrale Lyon ENISE, déployable sur Cloudflare Workers.",
   "scripts": {
@@ -50,6 +50,7 @@
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-opener": "^2.7.2",
+    "@tauri-apps/plugin-updater": "^2.14.1",
     "docx-preview": "^0.4.0",
     "jszip": "^3.10.1",
     "pdfjs-dist": "^5.4.624",

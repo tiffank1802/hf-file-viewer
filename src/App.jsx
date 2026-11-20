@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FiDownload, FiHeart, FiHome, FiSearch } from 'react-icons/fi';
 import AppDownloadModal from './components/AppDownloadModal';
+import AppUpdateBanner from './components/AppUpdateBanner';
 import CategoryGrid from './components/CategoryGrid';
 import Explorer from './components/Explorer';
 import Footer from './components/Footer';
@@ -204,6 +205,7 @@ export default function App() {
         </div>
       )}
 
+      <AppUpdateBanner suspended={Boolean(selectedFile || readerFile || studyFile || authPanel.open || searchState.open || downloadOpen)} />
       <main id="main-content">
         {library.path === '' && (
           <>

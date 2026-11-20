@@ -594,7 +594,11 @@ pub fn run() {
     let protocol_state = Arc::clone(&gateway_state);
     let setup_state = Arc::clone(&gateway_state);
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .manage(gateway_state)
         .setup(move |app| {

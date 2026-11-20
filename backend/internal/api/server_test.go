@@ -226,7 +226,7 @@ func TestHealthAndMethod(t *testing.T) {
 
 func TestWebUpdateCachePolicy(t *testing.T) {
 	staticDir := t.TempDir()
-	for _, rel := range []string{"index.html", "assets/logo.svg", "build-assets/index-Ab12Cd34.js"} {
+	for _, rel := range []string{"index.html", "version.json", "assets/logo.svg", "build-assets/index-Ab12Cd34.js"} {
 		file := filepath.Join(staticDir, rel)
 		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 			t.Fatal(err)
@@ -240,6 +240,8 @@ func TestWebUpdateCachePolicy(t *testing.T) {
 		path, cache string
 	}{
 		{"/", "no-cache"},
+		{"/read", "no-cache"},
+		{"/version.json", "no-store"},
 		{"/bibliotheque/GM/3A%20GM", "no-cache"},
 		{"/assets/logo.svg", "no-cache"},
 		{"/build-assets/index-Ab12Cd34.js", "public, max-age=31536000, immutable"},

@@ -20,6 +20,12 @@
 /index.html
   Cache-Control: no-cache
 
+/version.json
+  Cache-Control: no-store
+
+/read
+  Cache-Control: no-cache
+
 /bibliotheque
   Cache-Control: no-cache
 

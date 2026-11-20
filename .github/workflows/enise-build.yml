@@ -58,3 +58,53 @@ jobs:
           name: enise-docs-api-linux-amd64
           path: enise-docs-api-linux-amd64.tar.gz
           if-no-files-found: error
+
+  deploy-cloudflare:
+    name: Deploy Cloudflare Workers
+    if: >-
+      github.event_name == 'push' && github.repository == 'tiffank1802/hf-file-viewer' &&
+      (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/arena/7b81b136-hf-file-viewer')
+    needs: [web, api]
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: enise-cloudflare-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/download-artifact@v7
+        with:
+          name: enise-docs-web
+      - run: npm ci
+      - name: Extract validated web assets
+        run: |
+          mkdir -p dist
+          tar -xzf enise-docs-web.tar.gz -C dist
+          test "$(node -p "require('./dist/version.json').id")" = "$GITHUB_SHA"
+      - name: Deploy tested build
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo '::error::Configure CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in GitHub Actions before deploying.'
+            exit 1
+          fi
+          npx wrangler deploy --keep-vars | tee "$RUNNER_TEMP/cloudflare-deploy.log"
+      - name: Check deployed revision and health
+        env:
+          PRODUCTION_URL: ${{ vars.CLOUDFLARE_PRODUCTION_URL }}
+        run: |
+          origin="${PRODUCTION_URL:-$(grep -Eo 'https://[[:alnum:].-]+\.workers\.dev' "$RUNNER_TEMP/cloudflare-deploy.log" | head -n 1 || true)}"
+          if [ -z "$origin" ]; then
+            echo '::error::Set CLOUDFLARE_PRODUCTION_URL to verify the deployed Worker.'
+            exit 1
+          fi
+          curl -fsS --retry 5 "${origin%/}/" >/dev/null
+          curl -fsS --retry 5 "${origin%/}/api/health" >/dev/null
+          curl -fsS --retry 5 -D "$RUNNER_TEMP/version-headers" "${origin%/}/version.json" -o "$RUNNER_TEMP/version.json"
+          grep -qi '^cache-control:.*no-store' "$RUNNER_TEMP/version-headers"
+          cmp dist/version.json "$RUNNER_TEMP/version.json"

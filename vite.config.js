@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -22,8 +23,19 @@ function apiProxyOptions(target) {
   };
 }
 
-export default defineConfig({
-  plugins: [react()],
+export default defineConfig(({ command }) => {
+  const buildId = command === 'build'
+    ? (/^[a-f0-9]{40}$/.test(process.env.GITHUB_SHA || '') ? process.env.GITHUB_SHA : randomUUID().replaceAll('-', ''))
+    : '';
+  return {
+  define: { 'import.meta.env.VITE_ENISE_BUILD_ID': JSON.stringify(buildId) },
+  plugins: [react(), {
+    name: 'enise-version-manifest',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ id: buildId }) });
+    },
+  }],
   build: {
     target: 'es2022',
     // Only content-hashed Vite output belongs in this immutable directory.
@@ -46,4 +58,5 @@ export default defineConfig({
       '/api': apiProxyOptions(apiProxy),
     },
   },
+  };
 });

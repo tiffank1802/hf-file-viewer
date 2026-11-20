@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "ENISE Docs",
   "mainBinaryName": "enise-docs",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "identifier": "fr.eclyon.enise.docs",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -28,6 +28,7 @@
       "csp": "default-src 'self' ipc: http://ipc.localhost eniseapi: http://eniseapi.localhost https://eniseapi.localhost; script-src 'self' 'wasm-unsafe-eval' https://developer.api.autodesk.com; style-src 'self' 'unsafe-inline' https://developer.api.autodesk.com; img-src 'self' asset: http://asset.localhost eniseapi: http://eniseapi.localhost https://eniseapi.localhost data: blob: https:; media-src 'self' eniseapi: http://eniseapi.localhost https://eniseapi.localhost blob: https:; frame-src 'self' eniseapi: http://eniseapi.localhost https://eniseapi.localhost blob: https://view.officeapps.live.com https://developer.api.autodesk.com https://iframe.sharecad.org; connect-src 'self' ipc: http://ipc.localhost eniseapi: http://eniseapi.localhost https://eniseapi.localhost https:; font-src 'self' data: https://developer.api.autodesk.com; worker-src 'self' blob: https://developer.api.autodesk.com; object-src 'none'; base-uri 'self'"
     }
   },
+  "plugins": { "updater": { "pubkey": "", "endpoints": [] } },
   "bundle": {
     "active": true,
     "targets": "all",

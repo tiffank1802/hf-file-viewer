@@ -841,7 +841,7 @@
     .hero-copy { max-width: 750px; }
     .hero-copy h1 { font-size: clamp(4rem, 10vw, 6rem); }
     .hero-showcase { width: min(100%, 620px); margin: 0 auto; }
-    .library-layout { grid-template-columns: 1fr; }
+    .library-layout { grid-template-columns: minmax(0, 1fr); }
     .library-sidebar { display: none; }
     .footer-top { grid-template-columns: 1fr 1fr; gap: 50px; }
     .footer-links { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; gap: 8px 20px; }
@@ -1821,3 +1821,11 @@ body.reader-open { overflow: hidden; }
   .reader-note-backdrop { align-items: end; justify-items: center; padding: 0; }
   .reader-note-composer { width: 100%; max-height: 78dvh; border-radius: 16px 16px 0 0; }
 }
+
+.app-update-banner { position: fixed; z-index: 120; inset: auto auto max(24px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); max-width: min(420px, calc(100% - 140px)); padding: 12px; display: grid; gap: 8px; border: 1px solid var(--line); border-radius: 12px; background: #f7fcfa; color: var(--green-dark); box-shadow: var(--shadow-md); font-size: .82rem; }
+.app-update-banner p, .app-update-banner > div { display: flex; align-items: center; gap: 8px; }
+.app-update-banner p svg { flex: 0 0 auto; }
+.app-update-banner button { padding: 5px 8px; border-radius: 6px; background: var(--green-dark); color: white; cursor: pointer; }
+.app-update-banner button + button { background: white; color: var(--green-dark); border: 1px solid var(--line); }
+.app-update-banner button:disabled { opacity: .6; cursor: wait; }
+@media (max-width: 700px) { .app-update-banner { max-width: calc(100% - 90px); bottom: calc(88px + env(safe-area-inset-bottom)); } }

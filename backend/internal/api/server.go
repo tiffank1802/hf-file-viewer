@@ -536,7 +536,9 @@ func (s *Server) staticHeaders(w http.ResponseWriter, urlPath string) {
 	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 	w.Header().Set("Content-Security-Policy", staticCSP)
-	if strings.HasPrefix(urlPath, "/build-assets/") {
+	if urlPath == "/version.json" {
+		w.Header().Set("Cache-Control", "no-store")
+	} else if strings.HasPrefix(urlPath, "/build-assets/") {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	} else {
 		w.Header().Set("Cache-Control", "no-cache")
