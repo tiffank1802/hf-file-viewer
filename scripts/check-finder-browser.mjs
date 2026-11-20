@@ -292,7 +292,11 @@ try {
       async invoke(command, args) {
         if (command === 'plugin:app|version') return '1.1.0';
         if (command === 'list_app_releases') return window.__nativeReleases;
-        if (command === 'plugin:event|listen') { window.__nativeListening = true; return args.handler; }
+        if (command === 'plugin:event|listen') {
+          if (args.target?.label !== 'main') throw new Error('Le menu Rust cible exclusivement la fenêtre main');
+          window.__nativeListening = true;
+          return args.handler;
+        }
         if (command === 'plugin:opener|open_url') window.__openedRelease = args.url;
       },
     };

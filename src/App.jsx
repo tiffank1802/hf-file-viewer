@@ -160,7 +160,7 @@ export default function App() {
     let stopped = false;
     let unlisten;
     void import('@tauri-apps/api/event').then(async ({ listen }) => {
-      const off = await listen('enise-menu', ({ payload }) => nativeMenuAction(payload));
+      const off = await listen('enise-menu', ({ payload }) => nativeMenuAction(payload), { target: 'main' });
       if (stopped) void off().catch(() => {});
       else unlisten = off;
     }).catch(() => {});
