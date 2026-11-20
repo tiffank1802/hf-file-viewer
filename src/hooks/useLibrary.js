@@ -1,33 +1,53 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchTree } from '../services/api';
-import { getFallbackTree } from '../data/fallbackData';
-import { hrefFromLibraryPath, pathFromHash, pathFromLocation } from '../utils/routes';
+import { createFolderReader } from '../services/folderReader.js';
+import { activateExplorerTab, addExplorerTab, closeExplorerTab, initialExplorerTabs, MAX_EXPLORER_TABS } from '../utils/explorerTabs.js';
+import { hrefFromLibraryPath, pathFromHash, pathFromLocation } from '../utils/routes.js';
+import { useFolder } from './useFolder.js';
 
-/** Un onglet resté ouvert relit le dossier affiché à ce rythme. */
-const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const HISTORY_KEY = 'eniseLibraryHistory';
+const sessionId = () => `${Date.now()}-${Math.random()}`;
+const activePath = (state) => state.tabs.find(({ id }) => id === state.activeId).path;
+const historyEntry = (session) => ({ id: session.id, cursor: session.cursor, tabId: session.route.activeId });
+
+function stampEntry(session, href) {
+  window.history.replaceState({ ...window.history.state, [HISTORY_KEY]: historyEntry(session) }, '', href);
+}
+
+function adoptHistoryEntry(session) {
+  if (window.history.state?.[HISTORY_KEY]?.id === session.id) return;
+  // Don't send Explorer's buttons to unrelated pages. A native hash jump may
+  // also create an entry not owned by the explorer (e.g. the skip link).
+  session.id = sessionId();
+  session.cursor = 0;
+  session.end = 0;
+  stampEntry(session);
+}
 
 export function useLibrary() {
-  const [path, setPath] = useState(() => pathFromLocation());
-  const [state, setState] = useState({
-    items: [],
-    loading: true,
-    error: null,
-    source: 'network',
-    cacheStatus: null,
-    fetchedAt: null,
-  });
-  const [reloadKey, setReloadKey] = useState(0);
-  const cacheRef = useRef(new Map());
-  // Une relecture périodique ne doit ni vider la liste ni afficher de squelette.
-  const backgroundRef = useRef(false);
+  const [route, setRoute] = useState(() => initialExplorerTabs(pathFromLocation()));
+  const [reader] = useState(createFolderReader);
+  const [history, setHistory] = useState({ cursor: 0, end: 0 });
+  const session = useRef({ id: '', cursor: 0, end: 0, nextTab: 1, route });
+  const path = activePath(route);
+  const folder = useFolder(reader, path, { autoRefresh: true });
 
   useEffect(() => {
+    const state = session.current;
+    state.id ||= sessionId();
+    stampEntry(state);
     const syncPath = () => {
-      setPath(pathFromLocation());
+      const entry = window.history.state?.[HISTORY_KEY];
+      const found = entry?.id === state.id;
+      if (found) state.cursor = entry.cursor;
+      else adoptHistoryEntry(state);
+      const target = found && state.route.tabs.some((tab) => tab.id === entry.tabId) ? entry.tabId : state.route.activeId;
+      state.route = activateExplorerTab(state.route, target, pathFromLocation());
+      if (target !== entry?.tabId) stampEntry(state);
+      setRoute(state.route);
+      setHistory({ cursor: state.cursor, end: state.end });
     };
     const onHashChange = () => {
-      const nextPath = pathFromHash();
-      if (nextPath !== null) setPath(nextPath);
+      if (pathFromHash() !== null) syncPath();
     };
     window.addEventListener('popstate', syncPath);
     window.addEventListener('hashchange', onHashChange);
@@ -37,117 +57,68 @@ export function useLibrary() {
     };
   }, []);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    const background = backgroundRef.current;
-    backgroundRef.current = false;
-    // Une relecture en arrière-plan ignore le cache : c’est tout son intérêt.
-    const cached = background ? null : cacheRef.current.get(path);
-
-    if (cached) {
-      setState({ ...cached, loading: false });
-      return () => controller.abort();
+  const commit = useCallback((next, { replace = false, keepUrl = false } = {}) => {
+    const state = session.current;
+    if (state.route === next) return;
+    adoptHistoryEntry(state);
+    state.route = next;
+    const href = keepUrl ? undefined : hrefFromLibraryPath(activePath(next));
+    if (replace) stampEntry(state, href);
+    else {
+      state.cursor += 1;
+      state.end = state.cursor;
+      window.history.pushState({ [HISTORY_KEY]: historyEntry(state) }, '', href);
     }
-
-    if (!background) {
-      setState((current) => ({ ...current, items: [], loading: true, error: null }));
-    }
-
-    fetchTree(path, controller.signal)
-      .then((payload) => {
-        const nextState = {
-          items: payload.items,
-          loading: false,
-          error: null,
-          source: 'huggingface',
-          cacheStatus: payload.cacheStatus,
-          fetchedAt: payload.fetchedAt,
-        };
-        cacheRef.current.set(path, nextState);
-        setState(nextState);
-      })
-      .catch((error) => {
-        if (error.name === 'AbortError') return;
-        // Relecture silencieuse : un échec réseau passager ne remplace pas la
-        // liste affichée par les données de secours.
-        if (background) return;
-        const fallbackItems = getFallbackTree(path);
-        const nextState = {
-          items: fallbackItems,
-          loading: false,
-          error: error.message,
-          source: 'fallback',
-          cacheStatus: 'OFFLINE',
-          fetchedAt: null,
-        };
-        setState(nextState);
-      });
-
-    return () => controller.abort();
-  }, [path, reloadKey]);
-
-  // Le dossier affiché est relu en arrière-plan : un dossier ajouté dans le
-  // bucket apparaît sans rechargement de page.
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      if (document.visibilityState === 'hidden') return;
-      cacheRef.current.delete(path);
-      backgroundRef.current = true;
-      setReloadKey((key) => key + 1);
-    }, REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, [path]);
-
-  const navigate = useCallback(
-    (nextPath = '', options = {}) => {
-      const normalized = nextPath.replace(/^\/+|\/+$/g, '');
-      const nextHref = hrefFromLibraryPath(normalized);
-      const current = `${window.location.pathname}${window.location.search}`;
-      if (current !== nextHref || window.location.hash) {
-        window.history.pushState({ libraryPath: normalized }, '', nextHref);
-        setPath(normalized);
-      } else {
-        setPath(normalized);
-      }
-      if (options.scroll !== false) {
-        window.requestAnimationFrame(() => {
-          document.getElementById('library')?.scrollIntoView({
-            behavior: options.instant ? 'auto' : 'smooth',
-            block: 'start',
-          });
-        });
-      }
-    },
-    [],
-  );
-
-  const retry = useCallback(() => {
-    cacheRef.current.delete(path);
-    setReloadKey((key) => key + 1);
-  }, [path]);
-
-  const prefetch = useCallback((nextPath) => {
-    const normalized = nextPath.replace(/^\/+|\/+$/g, '');
-    if (cacheRef.current.has(normalized)) return;
-    fetchTree(normalized)
-      .then((payload) => {
-        cacheRef.current.set(normalized, {
-          items: payload.items,
-          loading: false,
-          error: null,
-          source: 'huggingface',
-          cacheStatus: payload.cacheStatus,
-          fetchedAt: payload.fetchedAt,
-        });
-      })
-      .catch(() => {});
+    setRoute(next);
+    setHistory({ cursor: state.cursor, end: state.end });
   }, []);
 
+  const navigate = useCallback((nextPath = '', options = {}) => {
+    const normalized = nextPath.replace(/^\/+|\/+$/g, '');
+    const { route: current } = session.current;
+    if (normalized !== pathFromLocation() || normalized !== activePath(current)) {
+      commit(activateExplorerTab(current, current.activeId, normalized));
+    } else if (pathFromHash() && window.location.pathname === '/') {
+      stampEntry(session.current, hrefFromLibraryPath(normalized));
+    }
+    if (options.scroll !== false) {
+      window.requestAnimationFrame(() => {
+        document.getElementById('library')?.scrollIntoView({
+          behavior: options.instant ? 'auto' : 'smooth', block: 'start',
+        });
+      });
+    }
+  }, [commit]);
+
+  const addTab = useCallback(() => {
+    const state = session.current;
+    if (state.route.tabs.length >= MAX_EXPLORER_TABS) return;
+    state.nextTab += 1;
+    commit(addExplorerTab(state.route, `finder-${state.nextTab}`), { keepUrl: true });
+  }, [commit]);
+  const switchTab = useCallback((id) => {
+    const { route: current } = session.current;
+    if (id === current.activeId) return;
+    const next = activateExplorerTab(current, id);
+    commit(next, { keepUrl: activePath(current) === activePath(next) });
+  }, [commit]);
+  const closeTab = useCallback(() => {
+    const { route: current } = session.current;
+    const next = closeExplorerTab(current);
+    commit(next, { replace: true, keepUrl: activePath(current) === activePath(next) });
+  }, [commit]);
+
+  const prefetch = useCallback((nextPath) => {
+    const { result, release } = reader.acquire(nextPath.replace(/^\/+|\/+$/g, ''));
+    result.catch(() => {}).finally(release);
+  }, [reader]);
+
+  const goBack = useCallback(() => { if (session.current.cursor > 0) window.history.back(); }, []);
+  const goForward = useCallback(() => { if (session.current.cursor < session.current.end) window.history.forward(); }, []);
+
   return {
-    path,
-    ...state,
-    navigate,
-    retry,
-    prefetch,
+    path, ...folder, reader, navigate, prefetch, goBack, goForward,
+    canGoBack: history.cursor > 0, canGoForward: history.cursor < history.end,
+    ...route, canAddTab: route.tabs.length < MAX_EXPLORER_TABS, addTab, switchTab, closeTab,
   };
 }

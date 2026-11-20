@@ -12,14 +12,20 @@ import SideNav from './components/SideNav';
 import AuthPanel from './components/AuthPanel';
 import CloudflareAnalytics from './components/CloudflareAnalytics';
 import { useLibrary } from './hooks/useLibrary';
+import { useFinderPreferences } from './hooks/useFinderPreferences';
 import { useIndexCatalog } from './hooks/useIndexCatalog';
 import { buildHomeCards } from './utils/spaces';
 import { useAuth } from './hooks/useAuth';
 import { useFavorites } from './hooks/useFavorites';
+import { useExplorerPersonal } from './hooks/useExplorerPersonal';
+import { getName } from './utils/files';
+import { orderPinnedFolders } from './utils/explorerPersonal';
 import './index.css';
+import './components/explorer/explorer.css';
 
 export default function App() {
   const library = useLibrary();
+  const finderSettings = useFinderPreferences(library.path);
   const catalog = useIndexCatalog();
   // Les cartes d’accueil et la barre latérale sont dérivées de l’index et du
   // listage racine (`/api/tree`, l’en-tête du bucket) : un dossier ajouté
@@ -29,20 +35,33 @@ export default function App() {
     [catalog, library.path, library.items],
   );
   const [selectedFile, setSelectedFile] = useState(null);
-  const [searchState, setSearchState] = useState({ open: false, mode: 'search' });
+  const [searchState, setSearchState] = useState({ open: false, mode: 'search', sequence: 0 });
   const [authPanel, setAuthPanel] = useState({ open: false, mode: 'signin' });
   const [dismissedAlertKey, setDismissedAlertKey] = useState(null);
   const auth = useAuth();
+  const personal = useExplorerPersonal(auth.user?.id);
+  const recordRecent = personal.record;
+  const authStatus = auth.status;
+  const currentPath = library.path;
   const favorites = useFavorites(auth.user);
   const favoriteItems = favorites.items;
   const favoritePaths = favorites.paths;
+  const pinned = useMemo(() => orderPinnedFolders(favoriteItems.filter((item) => item.type === 'directory'), personal.pinnedOrder), [favoriteItems, personal.pinnedOrder]);
   const favoritesAlert = favorites.sync.actionError
     || (['write-failed', 'read-failed', 'unprovisioned', 'import', 'disabled'].includes(favorites.sync.state) ? favorites.sync.error : null);
   const favoritesAlertKey = favoritesAlert ? `${favorites.sync.state}::${favoritesAlert}` : null;
 
-  const openSearch = useCallback((mode = 'search') => {
-    setSearchState({ open: true, mode });
+  const openSearch = useCallback((mode = 'search', options = {}) => {
+    setSearchState((previous) => ({ open: true, mode, sequence: previous.sequence + 1, ...options }));
   }, []);
+  const openFile = useCallback((item) => {
+    if (authStatus !== 'loading') recordRecent(item);
+    setSelectedFile(item);
+  }, [authStatus, recordRecent]);
+
+  useEffect(() => {
+    if (authStatus !== 'loading' && currentPath) recordRecent({ path: currentPath, name: getName(currentPath), type: 'directory' });
+  }, [authStatus, currentPath, recordRecent]);
   const openAuth = useCallback((mode = 'signin') => setAuthPanel({ open: true, mode }), []);
   const closeAuth = useCallback(() => setAuthPanel((current) => ({ ...current, open: false })), []);
   const closeSearch = useCallback(() => {
@@ -60,6 +79,7 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (event) => {
+      if (event.defaultPrevented || event.isComposing || searchState.open || authPanel.open || selectedFile || document.querySelector('.finder-dialog[open]')) return;
       const target = event.target;
       const isTyping = target instanceof HTMLElement && (
         target.matches('input, textarea, select') || target.isContentEditable
@@ -67,14 +87,14 @@ export default function App() {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
         openSearch('search');
-      } else if (event.key === '/' && !isTyping) {
+      } else if (event.key === '/' && !isTyping && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
         openSearch('search');
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [openSearch]);
+  }, [authPanel.open, openSearch, searchState.open, selectedFile]);
 
   const selectedIsFavorite = selectedFile ? favoritePaths.includes(selectedFile.path) : false;
 
@@ -137,19 +157,29 @@ export default function App() {
               <p>Naviguez par année, semestre ou matière. Ouvrez un aperçu avant de télécharger.</p>
             </div>
           )}
-          <div className="library-layout">
-            <SideNav
+          <div className={`library-layout${finderSettings.preferences.showSidebar ? '' : ' finder-sidebar-hidden'}`}>
+            {finderSettings.preferences.showSidebar && <SideNav
               path={library.path}
               navigate={library.navigate}
               favoriteCount={favoriteItems.length}
               onOpenSearch={() => openSearch('search')}
               onOpenFavorites={() => openSearch('favorites')}
               spaces={home.spaces}
-            />
+              pinned={pinned}
+              onMovePinned={(from, to) => personal.movePinned(pinned.map((item) => item.path), from, to)}
+              recentCount={personal.recent.length}
+              searches={personal.searches}
+              onOpenRecent={() => openSearch('recent')}
+              onOpenTag={(tag) => openSearch('search', { filters: { tag } })}
+              onOpenSaved={(search) => openSearch('search', { filters: search.filters, query: search.query, savedId: search.id })}
+            />}
             <Explorer
+              settings={finderSettings}
               library={library}
               catalog={catalog}
-              onOpenFile={setSelectedFile}
+              onOpenFile={openFile}
+              onOpenSearch={(folder) => openSearch('search', { filters: { folder } })}
+              personal={authStatus === 'loading' ? null : personal}
               favorites={favoritePaths}
               onToggleFavorite={toggleFavorite}
             />
@@ -179,21 +209,26 @@ export default function App() {
         onClose={closeAuth}
       />
 
-      <SearchPalette
-        open={searchState.open}
+      {searchState.open && <SearchPalette
+        key={`${personal.key}:${searchState.sequence}`}
         mode={searchState.mode}
         onClose={closeSearch}
         onNavigate={library.navigate}
-        onOpenFile={setSelectedFile}
+        onOpenFile={openFile}
         favoriteItems={favoriteItems}
         catalog={catalog}
-      />
+        library={library}
+        personal={personal}
+        initialFilters={searchState.filters}
+        initialQuery={searchState.query}
+        initialSavedId={searchState.savedId}
+      />}
 
       <LibraryChat
         path={library.path}
         catalog={catalog}
         onNavigate={library.navigate}
-        onOpenFile={setSelectedFile}
+        onOpenFile={openFile}
         onOpenAuth={openAuth}
       />
       <CloudflareAnalytics />

@@ -1,188 +1,201 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  FiAlertCircle,
-  FiArrowLeft,
-  FiCheckCircle,
-  FiChevronRight,
-  FiExternalLink,
-  FiFolder,
-  FiGrid,
-  FiList,
-  FiRefreshCw,
-  FiWifiOff,
+  FiAlertCircle, FiArrowDown, FiArrowLeft, FiArrowRight, FiArrowUp, FiChevronRight,
+  FiColumns, FiExternalLink, FiFolder, FiGrid, FiImage, FiInfo, FiList, FiMoreHorizontal, FiRefreshCw, FiSearch, FiEye,
 } from 'react-icons/fi';
 import { huggingFaceFolderUrl } from '../services/api';
-import {
-  applyFolderCounts,
-  getBreadcrumbs,
-  getName,
-  parentPath,
-  sortItems,
-} from '../utils/files';
-import FileItem from './FileItem';
+import { displayExplorerName, selectExplorerItem, SORT_LABELS, sortExplorerItems } from '../utils/explorer';
+import { groupExplorerItems } from '../utils/explorerGroups';
+import { applyFolderCounts, getBreadcrumbs, getName, parentPath } from '../utils/files';
+import EntryActions from './explorer/EntryActions';
+import ExplorerTabs from './explorer/ExplorerTabs';
+import FinderPreview from './explorer/FinderPreview';
+import FinderViewOptions from './explorer/FinderViewOptions';
+import { ColumnView, GalleryView, IconView, ListView } from './explorer/ExplorerViews';
 
-function LoadingGrid({ view }) {
+const VIEWS = [
+  { value: 'grid', label: 'Icônes', Icon: FiGrid },
+  { value: 'list', label: 'Liste', Icon: FiList },
+  { value: 'columns', label: 'Colonnes', Icon: FiColumns },
+  { value: 'gallery', label: 'Galerie', Icon: FiImage },
+];
+const VIEW_LABELS = Object.fromEntries(VIEWS.map(({ value, label }) => [value, label]));
+const EMPTY_SELECTION = { paths: new Set(), anchor: null, current: null, item: null };
+const EMPTY_EXPANDED = new Set();
+
+function ExplorerContent({ library, catalog, settings, onOpenFile, onOpenSearch, favorites, onToggleFavorite, personal }) {
+  const { preferences, onSort, setPreference } = settings;
+  const [perTab, setPerTab] = useState({});
+  const [menu, setMenu] = useState(null);
+  const heading = useRef(null);
+  const scrollArea = useRef(null);
+  const scrollByTab = useRef(new Map());
+  const { activeId, path, tabs } = library;
+  const tabState = perTab[activeId]?.path === path ? perTab[activeId] : null;
+  const selection = tabState?.selection ?? EMPTY_SELECTION;
+  const expanded = tabState?.expanded ?? EMPTY_EXPANDED;
+  const updateTab = (makePatch) => setPerTab((previous) => {
+    const current = previous[activeId]?.path === path ? previous[activeId] : {};
+    return { ...previous, [activeId]: { ...current, path, ...makePatch(current) } };
+  });
+  useEffect(() => {
+    setMenu(null);
+    setPerTab((previous) => Object.fromEntries(Object.entries(previous).filter(([id, value]) =>
+      tabs.some((tab) => tab.id === id && tab.path === value.path))));
+    for (const [id, value] of scrollByTab.current) {
+      if (!tabs.some((tab) => tab.id === id && tab.path === value.path)) scrollByTab.current.delete(id);
+    }
+  }, [activeId, path, tabs]);
+  useLayoutEffect(() => {
+    if (library.loading || !scrollArea.current) return;
+    const region = scrollArea.current.querySelector('.finder-column.is-current') || scrollArea.current;
+    const saved = scrollByTab.current.get(activeId);
+    region.scrollTop = saved?.path === path ? saved.top : 0;
+  }, [activeId, library.loading, path, preferences.view]);
+  const items = useMemo(() => sortExplorerItems(applyFolderCounts(library.items, catalog?.counts), preferences), [library.items, catalog?.counts, preferences]);
+  const groups = useMemo(() => groupExplorerItems(items, ['list', 'grid'].includes(preferences.view) ? preferences.group : 'none', personal?.labels),
+    [items, personal?.labels, preferences.group, preferences.view]);
+  const visibleOrder = useMemo(() => groups.flatMap((group) => group.items), [groups]);
+  const folderCount = items.filter((item) => item.type === 'directory').length;
+  const fileCount = items.length - folderCount;
+  const clearSelection = () => updateTab(() => ({ selection: EMPTY_SELECTION }));
+  const select = (item, siblings, modifiers = {}) => {
+    const extend = modifiers.shiftKey;
+    const toggle = modifiers.metaKey || modifiers.ctrlKey;
+    updateTab((previous) => {
+      const next = selectExplorerItem(previous.selection ?? EMPTY_SELECTION, siblings.map((entry) => entry.path), item.path, { extend, toggle });
+      const active = next.paths.has(item.path) ? item : siblings.find((entry) => next.paths.has(entry.path));
+      return { selection: { ...next, current: active?.path ?? null, item: active ?? null } };
+    });
+  };
+  const open = (item, { keepFocus = false } = {}) => {
+    if (item.type === 'directory') {
+      clearSelection();
+      if (!keepFocus || window.matchMedia('(max-width: 700px)').matches) heading.current?.focus({ preventScroll: true });
+      library.navigate(item.path, { scroll: false });
+    } else onOpenFile(item);
+  };
+  const showActions = (item, siblings, trigger, x, y, info = false) => {
+    if (!selection.paths.has(item.path)) select(item, siblings);
+    const rect = trigger?.getBoundingClientRect();
+    setMenu({ path, activeId, item, trigger, x: x || rect?.left, y: y || rect?.bottom, info });
+  };
+  const onExpand = (itemPath) => {
+    const next = new Set(expanded);
+    if (next.has(itemPath)) {
+      for (const entry of next) if (entry === itemPath || entry.startsWith(`${itemPath}/`)) next.delete(entry);
+      if ([...selection.paths].some((entry) => entry.startsWith(`${itemPath}/`))) clearSelection();
+    } else next.add(itemPath);
+    updateTab(() => ({ expanded: next }));
+  };
+  const actions = { selected: selection.paths, select, open, showActions, tagsFor: preferences.showTags ? personal?.tagsFor : undefined,
+    preferTouchSelection: preferences.showPreview, displayName: (item) => displayExplorerName(item, preferences.showExtensions) };
+  const sharedProps = { folder: library, items: visibleOrder, groups, preferences, actions };
+  const selectedItem = selection.paths.has(selection.current) ? selection.item : null;
+  const name = path ? getName(path) : 'Toute la bibliothèque';
+  const info = library.loading ? 'Chargement…' : `${folderCount} dossier${folderCount === 1 ? '' : 's'} · ${fileCount} fichier${fileCount === 1 ? '' : 's'}`;
+
   return (
-    <div className={`files-container ${view === 'list' ? 'list-view' : 'grid-view'}`} aria-label="Chargement des documents">
-      {Array.from({ length: view === 'list' ? 7 : 8 }, (_, index) => (
-        <div className={`file-skeleton ${view === 'list' ? 'row-skeleton' : ''}`} key={index}>
-          <span />
-          <div><i /><i /></div>
+    <>
+      <div className="finder-title-line">
+        <div><span className="finder-eyebrow"><FiFolder aria-hidden="true" /> Bibliothèque ENISE</span><h2 id="explorer-title" ref={heading} tabIndex={-1}>{name}</h2></div>
+        {library.error ? <span className="finder-source is-offline">Aperçu local</span> : !library.loading && <span className="finder-source">Hugging Face</span>}
+      </div>
+      <div className="finder-navigation" aria-label="Navigation des dossiers">
+        <div className="finder-button-group">
+          <button type="button" onClick={() => { library.goBack(); }} disabled={!library.canGoBack} title="Précédent" aria-label="Précédent"><FiArrowLeft aria-hidden="true" /></button>
+          <button type="button" onClick={() => { library.goForward(); }} disabled={!library.canGoForward} title="Suivant" aria-label="Suivant"><FiArrowRight aria-hidden="true" /></button>
+          <button type="button" onClick={() => { library.navigate(parentPath(path), { scroll: false }); }} disabled={!path} title="Dossier parent" aria-label="Dossier parent"><FiArrowUp aria-hidden="true" /></button>
         </div>
-      ))}
-    </div>
+        {preferences.showPath && <nav className="finder-path" aria-label="Fil d’Ariane">
+          {getBreadcrumbs(path).map((crumb, index) => (
+            <span key={crumb.path}>
+              {index > 0 && <FiChevronRight aria-hidden="true" />}
+              <button type="button" title={crumb.label} aria-current={crumb.path === path ? 'page' : undefined} onClick={() => {
+                if (crumb.path !== path) { library.navigate(crumb.path, { scroll: false }); }
+              }}>{crumb.label}</button>
+            </span>
+          ))}
+        </nav>}
+        <button type="button" className="finder-search-button" onClick={() => onOpenSearch(path)} aria-label="Rechercher depuis ce dossier" title="Rechercher"><FiSearch aria-hidden="true" /><span>Rechercher</span></button>
+      </div>
+      {library.error && (
+        <div className="finder-offline-banner" role="status">
+          <FiAlertCircle aria-hidden="true" /><span>Le service distant est indisponible. Seules les ressources locales sont affichées.</span>
+          {items.length > 0 && <button type="button" onClick={library.retry}><FiRefreshCw aria-hidden="true" /> Réessayer</button>}
+        </div>
+      )}
+      <div className={`finder-content-layout${preferences.showPreview ? ' finder-with-preview' : ''}`}>
+      <div className={`finder-content finder-mode-${preferences.view} finder-text-${preferences.textSize} finder-background-${preferences.background}`} ref={scrollArea} aria-busy={library.loading}
+        onScrollCapture={(event) => {
+          const region = event.target;
+          if (!library.loading && (region === event.currentTarget || region.classList?.contains('is-current'))) {
+            scrollByTab.current.set(activeId, { path, top: region.scrollTop });
+          }
+        }} onKeyDown={(event) => {
+        if (event.key === 'Escape' && !menu) clearSelection();
+      }}>
+        {preferences.view === 'grid' && <IconView {...sharedProps} />}
+        {preferences.view === 'list' && <ListView {...sharedProps} {...{ onSort, expanded, onExpand }} key={path} counts={catalog?.counts} reader={library.reader} />}
+        {preferences.view === 'columns' && <ColumnView {...sharedProps} {...{ path }} reader={library.reader} counts={catalog?.counts} />}
+        {preferences.view === 'gallery' && <GalleryView {...sharedProps} selection={selection} />}
+      </div>
+      {preferences.showPreview && <FinderPreview item={selectedItem} gallery={preferences.view === 'gallery'} showDetails={preferences.showPreviewDetails}
+        onClose={() => { setPreference('showPreview', false); heading.current?.focus({ preventScroll: true }); }} onOpen={open} />}
+      </div>
+      {preferences.showStatus && <footer className="finder-status">
+        <span role="status">{selection.paths.size ? `${selection.paths.size} sélectionné${selection.paths.size === 1 ? '' : 's'}` : info}</span>
+        <div className="finder-status-actions">
+          {selectedItem && <>
+            <button type="button" onClick={() => open(selectedItem)}>Ouvrir</button>
+            <button type="button" aria-label="Lire les informations" title="Lire les informations"
+              onClick={(event) => showActions(selectedItem, items, event.currentTarget, undefined, undefined, true)}><FiInfo aria-hidden="true" /></button>
+            <button type="button" aria-label="Actions de la sélection" aria-haspopup="dialog" title="Actions"
+              onClick={(event) => showActions(selectedItem, items, event.currentTarget)}><FiMoreHorizontal aria-hidden="true" /></button>
+          </>}
+          <a href={huggingFaceFolderUrl(path)} target="_blank" rel="noreferrer" title="Voir la source sur Hugging Face"><FiExternalLink aria-hidden="true" /> Source</a>
+        </div>
+      </footer>}
+      {menu?.path === path && menu.activeId === activeId && <EntryActions menu={menu} favorite={favorites.includes(menu.item.path)} onToggleFavorite={onToggleFavorite}
+        onOpen={open} onClose={() => setMenu(null)} tags={personal?.tagsFor(menu.item.path)} onToggleTag={personal?.toggleTag} />}
+    </>
   );
 }
 
-export default function Explorer({
-  library,
-  catalog,
-  onOpenFile,
-  favorites,
-  onToggleFavorite,
-}) {
-  const [view, setView] = useState('grid');
-  const [sortBy, setSortBy] = useState('name');
-  const breadcrumbs = useMemo(() => getBreadcrumbs(library.path), [library.path]);
-  const sortedItems = useMemo(
-    () => applyFolderCounts(sortItems(library.items, sortBy), catalog?.counts),
-    [library.items, sortBy, catalog?.counts],
-  );
-  const folderCount = library.items.filter((item) => item.type === 'directory').length;
-  const fileCount = library.items.length - folderCount;
-  const title = library.path ? getName(library.path) : 'Toute la bibliothèque';
-  const cacheHit = ['HIT', 'KV-HIT', 'BROWSER'].includes(library.cacheStatus);
-
+export default function Explorer(props) {
+  const { settings, library } = props;
+  const { preferences, setPreference, onSort } = settings;
   return (
-    <section className="explorer-panel glass-panel" aria-labelledby="explorer-title">
-      <div className="explorer-header">
-        <nav className="breadcrumbs" aria-label="Fil d’Ariane">
-          {breadcrumbs.map((crumb, index) => (
-            <span key={crumb.path || 'root'}>
-              {index > 0 && <FiChevronRight aria-hidden="true" />}
-              <button
-                type="button"
-                onClick={() => library.navigate(crumb.path, { scroll: false })}
-                aria-current={index === breadcrumbs.length - 1 ? 'page' : undefined}
-              >
-                {crumb.label}
-              </button>
-            </span>
+    <section className="explorer-panel finder-panel glass-panel" aria-labelledby="explorer-title">
+      <div className="finder-toolbar">
+        <div className="finder-button-group finder-views" role="group" aria-label="Mode d’affichage">
+          {VIEWS.map(({ value, label, Icon }) => (
+            <button type="button" key={value} aria-pressed={preferences.view === value} title={label} aria-label={`Affichage : ${label}`} onClick={() => setPreference('view', value)}>
+              <Icon aria-hidden="true" /><span>{label}</span>
+            </button>
           ))}
-        </nav>
-
-        <div className="explorer-title-row">
-          <div className="explorer-title-wrap">
-            {library.path && (
-              <button
-                className="back-button"
-                type="button"
-                onClick={() => library.navigate(parentPath(library.path), { scroll: false })}
-                aria-label="Dossier précédent"
-              >
-                <FiArrowLeft aria-hidden="true" />
-              </button>
-            )}
-            <div>
-              <h2 id="explorer-title">{title}</h2>
-              <p>
-                {library.loading
-                  ? 'Connexion à la bibliothèque…'
-                  : `${folderCount ? `${folderCount} dossier${folderCount > 1 ? 's' : ''}` : ''}${folderCount && fileCount ? ' · ' : ''}${fileCount ? `${fileCount} fichier${fileCount > 1 ? 's' : ''}` : ''}${!folderCount && !fileCount ? 'Aucun élément' : ''}`}
-              </p>
-            </div>
-          </div>
-
-          <div className={`source-status ${library.source === 'fallback' ? 'is-offline' : ''}`}>
-            {library.source === 'fallback' ? <FiWifiOff aria-hidden="true" /> : <FiCheckCircle aria-hidden="true" />}
-            <span>
-              <strong>{library.source === 'fallback' ? 'Aperçu local' : cacheHit ? 'Cache actif' : 'À jour'}</strong>
-              <small>{library.source === 'fallback' ? 'API indisponible' : cacheHit ? 'Servi sans appel HF' : 'Synchronisé avec HF'}</small>
-            </span>
-          </div>
         </div>
-
-        <div className="explorer-toolbar">
-          <div className="toolbar-left">
-            <span className="content-label"><FiFolder aria-hidden="true" /> Contenu</span>
-            <a href={huggingFaceFolderUrl(library.path)} target="_blank" rel="noreferrer">
-              Voir la source <FiExternalLink aria-hidden="true" />
-            </a>
-          </div>
-          <div className="toolbar-right">
-            <label className="sort-control">
-              <span>Trier par</span>
-              <select value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
-                <option value="name">Nom</option>
-                <option value="date">Ajout récent</option>
-                <option value="size">Taille</option>
-              </select>
-            </label>
-            <div className="view-toggle" aria-label="Mode d’affichage">
-              <button
-                type="button"
-                className={view === 'grid' ? 'active' : ''}
-                onClick={() => setView('grid')}
-                aria-label="Affichage en grille"
-                aria-pressed={view === 'grid'}
-              >
-                <FiGrid aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                className={view === 'list' ? 'active' : ''}
-                onClick={() => setView('list')}
-                aria-label="Affichage en liste"
-                aria-pressed={view === 'list'}
-              >
-                <FiList aria-hidden="true" />
-              </button>
-            </div>
-          </div>
+        <div className="finder-preferences">
+          {preferences.view === 'grid' && <select value={preferences.iconSize} aria-label="Taille des icônes" title="Taille des icônes" onChange={(event) => setPreference('iconSize', event.target.value)}>
+            <option value="small">Petites</option><option value="medium">Moyennes</option><option value="large">Grandes</option>
+          </select>}
+          <select value={preferences.sort} aria-label="Trier par" onChange={(event) => onSort(event.target.value)}>
+            {Object.entries(SORT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+          <button type="button" className="finder-sort-direction" title={preferences.direction === 'asc' ? 'Tri croissant : inverser' : 'Tri décroissant : inverser'}
+            aria-label={preferences.direction === 'asc' ? 'Tri croissant : inverser' : 'Tri décroissant : inverser'} onClick={() => onSort(preferences.sort)}>
+            {preferences.direction === 'asc' ? <FiArrowUp aria-hidden="true" /> : <FiArrowDown aria-hidden="true" />}
+          </button>
+          <button type="button" className="finder-sort-direction finder-preview-toggle" aria-label="Prévisualisation"
+            aria-pressed={preferences.showPreview} title={preferences.showPreview ? 'Masquer la prévisualisation' : 'Afficher la prévisualisation'}
+            onClick={() => setPreference('showPreview', !preferences.showPreview)}><FiEye aria-hidden="true" /></button>
+          <FinderViewOptions settings={settings} views={VIEW_LABELS} library={library} />
         </div>
       </div>
-
-      {library.error && (
-        <div className="offline-banner" role="status">
-          <FiAlertCircle aria-hidden="true" />
-          <p><strong>Le service distant ne répond pas.</strong> Les éléments disponibles sont affichés en mode aperçu.</p>
-          <button type="button" onClick={library.retry}><FiRefreshCw aria-hidden="true" /> Réessayer</button>
-        </div>
-      )}
-
-      <div className="explorer-content">
-        {view === 'list' && !library.loading && sortedItems.length > 0 && (
-          <div className="list-head" aria-hidden="true">
-            <span>Nom</span><span>Modification</span><span>Taille</span><span />
-          </div>
-        )}
-        {library.loading ? (
-          <LoadingGrid view={view} />
-        ) : sortedItems.length ? (
-          <div className={`files-container ${view === 'list' ? 'list-view' : 'grid-view'}`}>
-            {sortedItems.map((item) => (
-              <FileItem
-                key={item.path}
-                item={item}
-                view={view}
-                onOpen={onOpenFile}
-                onNavigate={(path) => library.navigate(path, { scroll: false })}
-                favorite={favorites.includes(item.path)}
-                onToggleFavorite={onToggleFavorite}
-                indexing={Boolean(catalog?.loading)}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="empty-folder">
-            <span><FiFolder aria-hidden="true" /></span>
-            <h3>Ce dossier semble vide</h3>
-            <p>Il n’y a pas encore de ressource visible ici, ou la connexion est interrompue.</p>
-            <button type="button" onClick={() => library.navigate(parentPath(library.path), { scroll: false })}>
-              <FiArrowLeft aria-hidden="true" /> Revenir au dossier précédent
-            </button>
-          </div>
-        )}
+      {(preferences.showTabs || library.tabs.length > 1) && <ExplorerTabs library={library} />}
+      <div role={preferences.showTabs || library.tabs.length > 1 ? 'tabpanel' : undefined} id="finder-tab-panel"
+        aria-labelledby={preferences.showTabs || library.tabs.length > 1 ? `tab-${library.activeId}` : undefined}>
+        <ExplorerContent {...props} />
       </div>
     </section>
   );

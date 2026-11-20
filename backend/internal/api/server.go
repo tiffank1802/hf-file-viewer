@@ -495,10 +495,7 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Content-Security-Policy", staticCSP)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+	s.staticHeaders(w, "/index.html")
 	http.ServeFile(w, r, index)
 }
 
@@ -507,8 +504,10 @@ func (s *Server) staticHeaders(w http.ResponseWriter, urlPath string) {
 	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 	w.Header().Set("Content-Security-Policy", staticCSP)
-	if strings.HasPrefix(urlPath, "/assets/") {
+	if strings.HasPrefix(urlPath, "/build-assets/") {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "no-cache")
 	}
 }
 

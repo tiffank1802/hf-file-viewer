@@ -4,6 +4,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -219,5 +221,35 @@ func TestHealthAndMethod(t *testing.T) {
 	server.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/api/tree", nil))
 	if post.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("method %d", post.Code)
+	}
+}
+
+func TestWebUpdateCachePolicy(t *testing.T) {
+	staticDir := t.TempDir()
+	for _, rel := range []string{"index.html", "assets/logo.svg", "build-assets/index-Ab12Cd34.js"} {
+		file := filepath.Join(staticDir, rel)
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte("test asset"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := New(config.Config{StaticDir: staticDir})
+	for _, tt := range []struct {
+		path, cache string
+	}{
+		{"/", "no-cache"},
+		{"/bibliotheque/GM/3A%20GM", "no-cache"},
+		{"/assets/logo.svg", "no-cache"},
+		{"/build-assets/index-Ab12Cd34.js", "public, max-age=31536000, immutable"},
+	} {
+		t.Run(tt.path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, tt.path, nil))
+			if got := response.Header().Get("Cache-Control"); response.Code != http.StatusOK || got != tt.cache {
+				t.Fatalf("status=%d cache=%q, want 200 and %q", response.Code, got, tt.cache)
+			}
+		})
 	}
 }

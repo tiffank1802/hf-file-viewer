@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react';
-import { FiMessageCircle, FiSend, FiX } from 'react-icons/fi';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { FiArrowDown, FiMessageCircle, FiSend, FiX } from 'react-icons/fi';
 import { catalogHint, fetchChatStatus, listConversations, loadConversation, streamChat } from '../services/chat';
 import { useAuth } from '../hooks/useAuth';
 import { getFileKind, normalizeBucketItem, parentPath } from '../utils/files';
@@ -54,25 +54,42 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
   });
   const conversationRef = useRef('');
   const inputRef = useRef(null);
-  const endRef = useRef(null);
+  const logRef = useRef(null);
+  const followRef = useRef(true);
+  const readingTopRef = useRef(0);
+  const logInstanceRef = useRef(null);
+  const [following, setFollowing] = useState(true);
   const abortRef = useRef(null);
   const idRef = useRef(0);
   const panelId = useId();
   const titleId = useId();
   const inputId = useId();
 
+  const updateFollowing = useCallback((next) => {
+    if (followRef.current === next) return;
+    followRef.current = next;
+    setFollowing(next);
+  }, []);
+
+  const followLatest = useCallback(() => {
+    updateFollowing(true);
+    const log = logRef.current;
+    if (log) log.scrollTop = log.scrollHeight;
+  }, [updateFollowing]);
+
   useEffect(() => () => abortRef.current?.abort(), []);
   useEffect(() => { conversationRef.current = conversationId; }, [conversationId]);
 
   useEffect(() => {
     conversationRef.current = '';
+    followLatest();
     setMessages([]);
     setConversationId('');
     setConversations([]);
     setHistoryNote('');
     setPane('chat');
     setSessionReady(false);
-  }, [userId]);
+  }, [followLatest, userId]);
 
   useEffect(() => {
     if (!open || !userId || sessionReady) return undefined;
@@ -106,10 +123,16 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-    endRef.current?.scrollIntoView({ block: 'end' });
-  }, [messages, open, busy]);
+  useLayoutEffect(() => {
+    if (!open || pane !== 'chat' || !logRef.current) {
+      logInstanceRef.current = null;
+      return;
+    }
+    const log = logRef.current;
+    if (followRef.current) log.scrollTop = log.scrollHeight;
+    else if (log !== logInstanceRef.current) log.scrollTop = readingTopRef.current;
+    logInstanceRef.current = log;
+  }, [messages, open, pane, busy, historyNote, statusError]);
 
   useEffect(() => {
     if (!open || !userId) return undefined;
@@ -130,8 +153,19 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
     return () => controller.abort();
   }, [open, userId]);
 
+  function trackReadingPosition(event) {
+    const { scrollHeight, clientHeight, scrollTop } = event.currentTarget;
+    const distance = scrollHeight - clientHeight - scrollTop;
+    // Moving up from the bottom should detach immediately, even if the
+    // movement was only a few pixels. Returning near the end reattaches.
+    const movingUp = scrollTop < readingTopRef.current - 1;
+    readingTopRef.current = scrollTop;
+    updateFollowing(distance <= 3 || (!movingUp && distance <= 36));
+  }
+
   function startFresh() {
     abortRef.current?.abort();
+    followLatest();
     clearStoredSession(userId);
     setConversationId('');
     setMessages([]);
@@ -148,6 +182,7 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
       const loaded = await loadConversation(id);
       rememberSession(userId, id);
       setConversationId(id);
+      followLatest();
       setMessages(messagesFromPayload(loaded.messages));
       setPane('chat');
     } catch (error) {
@@ -177,6 +212,7 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
       .slice(-6)
       .map((item) => ({ role: item.role, content: item.text }));
     const currentConversation = conversationRef.current;
+    followLatest();
     idRef.current += 1;
     const userId = `m${idRef.current}`;
     idRef.current += 1;
@@ -407,7 +443,11 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
               <button type="button" onClick={startFresh} disabled={busy}>Nouvelle</button>
             </div>
           )}
-          <div className="library-chat-log" role="tabpanel" aria-live="polite">
+          <div className="library-chat-log" ref={logRef} role="tabpanel" aria-label="Discussion" aria-live="polite" tabIndex={0}
+            onScroll={trackReadingPosition}
+            onWheel={(event) => {
+              if (event.deltaY < 0 && event.currentTarget.scrollTop > 0) updateFollowing(false);
+            }}>
             {messages.length === 0 && (
               <article className="library-chat-bubble assistant">
                 <AnswerText text="Je parcours la bibliothèque pour te proposer un document, le résumer et t’y emmener. Pose une question sur un cours, une année ou TOEIC." />
@@ -466,8 +506,11 @@ export default function LibraryChat({ path = '', catalog, onNavigate, onOpenFile
                 )}
               </article>
             ))}
-            <span ref={endRef} />
           </div>
+          {!following && <button type="button" className="library-chat-jump" onClick={() => {
+            logRef.current?.focus({ preventScroll: true });
+            followLatest();
+          }}><FiArrowDown aria-hidden="true" /> Derniers messages</button>}
           </>
           )}
 

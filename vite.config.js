@@ -26,6 +26,8 @@ export default defineConfig({
   plugins: [react()],
   build: {
     target: 'es2022',
+    // Only content-hashed Vite output belongs in this immutable directory.
+    assetsDir: 'build-assets',
     sourcemap: false,
   },
   server: {

@@ -26,7 +26,8 @@
     "deploy:space": "node scripts/deploy-space.js",
     "deploy:api": "node scripts/deploy-api.js",
     "api:origin": "node scripts/set-api-origin.js",
-    "deploy:api:firebase": "node scripts/deploy-cloudrun.js"
+    "deploy:api:firebase": "node scripts/deploy-cloudrun.js",
+    "test:finder-browser": "node scripts/check-finder-browser.mjs"
   },
   "dependencies": {
     "docx-preview": "^0.4.0",
@@ -49,6 +50,7 @@
     "eslint-plugin-react-refresh": "^0.5.4",
     "formdata-node": "^6.0.3",
     "globals": "^16.5.0",
+    "playwright-core": "^1.65.1",
     "vite": "^8.2.2",
     "wrangler": "^4.125.0"
   },

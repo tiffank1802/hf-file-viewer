@@ -7,11 +7,12 @@ Bibliothèque étudiante moderne pour les ressources de **Centrale Lyon ENISE**,
 - frontend React responsive, accessible et en français ;
 - identité blanche « liquid glass », verte, rouge et jaune ;
 - icônes React (`react-icons`) et logos locaux optimisés ;
-- navigation par dossier, fil d’Ariane, tri, grille/liste ;
+- explorateur inspiré du Finder : dossiers bleus, vues Icônes/Liste/Colonnes/Galerie, onglets, fil d’Ariane, tri et regroupement ;
+- recherche locale dans le catalogue (dossier, type, date, taille et tag), récents et dossiers intelligents ;
 - aperçu PDF, image, audio, vidéo, texte et **visionneuse Office hybride** : rendu local (`.docx`, `.xlsx`/`.xls`, texte `.pptx`), conversion PDF serveur (LibreOffice) et **Viewer Office Web** (`.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`, `.odt`, `.ods`, `.odp`, ≤ 10 Mo) ;
 - raccourcis **Microsoft OneNote** (`.url`) affichés avec leur cible ouvrable, blocs-notes `.one` disponibles au téléchargement ;
 - aperçu 3D hybride : conversion **GLB gratuite** (FreeCAD) pour `.step`, `.iges`, `.stl`, `.obj` avec rotation, zoom et déplacement, **Autodesk APS** (Model Derivative) pour les autres formats (`.dwg`, `.rvt`, `.sldprt`, `.ifc`, `.catpart`, … — FreeCAD ne lit pas les formats propriétaires), et plugin iframe **ShareCAD** en roue de secours gratuite sans conversion ;
-- téléchargement, partage et favoris enregistrés dans le navigateur ;
+- téléchargement, partage et favoris de fichiers ou dossiers synchronisés avec le compte ;
 - assistant bibliothèque : il retrouve un document, l’ouvre, le résume, et sait croiser plusieurs annales pour répondre à « comment se structure l’examen d’économie ? ». La rédaction reste côté serveur Go ; sans clé, les cartes de documents sont quand même proposées ;
 - **cartes d’espaces construites depuis le bucket** : l’index (`/api/index`) donne l’arborescence et les effectifs, l’en-tête du bucket (`/api/tree` racine) fait foi pour le premier niveau. Un dossier ajouté dans Hugging Face apparaît donc en quelques minutes — **même s’il est encore vide** — avec un badge « Nouveau » et une entrée « Autres dossiers » dans la barre latérale ;
 - effectifs par dossier calculés **une seule fois à l’indexation** et stockés dans le JSON d’index ;
@@ -19,6 +20,15 @@ Bibliothèque étudiante moderne pour les ressources de **Centrale Lyon ENISE**,
 - Cache API configuré pour les arbres, l’index et les fichiers raisonnablement petits ;
 - mode aperçu local si l’API n’est pas joignable pendant le développement ;
 - CSP, en-têtes de sécurité, validation des chemins et secret HF uniquement côté serveur.
+
+## Explorer comme dans le Finder
+
+- **Ordinateur :** sélectionnez au clic, ouvrez au double-clic ou avec `Entrée`, et utilisez `Espace` pour Coup d’œil sur un fichier. `Maj` étend la sélection, `⌘` / `Ctrl` ajoute ou retire un élément. Le menu `…`, le clic droit ou `Maj+F10` donne accès aux actions et à « Lire les informations ».
+- **Mobile :** un tap ouvre un élément ; avec le volet de prévisualisation ou la galerie, touchez un élément puis **Ouvrir**. Les colonnes affichent un niveau à la fois.
+- **Présentation :** ouvrez **Options de présentation** pour régler le tri, le regroupement, les tailles, les colonnes de liste, les vignettes, le fond de la grille et les barres visibles. Activez **Afficher la prévisualisation** (aussi accessible via l’icône œil) pour lire un extrait ou voir l’aperçu d’un élément sélectionné. Les réglages restent sur cet appareil, globalement ou par dossier ; les onglets gardent leur dossier, leur sélection et leur défilement pendant la session. Précédent/Suivant suit l’historique de navigation, y compris les changements d’onglet.
+- **Organisation :** ajoutez des tags depuis « Lire les informations » et enregistrez les recherches filtrées comme dossiers intelligents. Récents, tags, recherches et ordre des dossiers favoris sont propres à l’utilisateur sur cet appareil. Les favoris eux-mêmes sont rattachés au compte.
+
+Le catalogue reste en lecture seule : ces actions ne déplacent, ne dupliquent et ne suppriment aucun fichier Hugging Face. Voir le [plan de l’explorateur](docs/FINDER_EXPLORER_PLAN.md) pour les étapes suivantes et la validation, et l’[étude du lecteur PDF annotable](docs/PDF_ANNOTATION_FEASIBILITY.md) pour la comparaison des SDK.
 
 ## Architecture
 
@@ -105,6 +115,13 @@ Cette configuration utilise **Cloudflare Workers + Static Assets**, ce qui perme
    ```
 
 Wrangler construit `dist/`, crée ou met à jour le Worker `enise-docs`, téléverse les assets et affiche l’URL `*.workers.dev`. Un domaine personnalisé peut ensuite être ajouté dans **Workers & Pages → enise-docs → Settings → Domains & Routes**.
+
+### Builds GitHub et mise à jour côté utilisateur
+
+Le workflow [ENISE Docs Build](./.github/workflows/enise-build.yml) valide et archive le frontend web et le binaire Go Linux sur chaque push vers `master`, `main` ou une branche `arena/**`. Il **ne déploie pas** ces artefacts : l’URL publique ne change qu’après un déploiement Cloudflare ou Go.
+
+- **Web / raccourci installé depuis le navigateur :** après déploiement, fermer puis rouvrir en ligne ou actualiser suffit. Le HTML est revérifié (`Cache-Control: no-cache`) ; les fichiers Vite sous `/build-assets/` ont un nom basé sur leur contenu et restent en cache si ce contenu ne change pas. Les ressources à nom stable sont revérifiées. Aucun installateur à retélécharger. Ne pas servir le HTML avec une règle CDN « Cache Everything » qui ignore ces en-têtes ; si un service worker est ajouté plus tard, ne pas le laisser figer la navigation sur un ancien HTML.
+- **Versions natives Tauri :** elles embarquent le frontend et ne bénéficient pas de ce mécanisme. Pour macOS et Windows, utiliser le [plugin Updater Tauri](https://v2.tauri.app/plugin/updater/) : vérifier une version signée au lancement, proposer son installation puis redémarrer. Cela évite la réinstallation manuelle, mais le plugin télécharge normalement un artefact de mise à jour, pas seulement les fichiers modifiés. iOS et Android utilisent la mise à jour via leur canal de distribution (App Store/TestFlight ou Google Play). Ces installateurs et leur updater ne sont pas construits sur cette branche web/Go.
 
 Les réglages de production sont dans [`wrangler.jsonc`](./wrangler.jsonc) :
 

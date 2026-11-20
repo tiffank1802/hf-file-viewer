@@ -6,7 +6,6 @@ import {
   FiCode,
   FiFile,
   FiFileText,
-  FiFolder,
   FiGlobe,
   FiHeadphones,
   FiHome,
@@ -17,9 +16,9 @@ import {
   FiTool,
   FiVideo,
 } from 'react-icons/fi';
+import FolderIcon from './explorer/FolderIcon';
 
 const fileIcons = {
-  folder: FiFolder,
   pdf: FiFileText,
   image: FiImage,
   audio: FiMusic,
@@ -44,6 +43,7 @@ const navigationIcons = {
 };
 
 export function FileTypeIcon({ kind, size = 20, className = '' }) {
+  if (kind === 'folder') return <FolderIcon size={size} className={className} />;
   const Icon = fileIcons[kind] || FiFile;
   return <Icon size={size} className={className} aria-hidden="true" />;
 }
