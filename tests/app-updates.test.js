@@ -46,5 +46,5 @@ test('stable feed requires every signature and pairs MSI and NSIS with the corre
     assert.equal(manifest.platforms[platform].signature, `sig-${name}`);
   }
   assert.equal(manifest.platforms['linux-x86_64-deb'], undefined);
-  assert.match(await readFile(join(output, 'SHA256SUMS.txt'), 'utf8'), /[a-f0-9]{64}  ENISE-Docs-linux-x64\.deb/);
+  assert.match(await readFile(join(output, 'SHA256SUMS.txt'), 'utf8'), /[a-f0-9]{64} {2}ENISE-Docs-linux-x64\.deb/);
 });
