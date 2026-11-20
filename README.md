@@ -23,6 +23,10 @@ Bibliothèque étudiante moderne pour les ressources de **Centrale Lyon ENISE**,
 
 ## Explorer comme dans le Finder
 
+- **Tags :** clic droit sur un fichier ou un dossier → **Ajouter ou modifier les tags…**. Les tags personnalisés sont réutilisables dans la barre latérale, la recherche et le regroupement ; ils restent sur l’appareil, séparés par compte.
+- **Aperçus Office :** le volet Finder affiche les documents Word modernes et les feuilles Excel localement, et extrait le texte des diapositives PowerPoint. Le rendu PDF est proposé si la conversion LibreOffice est configurée ; dans ce volet, le service Microsoft n’est ouvert que sur demande.
+- **Étudier un PDF :** depuis le volet, **Annoter et interroger le PDF** ouvre directement le lecteur existant. Voir la [proposition de parcours inspiré d’alphaXiv](docs/PARCOURS_LECTURE_ALPHAXIV.md).
+
 - **Ordinateur :** sélectionnez au clic, ouvrez au double-clic ou avec `Entrée`, et utilisez `Espace` pour Coup d’œil sur un fichier. `Maj` étend la sélection, `⌘` / `Ctrl` ajoute ou retire un élément. Le menu `…`, le clic droit ou `Maj+F10` donne accès aux actions et à « Lire les informations ».
 - **Mobile :** un tap ouvre un élément ; avec le volet de prévisualisation ou la galerie, touchez un élément puis **Ouvrir**. Les colonnes affichent un niveau à la fois.
 - **Présentation :** ouvrez **Options de présentation** pour régler le tri, le regroupement, les tailles, les colonnes de liste, les vignettes, le fond de la grille et les barres visibles. Activez **Afficher la prévisualisation** (aussi accessible via l’icône œil) pour lire un extrait ou voir l’aperçu d’un élément sélectionné. Les réglages restent sur cet appareil, globalement ou par dossier ; les onglets gardent leur dossier, leur sélection et leur défilement pendant la session. Précédent/Suivant suit l’historique de navigation, y compris les changements d’onglet.

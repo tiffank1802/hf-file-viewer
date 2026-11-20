@@ -4,7 +4,7 @@ import { TAGS } from './explorerPersonal.js';
 export const GROUP_LABELS = { none: 'Sans regroupement', kind: 'Par type', date: 'Par mois', tag: 'Par tag' };
 const months = new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' });
 
-export function groupExplorerItems(items, grouping, labels = new Map()) {
+export function groupExplorerItems(items, grouping, labels = new Map(), tags = TAGS) {
   if (grouping === 'none') return [{ key: '', title: '', items }];
   const groups = new Map();
   for (const item of items) {
@@ -21,7 +21,7 @@ export function groupExplorerItems(items, grouping, labels = new Map()) {
       } else key = title = 'Date inconnue';
     } else if (grouping === 'tag') {
       // Each entry is rendered once. For multiple labels use the first palette tag.
-      const tag = TAGS.find(({ id }) => labels.get(item.path)?.includes(id));
+      const tag = tags.find(({ id }) => labels.get(item.path)?.includes(id));
       key = tag?.id ?? 'untagged';
       title = tag?.label ?? 'Sans tag';
     }

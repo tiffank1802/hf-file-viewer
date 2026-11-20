@@ -1,5 +1,7 @@
 # Remplacer le lecteur PDF natif par un lecteur annotable
 
+> Étude historique du choix de moteur. Le dépôt dispose désormais du lecteur unifié PDF.js. Pour le parcours d’annotation et d’assistant recommandé aujourd’hui, voir [la proposition inspirée d’alphaXiv](PARCOURS_LECTURE_ALPHAXIV.md).
+
 **Verdict : faisable, mais la piste alphaXiv n’est pas confirmée.** Je n’ai pas identifié dans les dépôts publics d’[alphaXiv](https://github.com/orgs/alphaXiv/repositories) un SDK de visualisation et d’annotation PDF à intégrer à React pour des fichiers arbitraires. Cette recherche ne prouve pas qu’il n’existe pas : un lien vers le dépôt permettrait de vérifier sa licence et ses API. Le lecteur en production reste inchangé.
 
 ## Vérifications côté alphaXiv

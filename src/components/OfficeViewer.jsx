@@ -95,13 +95,16 @@ function useConvertStatus(enabled) {
   return status;
 }
 
-export default function OfficeViewer({ file }) {
+export default function OfficeViewer({ file, embedded = false }) {
   const extension = getExtension(file.path);
   const localKind = officeLocalKind(extension);
   const convertible = isOfficeConvertibleExtension(extension);
   const microsoftable = isOfficeWebViewerExtension(extension);
   const convertStatus = useConvertStatus(convertible);
   const [storedMode, setStoredMode] = useLocalStorage(OFFICE_MODE_KEY, '');
+  const [embeddedMode, setEmbeddedMode] = useState('');
+  const selectedMode = embedded ? embeddedMode : storedMode;
+  const chooseMode = embedded ? setEmbeddedMode : setStoredMode;
 
   if (!isOfficeExtension(extension)) {
     return <OfficeFallback file={file} message="Ce format n’est pas pris en charge par le viewer Office." />;
@@ -136,11 +139,11 @@ export default function OfficeViewer({ file }) {
     modes.push({ id: 'pdf', label: 'PDF', hint: 'Rendu fidèle converti en PDF côté serveur' });
   }
   if (microsoftable) {
-    modes.push({ id: 'microsoft', label: 'Microsoft', hint: 'Viewer Office Web de Microsoft (fidélité maximale, site public requis)' });
+    modes.push({ id: 'microsoft', label: embedded ? 'Microsoft (externe)' : 'Microsoft', hint: 'Viewer Office Web de Microsoft (fidélité maximale, site public requis)' });
   }
 
   // Le statut de conversion est encore inconnu et aucun mode n’est tranché.
-  if (modes.length === 0 && convertStatus === 'loading') {
+  if (convertStatus === 'loading' && (!modes.length || (embedded && !localKind && !embeddedMode))) {
     return <ViewerLoader message="Préparation de l’aperçu…" />;
   }
 
@@ -153,15 +156,22 @@ export default function OfficeViewer({ file }) {
     );
   }
 
-  const activeMode = modes.some((mode) => mode.id === storedMode) ? storedMode : modes[0].id;
+  // The Finder pane never contacts the external Office viewer just because a
+  // file received focus, even when that preference was set in the full modal.
+  const activeMode = modes.some((mode) => mode.id === selectedMode) ? selectedMode
+    : (embedded ? modes.find((mode) => mode.id !== 'microsoft')?.id : modes[0].id);
 
   const switchActionFor = (currentId) => {
     const target = modes.find((mode) => mode.id !== currentId);
     if (!target) return null;
-    return { label: `Essayer : ${target.label}`, onClick: () => setStoredMode(target.id) };
+    return { label: `Essayer : ${target.label}`, onClick: () => chooseMode(target.id) };
   };
 
   const renderMode = () => {
+    if (!activeMode) return <div className="finder-office-external">
+      <p>Ce format nécessite un service externe pour l’aperçu en ligne. Microsoft recevra l’adresse publique du fichier.</p>
+      <button type="button" onClick={() => chooseMode('microsoft')}>Afficher avec Microsoft</button>
+    </div>;
     if (activeMode === 'local' && localKind === 'docx') {
       return <DocxViewer file={file} onSwitchMode={switchActionFor('local')} />;
     }
@@ -178,8 +188,8 @@ export default function OfficeViewer({ file }) {
   };
 
   return (
-    <div className="office-viewer">
-      <OfficeModeTabs modes={modes} active={activeMode} onChange={setStoredMode} />
+    <div className={`office-viewer${embedded ? ' office-viewer-embedded' : ''}`}>
+      <OfficeModeTabs modes={modes} active={activeMode} onChange={chooseMode} />
       <div className="office-viewer-body">
         {renderMode()}
       </div>

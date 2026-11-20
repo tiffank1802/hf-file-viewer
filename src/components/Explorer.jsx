@@ -25,7 +25,7 @@ const VIEW_LABELS = Object.fromEntries(VIEWS.map(({ value, label }) => [value, l
 const EMPTY_SELECTION = { paths: new Set(), anchor: null, current: null, item: null };
 const EMPTY_EXPANDED = new Set();
 
-function ExplorerContent({ library, catalog, settings, onOpenFile, onOpenSearch, favorites, onToggleFavorite, personal, menuButton }) {
+function ExplorerContent({ library, catalog, settings, onOpenFile, onReadFile, onOpenSearch, favorites, onToggleFavorite, personal, menuButton }) {
   const { preferences, onSort, setPreference } = settings;
   const [perTab, setPerTab] = useState({});
   const [menu, setMenu] = useState(null);
@@ -37,9 +37,9 @@ function ExplorerContent({ library, catalog, settings, onOpenFile, onOpenSearch,
   const tabState = perTab[activeId]?.path === path ? perTab[activeId] : null;
   const selection = tabState?.selection ?? EMPTY_SELECTION;
   const expanded = tabState?.expanded ?? EMPTY_EXPANDED;
-  const updateTab = (makePatch) => setPerTab((previous) => {
-    const current = previous[activeId]?.path === path ? previous[activeId] : {};
-    return { ...previous, [activeId]: { ...current, path, ...makePatch(current) } };
+  const updateTab = (makePatch, targetPath = path) => setPerTab((previous) => {
+    const current = previous[activeId]?.path === targetPath ? previous[activeId] : {};
+    return { ...previous, [activeId]: { ...current, path: targetPath, ...makePatch(current) } };
   });
   useEffect(() => {
     setMenu(null);
@@ -57,20 +57,26 @@ function ExplorerContent({ library, catalog, settings, onOpenFile, onOpenSearch,
     region.scrollTop = saved?.path === path ? saved.top : 0;
   }, [activeId, library.loading, path, preferences.view]);
   const items = useMemo(() => sortExplorerItems(applyFolderCounts(library.items, catalog?.counts), preferences), [library.items, catalog?.counts, preferences]);
-  const groups = useMemo(() => groupExplorerItems(items, ['list', 'grid'].includes(preferences.view) ? preferences.group : 'none', personal?.labels),
-    [items, personal?.labels, preferences.group, preferences.view]);
+  const groups = useMemo(() => groupExplorerItems(items, ['list', 'grid'].includes(preferences.view) ? preferences.group : 'none', personal?.labels, personal?.tags),
+    [items, personal?.labels, personal?.tags, preferences.group, preferences.view]);
   const visibleOrder = useMemo(() => groups.flatMap((group) => group.items), [groups]);
   const folderCount = items.filter((item) => item.type === 'directory').length;
   const fileCount = items.length - folderCount;
   const clearSelection = () => updateTab(() => ({ selection: EMPTY_SELECTION }));
-  const select = (item, siblings, modifiers = {}) => {
+  const select = (item, siblings, modifiers = {}, targetPath = path) => {
     const extend = modifiers.shiftKey;
     const toggle = modifiers.metaKey || modifiers.ctrlKey;
     updateTab((previous) => {
       const next = selectExplorerItem(previous.selection ?? EMPTY_SELECTION, siblings.map((entry) => entry.path), item.path, { extend, toggle });
       const active = next.paths.has(item.path) ? item : siblings.find((entry) => next.paths.has(entry.path));
       return { selection: { ...next, current: active?.path ?? null, item: active ?? null } };
-    });
+    }, targetPath);
+  };
+  const selectFromColumn = (item, siblings, modifiers, columnPath) => {
+    if (item.type === 'directory' || columnPath === path) { select(item, siblings, modifiers); return; }
+    // A file selected in a parent column replaces the revealed child branch.
+    library.navigate(columnPath, { scroll: false });
+    select(item, siblings, modifiers, columnPath);
   };
   const open = (item, { keepFocus = false } = {}) => {
     if (item.type === 'directory') {
@@ -93,7 +99,7 @@ function ExplorerContent({ library, catalog, settings, onOpenFile, onOpenSearch,
     } else next.add(itemPath);
     updateTab(() => ({ expanded: next }));
   };
-  const actions = { selected: selection.paths, select, open, showActions, tagsFor: preferences.showTags ? personal?.tagsFor : undefined,
+  const actions = { selected: selection.paths, select, selectFromColumn, open, showActions, tagsFor: preferences.showTags ? personal?.tagsFor : undefined,
     preferTouchSelection: preferences.showPreview, displayName: (item) => displayExplorerName(item, preferences.showExtensions) };
   const sharedProps = { folder: library, items: visibleOrder, groups, preferences, actions };
   const selectedItem = selection.paths.has(selection.current) ? selection.item : null;
@@ -198,7 +204,7 @@ function ExplorerContent({ library, catalog, settings, onOpenFile, onOpenSearch,
         {preferences.view === 'gallery' && <GalleryView {...sharedProps} selection={selection} />}
       </div>
       {preferences.showPreview && <FinderPreview item={selectedItem} gallery={preferences.view === 'gallery'} showDetails={preferences.showPreviewDetails}
-        onClose={() => { setPreference('showPreview', false); heading.current?.focus({ preventScroll: true }); }} onOpen={open} />}
+        onClose={() => { setPreference('showPreview', false); heading.current?.focus({ preventScroll: true }); }} onOpen={open} onRead={onReadFile} />}
       </div>
       {preferences.showStatus && <footer className="finder-status">
         <span role="status">{selection.paths.size ? `${selection.paths.size} sélectionné${selection.paths.size === 1 ? '' : 's'}` : info}</span>
@@ -214,7 +220,7 @@ function ExplorerContent({ library, catalog, settings, onOpenFile, onOpenSearch,
         </div>
       </footer>}
       {menu?.path === path && menu.activeId === activeId && <EntryActions menu={menu} favorite={favorites.includes(menu.item.path)} onToggleFavorite={onToggleFavorite}
-        onOpen={open} onOpenInTab={library.canAddTab ? (item) => library.addTab(item.path) : undefined} onClose={() => setMenu(null)} tags={personal?.tagsFor(menu.item.path)} onToggleTag={personal?.toggleTag} />}
+        onOpen={open} onOpenInTab={library.canAddTab ? (item) => library.addTab(item.path) : undefined} onClose={() => setMenu(null)} tags={personal?.tagsFor(menu.item.path)} onToggleTag={personal?.toggleTag} onAttachTag={personal?.attachTag} canCreateTag={personal?.canCreateTag} />}
       {folderMenu?.path === path && folderMenu.activeId === activeId && <FolderActions anchor={folderMenu} groups={contextGroups} heading="Actions du dossier" onClose={() => setFolderMenu(null)} />}
     </>
   );

@@ -1,16 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
-import { FiArrowRight, FiDownload, FiEye, FiHeart, FiInfo, FiLink, FiPlusSquare, FiShare2, FiX } from 'react-icons/fi';
+import { FiArrowRight, FiDownload, FiEye, FiHeart, FiInfo, FiLink, FiPlusSquare, FiShare2, FiTag, FiX } from 'react-icons/fi';
 import { fileProxyUrl, huggingFaceFileUrl } from '../../services/api';
 import { itemType } from '../../utils/explorer';
+import { MAX_TAG_NAME, normalizeTagName, TAG_COLORS } from '../../utils/explorerPersonal';
 import { formatBytes, formatDate, formatFolderCount } from '../../utils/files';
 import { hrefFromLibraryPath } from '../../utils/routes';
 import { FileTypeIcon } from '../Icons';
 
-export default function EntryActions({ menu, favorite, onToggleFavorite, onOpen, onOpenInTab, onClose, tags = [], onToggleTag }) {
+export default function EntryActions({ menu, favorite, onToggleFavorite, onOpen, onOpenInTab, onClose, tags = [], onToggleTag, onAttachTag, canCreateTag }) {
   const dialog = useRef(null);
   const infoHeading = useRef(null);
   const [info, setInfo] = useState(menu.info ?? false);
   const [message, setMessage] = useState('');
+  const [newTag, setNewTag] = useState('');
+  const [tagColor, setTagColor] = useState(TAG_COLORS[3].color);
   const { item, trigger, x, y } = menu;
   const directory = item.type === 'directory';
 
@@ -43,6 +46,14 @@ export default function EntryActions({ menu, favorite, onToggleFavorite, onOpen,
       setMessage('Impossible de copier le lien dans ce navigateur.');
     }
   };
+  const addTag = (event) => {
+    event.preventDefault();
+    const label = normalizeTagName(newTag);
+    if (!label) return;
+    onAttachTag(item.path, label, tagColor);
+    setNewTag('');
+    setMessage(`Tag « ${label} » appliqué.`);
+  };
   const anchored = Number.isFinite(x) && Number.isFinite(y) && !info;
   const style = anchored ? { left: `clamp(8px, ${x}px, calc(100vw - min(280px, 90vw) - 8px))`, top: `clamp(8px, ${y}px, calc(100dvh - 300px))` } : undefined;
   return (
@@ -74,6 +85,15 @@ export default function EntryActions({ menu, favorite, onToggleFavorite, onOpen,
                 ))}
               </fieldset>
             )}
+            {onAttachTag && canCreateTag && <form className="finder-tag-form" onSubmit={addTag}>
+              <label>Nom du tag<input type="text" value={newTag} onChange={(event) => setNewTag(event.target.value)} maxLength={MAX_TAG_NAME} required /></label>
+              <label>Couleur du tag<select value={tagColor} onChange={(event) => setTagColor(event.target.value)}>
+                {TAG_COLORS.map(({ label, color }) => <option value={color} key={color}>{label}</option>)}
+              </select></label>
+              <button type="submit" disabled={!newTag.trim()}><FiTag aria-hidden="true" /> Ajouter le tag</button>
+            </form>}
+            {onAttachTag && !canCreateTag && <p className="finder-tag-message">Limite de tags personnalisés atteinte. Vous pouvez réutiliser les tags existants.</p>}
+            {message && <p className="finder-tag-message" role="status">{message}</p>}
             <button type="button" className="finder-dialog-back" onClick={() => setInfo(false)}>Voir les actions</button>
           </>
         ) : (
@@ -84,7 +104,8 @@ export default function EntryActions({ menu, favorite, onToggleFavorite, onOpen,
             <button type="button" onClick={copyLink}><FiLink aria-hidden="true" />Copier le lien</button>
             {typeof navigator.share === 'function' && <button type="button" onClick={share}><FiShare2 aria-hidden="true" />Partager</button>}
             <button type="button" aria-pressed={favorite} onClick={() => { onClose(); onToggleFavorite(item); }}><FiHeart aria-hidden="true" />{favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}</button>
-            <button type="button" onClick={() => setInfo(true)}><FiInfo aria-hidden="true" />Lire les informations</button>
+            {onToggleTag && <button type="button" onClick={() => { setMessage(''); setInfo(true); }}><FiTag aria-hidden="true" />Ajouter ou modifier les tags…</button>}
+            <button type="button" onClick={() => { setMessage(''); setInfo(true); }}><FiInfo aria-hidden="true" />Lire les informations</button>
             {message && <p role="status">{message}</p>}
           </div>
         )}

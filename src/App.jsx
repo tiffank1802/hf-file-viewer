@@ -272,6 +272,7 @@ export default function App() {
               recentCount={personal.recent.length}
               searches={personal.searches}
               onOpenRecent={() => openSearch('recent')}
+              tags={personal.tags}
               onOpenTag={(tag) => openSearch('search', { filters: { tag } })}
               onOpenSaved={(search) => openSearch('search', { filters: search.filters, query: search.query, savedId: search.id })}
             />}
@@ -280,6 +281,7 @@ export default function App() {
               library={library}
               catalog={catalog}
               onOpenFile={openFile}
+              onReadFile={openReader}
               onOpenSearch={(folder) => openSearch('search', { filters: { folder } })}
               personal={authStatus === 'loading' ? null : personal}
               favorites={favoritePaths}

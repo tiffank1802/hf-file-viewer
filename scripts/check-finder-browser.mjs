@@ -1,5 +1,7 @@
 /* global document, window */
 import assert from 'node:assert/strict';
+import JSZip from 'jszip';
+import XLSX from 'xlsx';
 import { chromium } from 'playwright-core';
 import { createServer } from 'vite';
 
@@ -13,9 +15,29 @@ const empty = `${lesson}/Vide`;
 const offline = `${lesson}/Hors ligne`;
 const notes = `${lesson}/Notes.txt`;
 const picture = `${lesson}/Épure.png`;
+const officeFolder = `${root}/Office`;
+const word = `${officeFolder}/Compte rendu.docx`;
+const legacyWord = `${officeFolder}/Archive.doc`;
+const workbook = `${officeFolder}/Calcul.xlsx`;
+const slides = `${officeFolder}/Cours.pptx`;
+const docArchive = new JSZip();
+const wordNamespace = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+docArchive.file('[Content_Types].xml', '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
+docArchive.file('_rels/.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
+docArchive.file('word/document.xml', `<w:document xmlns:w="${wordNamespace}"><w:body><w:p><w:r><w:t>Texte Word du volet</w:t></w:r></w:p><w:sectPr/></w:body></w:document>`);
+const pptArchive = new JSZip();
+pptArchive.file('ppt/slides/slide1.xml', '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:txBody><a:p><a:r><a:t>Texte PowerPoint du volet</a:t></a:r></a:p></p:txBody></p:sld>');
+const sheet = XLSX.utils.book_new();
+XLSX.utils.book_append_sheet(sheet, XLSX.utils.aoa_to_sheet([['Cellule Excel du volet', 42]]), 'Calcul');
+const officeFiles = new Map([
+  [word, await docArchive.generateAsync({ type: 'nodebuffer' })],
+  [workbook, XLSX.write(sheet, { type: 'buffer', bookType: 'xlsx' })],
+  [slides, await pptArchive.generateAsync({ type: 'nodebuffer' })],
+]);
 const data = new Map([
   ['', [directory(root), directory('TOEIC')]],
-  [root, [directory(lesson), directory('GM/Autre')]],
+  [root, [directory(lesson), directory('GM/Autre'), directory(officeFolder)]],
+  [officeFolder, [file(word), file(legacyWord), file(workbook), file(slides)]],
   [lesson, [directory(empty), directory(offline), file(notes), file(picture), file(`${lesson}/Cours.pdf`, 200000)]],
   [empty, []], ['GM/Autre', Array.from({ length: 30 }, (_, n) => file(`GM/Autre/Document ${n + 1}.txt`))],
 ]);
@@ -64,6 +86,7 @@ try {
       if (url.pathname === '/api/file' && url.searchParams.get('path') === picture) {
         return route.fulfill({ contentType: 'image/png', body: Buffer.from(blank, 'base64') });
       }
+      if (url.pathname === '/api/file' && officeFiles.has(url.searchParams.get('path'))) return route.fulfill({ contentType: 'application/octet-stream', body: officeFiles.get(url.searchParams.get('path')) });
       if (url.pathname === '/api/file') return route.fulfill({ contentType: 'text/plain', body: 'Un aperçu en français.' });
       return route.fulfill({ json: {} });
     });
@@ -275,6 +298,49 @@ try {
   assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   await mobile.close();
 
+  const workflow = await browser.newPage({ viewport: { width: 1450, height: 950 } });
+  await stub(workflow);
+  await workflow.goto(href(lesson));
+  await control(workflow, 'Affichage : Colonnes').click();
+  await entry(workflow, empty).click();
+  await workflow.waitForURL(href(empty));
+  assert.equal(await entry(workflow, empty).getAttribute('aria-current'), 'true');
+  await entry(workflow, notes).click();
+  await workflow.waitForURL(href(lesson));
+  assert.equal(await entry(workflow, empty).getAttribute('aria-current'), null);
+  assert.equal(await entry(workflow, notes).getAttribute('aria-pressed'), 'true');
+  assert.equal(await workflow.getByRole('region', { name: 'Vide', exact: true }).count(), 0);
+
+  await entry(workflow, notes).click({ button: 'right' });
+  const labelDialog = workflow.getByRole('dialog');
+  await control(labelDialog, 'Ajouter ou modifier les tags…').click();
+  await labelDialog.getByLabel('Nom du tag').fill('Examen blanc');
+  await labelDialog.getByLabel('Couleur du tag').selectOption({ label: 'Vert' });
+  await control(labelDialog, 'Ajouter le tag').click();
+  assert.equal(await control(labelDialog, 'Examen blanc').getAttribute('aria-pressed'), 'true');
+  await workflow.keyboard.press('Escape');
+  await workflow.reload();
+  await entry(workflow, notes).getByTitle('Examen blanc').waitFor();
+  await control(workflow, 'Rechercher depuis ce dossier').click();
+  await workflow.getByLabel('Tag', { exact: true }).selectOption({ label: 'Examen blanc' });
+  assert.equal(await workflow.locator('.search-result').count(), 1);
+  await workflow.keyboard.press('Escape');
+  await control(workflow, 'Prévisualisation').click();
+  await entry(workflow, `${lesson}/Cours.pdf`).click();
+  await control(workflow, 'Annoter et interroger le PDF').waitFor();
+
+  await workflow.goto(href(officeFolder));
+  const previewPane = workflow.getByRole('complementary', { name: 'Prévisualisation' });
+  for (const [filePath, expected] of [[word, 'Texte Word du volet'], [workbook, 'Cellule Excel du volet'], [slides, 'Texte PowerPoint du volet']]) {
+    await entry(workflow, filePath).click();
+    await previewPane.getByText(expected, { exact: true }).waitFor();
+    assert.equal(await previewPane.locator('iframe').count(), 0);
+  }
+  await entry(workflow, legacyWord).click();
+  await control(previewPane, 'Afficher avec Microsoft').waitFor();
+  assert.equal(await previewPane.locator('iframe').count(), 0);
+  await workflow.close();
+
   // Simulate Tauri's event and updater IPC while exercising the real UI.
   const native = await browser.newPage({ viewport: { width: 1250, height: 850 } });
   await stub(native);
@@ -329,7 +395,7 @@ try {
   await updates.waitFor({ state: 'hidden' });
   assert.equal(native.url(), href(empty));
   assert.deepEqual(runtimeErrors, []);
-  console.log('Finder : bureau, mobile, commandes natives et menus contextuels ; notifications de préversion et défilement SSE validés.');
+  console.log('Finder : bureau, mobile, commandes natives, tags, aperçus Office et sélection en colonnes ; notifications de préversion et défilement SSE validés.');
 } finally {
   if (sse && !sse.writableEnded) sse.end();
   await browser?.close();
