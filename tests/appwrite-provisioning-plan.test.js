@@ -4,9 +4,11 @@ import test from 'node:test';
 import {
   ROLE_CREATE,
   ROLE_USERS,
+  APPWRITE_ANCHOR_COLUMN_SIZE,
   SPECS,
   TABLES,
   buildPlan,
+  configuredTables,
   columnDrift,
   enumColumns,
   isPendingResourceError,
@@ -102,6 +104,61 @@ test('API héritée : collections/attributs/documentSecurity dans le vocabulaire
   assert.deepEqual(index.body, { key: 'uniq_favorite_user_path', attributes: ['userId', 'pathKey'] });
 });
 
+test('la table annotations reste privée, bornée et indexée par révision', () => {
+  const table = TABLES.find((item) => item.id === 'annotations');
+  assert.ok(table);
+  assert.equal(table.rowSecurity, true);
+  assert.deepEqual(table.permissions, ['create("users")']);
+  assert.deepEqual(table.columns.find((column) => column.key === 'kind').elements, ['highlight', 'note', 'question', 'bookmark']);
+  assert.deepEqual(table.columns.find((column) => column.key === 'status').elements, ['active', 'needs-review', 'archived']);
+  assert.deepEqual(table.indexes.find((index) => index.key === 'idx_annotation_document').columns, ['documentKey', '$updatedAt']);
+  assert.deepEqual(table.indexes.find((index) => index.key === 'idx_annotation_revision').columns, ['documentKey', 'artifactId', '$updatedAt']);
+  assert.equal(table.indexes.some((index) => index.type === 'unique' && index.columns.includes('sourcePath')), false);
+});
+
+test('les annotations PDF ont un stockage privé distinct et une révision source obligatoire', () => {
+  const table = TABLES.find((item) => item.id === 'pdf_annotations_v2');
+  assert.equal(table.rowSecurity, true);
+  assert.deepEqual(table.permissions, ['create("users")']);
+  assert.equal(table.columns.find((column) => column.key === 'sourceRevision').required, true);
+  assert.equal(table.columns.find((column) => column.key === 'artifactId').required, false);
+  assert.deepEqual(table.indexes.find((index) => index.key === 'idx_pdf_annot_revision').columns, ['documentKey', 'sourceRevision', '$updatedAt']);
+});
+
+test('les ancres sont compatibles avec le seuil TEXT SQL documenté sans relever la limite Go', () => {
+  // Modèle de l'adaptateur SQL Utopia Database examiné : limite VARCHAR 16381,
+  // quatre octets/caractère et 20 octets de pointeur pour un TEXT. Ce test
+  // vérifie le plan, pas la version ni l'adaptateur de l'instance réelle.
+  const estimate = (table, anchorSize) => table.columns.reduce((total, column) => {
+    if (column.type === 'integer') return total + 4;
+    const size = column.key === 'anchorJson' ? anchorSize
+      : column.type === 'enum' ? 255 : column.size;
+    if (!size) return total;
+    return total + (size > 16381 ? 20 : size * 4 + (size > 255 ? 2 : 1));
+  }, 1067);
+  assert.ok(APPWRITE_ANCHOR_COLUMN_SIZE > 16381);
+  for (const id of ['annotations', 'pdf_annotations_v2']) {
+    const table = TABLES.find((item) => item.id === id);
+    assert.equal(table.columns.find((item) => item.key === 'anchorJson').size, APPWRITE_ANCHOR_COLUMN_SIZE);
+    assert.ok(estimate(table, 16000) >= 65535, `${id} : l'ancien plan aurait dû dépasser la limite`);
+    assert.ok(estimate(table, APPWRITE_ANCHOR_COLUMN_SIZE) < 65535, `${id} : plan encore trop large`);
+    for (const flavor of ['tablesdb', 'databases']) {
+      const operation = planFor(flavor).find((item) => item.group === 'column' && item.parent === id && item.body.key === 'anchorJson');
+      assert.equal(operation.body.size, 16384);
+    }
+  }
+});
+
+test('le provisioning suit les identifiants configurés sans fusionner les tables', () => {
+  const tables = configuredTables({ APPWRITE_PDF_ANNOTATIONS_TABLE_ID: 'pdf_notes_custom', APPWRITE_ANNOTATIONS_TABLE_ID: 'legacy_notes' });
+  const plan = buildPlan({ spec: SPECS.tablesdb, databaseId: DB, tables });
+  assert.ok(plan.some((op) => op.group === 'table' && op.label === 'pdf_notes_custom'));
+  assert.ok(plan.some((op) => op.group === 'table' && op.label === 'legacy_notes'));
+  assert.ok(!plan.some((op) => op.group === 'table' && op.label === 'pdf_annotations_v2'));
+  assert.throws(() => configuredTables({ APPWRITE_PDF_ANNOTATIONS_TABLE_ID: 'annotations' }), /distinctes/);
+  assert.throws(() => configuredTables({ APPWRITE_PDF_ANNOTATIONS_TABLE_ID: '../invalid' }), /invalide/);
+});
+
 test('aucun index unique ne porte une colonne longue', () => {
   // Un index unique sur 1024 caractères est refusé par le moteur : on passe
   // par la clé de empreinte `pathKey`.
@@ -167,8 +224,12 @@ test('summarizeRows joint la ligne à son compte, et dit quand le compte a dispa
 
 test('permissionsDrift distingue table muette, modèle non appliqué et lecture seule', () => {
   const model = ['create("users")', 'read("users")'];
-  assert.deepEqual(permissionsDrift(model, []), { empty: true, noCreate: false, missing: model, aligned: false });
+  assert.deepEqual(permissionsDrift(model, []), { known: true, empty: true, noCreate: true, missing: model, extra: [], aligned: false });
   assert.equal(permissionsDrift(model, model).aligned, true);
+  assert.equal(permissionsDrift(model, undefined).known, false);
+  const extra = permissionsDrift(model, [...model, 'read("any")']);
+  assert.deepEqual(extra.extra, ['read("any")']);
+  assert.equal(extra.aligned, false);
   // Le PUT n'est jamais passé : la table reste sans create, le profil ne s'écrit pas.
   assert.equal(permissionsDrift(model, ['read("users")']).noCreate, true);
   // Le modèle a changé depuis l'application (users/verified → users).
@@ -239,6 +300,11 @@ test('le modèle respecte les règles que le serveur applique', () => {
   assert.deepEqual(
     TABLES.flatMap((table) => table.columns.filter((c) => c.required).map((c) => `${table.id}.${c.key}`)).sort(),
     [
+      'annotations.anchorJson',
+      'annotations.artifactId',
+      'annotations.documentKey',
+      'annotations.sourcePath',
+      'annotations.userId',
       'conversations.userId',
       'favorites.filePath',
       'favorites.pathKey',
@@ -246,6 +312,11 @@ test('le modèle respecte les règles que le serveur applique', () => {
       'messages.conversationId',
       'messages.seq',
       'messages.userId',
+      'pdf_annotations_v2.anchorJson',
+      'pdf_annotations_v2.documentKey',
+      'pdf_annotations_v2.sourcePath',
+      'pdf_annotations_v2.sourceRevision',
+      'pdf_annotations_v2.userId',
       'profiles.userId',
     ],
   );
@@ -273,10 +344,12 @@ test('le modèle respecte les règles que le serveur applique', () => {
 test('columnDrift voit une définition modifiée après création', () => {
   const profiles = TABLES.find((t) => t.id === 'profiles');
   const displayName = profiles.columns.find((c) => c.key === 'displayName');
-  assert.deepEqual(columnDrift(displayName, { key: 'displayName', required: true, size: 128, default: '' }), {
+  assert.deepEqual(columnDrift(displayName, { key: 'displayName', type: 'string', required: true, size: 128, default: '' }), {
     required: { expected: false, actual: true },
   });
-  assert.equal(columnDrift(displayName, { key: 'displayName', required: false, size: 128, default: '' }), null);
+  assert.equal(columnDrift(displayName, { key: 'displayName', type: 'string', required: false, size: 128, default: '' }), null);
+  assert.ok(columnDrift(displayName, { key: 'displayName', required: false, default: '' }).size);
+  assert.ok(columnDrift(displayName, { key: 'displayName', type: 'string', required: false, size: 128, default: null }).default);
   // Une colonne absente de la base n'est pas une dérive : le run la créera.
   assert.equal(columnDrift(displayName, undefined), null);
 });

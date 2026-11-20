@@ -1,0 +1,50 @@
+name: PDF Reader Checks
+
+on:
+  push:
+    branches: [master, main, 'arena/**']
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reader:
+    name: Web, Go and browser integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.mod
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - run: npm ci --no-audit --no-fund
+      - name: Lint, unit tests and frontend build
+        run: npm run check
+      - name: Go tests and race detector
+        working-directory: backend
+        run: go test -race ./...
+      - name: Install browser engines and OS dependencies
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Reader browser tests (mocked API)
+        run: npm run test:e2e
+      - name: Reader integration (real Go, simulated services)
+        run: npm run test:pdf-integration
+      - name: Upload failure traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pdf-reader-failure-traces
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7

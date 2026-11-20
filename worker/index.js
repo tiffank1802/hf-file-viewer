@@ -52,7 +52,10 @@ const LINK_PREVIEW_TIMEOUT_MS = 10_000;
 const MAX_LINK_PREVIEW_BYTES = 128 * 1024;
 const DEFAULT_MODEL3D_CACHE_TTL = 7 * 24 * 60 * 60;
 const DEFAULT_MAX_MODEL3D_BYTES = 25 * 1024 * 1024;
-const DEFAULT_MODEL3D_CONVERT_URL = 'https://ktongue-rupture.hf.space';
+// Le Space ktongue/Rupture est désormais réservé au prétraitement Docling.
+// La conversion 3D à la demande reste disponible uniquement si un service
+// distinct est explicitement configuré.
+const DEFAULT_MODEL3D_CONVERT_URL = '';
 const DEFAULT_MAX_SOLIDWORKS_BYTES = 100 * 1024 * 1024;
 const DEFAULT_MAX_SOLIDWORKS_DEPENDENCY_FILES = 64;
 const DEFAULT_MAX_SOLIDWORKS_BUNDLE_BYTES = 250 * 1024 * 1024;
@@ -68,6 +71,35 @@ const API_SECURITY_HEADERS = {
   'X-Robots-Tag': 'noindex, nofollow',
 };
 
+const TAURI_CORS_ORIGINS = new Set([
+  'tauri://localhost',
+  'http://tauri.localhost',
+  'https://tauri.localhost',
+]);
+
+const CORS_EXPOSE_HEADERS = 'Content-Range, Content-Length, Accept-Ranges, ETag, Last-Modified, X-Cache-Status, X-Model3D-Meta, Retry-After';
+
+export function resolveAllowedCorsOrigin(request, env) {
+  const origin = String(request?.headers?.get('Origin') || '').trim();
+  if (!origin) return '';
+  if (TAURI_CORS_ORIGINS.has(origin)) return origin;
+  const extra = String(env?.CORS_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return extra.includes(origin) ? origin : '';
+}
+
+function withCorsHeaders(response, allowedOrigin) {
+  if (!allowedOrigin || !response) return response;
+  const wrapped = new Response(response.body, response);
+  wrapped.headers.set('Access-Control-Allow-Origin', allowedOrigin);
+  wrapped.headers.set('Access-Control-Allow-Credentials', 'true');
+  wrapped.headers.set('Access-Control-Expose-Headers', CORS_EXPOSE_HEADERS);
+  wrapped.headers.append('Vary', 'Origin');
+  return wrapped;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -76,19 +108,30 @@ export default {
       return env.ASSETS.fetch(request);
     }
 
+    const allowedOrigin = resolveAllowedCorsOrigin(request, env);
+
     if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204,
-        headers: {
-          ...API_SECURITY_HEADERS,
-          Allow: 'GET, HEAD, POST, OPTIONS',
-          'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
-          'Access-Control-Max-Age': '86400',
-        },
-      });
+      return withCorsHeaders(
+        new Response(null, {
+          status: 204,
+          headers: {
+            ...API_SECURITY_HEADERS,
+            Allow: 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
+            'Access-Control-Allow-Methods': 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers': 'Range, If-Range, Content-Type, Authorization',
+            'Access-Control-Max-Age': '86400',
+          },
+        }),
+        allowedOrigin,
+      );
     }
 
+    const response = await handleApiRequest(request, url, env, ctx);
+    return withCorsHeaders(response, allowedOrigin);
+  },
+};
+
+async function handleApiRequest(request, url, env, ctx) {
     try {
       if (url.pathname === '/api/health') {
         return handleHealth(env);
@@ -110,6 +153,9 @@ export default {
       // décoratif ; sans `path`, il porte le chemin complet du fichier.
       if (url.pathname === '/api/file' || url.pathname.startsWith('/api/file/')) {
         assertMethod(request, ['GET', 'HEAD']);
+        // The reader must not use the path-only edge cache: its PDF ranges
+        // are checked against a strong upstream revision by the Go API.
+        if (url.searchParams.get('reader') === '1') return await proxyGoChat(request, env, true);
         return await handleFile(request, env, ctx);
       }
 
@@ -168,9 +214,20 @@ export default {
         return await handleSolidworksStep(request, env);
       }
 
+      if (url.pathname.startsWith('/api/reader/')) {
+        assertMethod(request, url.pathname === '/api/reader/metrics' ? ['POST'] : ['GET']);
+        return await proxyGoChat(request, env);
+      }
+
       if (url.pathname === '/api/chat/status' || url.pathname === '/api/chat') {
         assertMethod(request, url.pathname === '/api/chat' ? ['POST'] : ['GET']);
         return await proxyGoChat(request, env);
+      }
+
+      if (url.pathname === '/api/annotations' || url.pathname.startsWith('/api/annotations/')) {
+        const root = url.pathname === '/api/annotations';
+        assertMethod(request, root ? ['GET', 'POST'] : ['PATCH', 'DELETE']);
+        return await proxyGoAuth(request, env);
       }
 
       if (url.pathname.startsWith('/api/auth/') || url.pathname === '/api/favorites' || url.pathname.startsWith('/api/favorites/')) {
@@ -197,8 +254,7 @@ export default {
         { status: 500, cacheControl: 'no-store' },
       );
     }
-  },
-};
+}
 
 /** Cache navigateur des documents d’index : court, pour voir les nouveautés. */
 export function browserCacheControl(env) {
@@ -1143,7 +1199,7 @@ async function autodeskHttpError(response, fallback) {
   return new HttpError(response.status >= 500 ? 502 : response.status, `Autodesk APS : ${detail}`);
 }
 
-/** Extensions convertibles en PDF par le Space LibreOffice. */
+/** Extensions acceptées par un éventuel service Office distinct. */
 export function isOfficeConvertibleExtension(extension = '') {
   return OFFICE_CONVERTIBLE_EXTENSIONS.has(String(extension).toLowerCase());
 }
@@ -1170,11 +1226,11 @@ function handleOfficeStatus(env) {
 }
 
 /**
- * Convertit un document Office en PDF via le Space LibreOffice.
+ * Compatibilité PDF via un éventuel service Office distinct.
  *
- * Pipeline : Hugging Face (source) → Space `/api/convert-office` → PDF mis
- * en cache dans le Cache API. Le Worker ne fait que proxifier : LibreOffice
- * ne peut pas tourner dans un Worker (binaire natif, CPU limité).
+ * Ce chemin est désactivé par défaut : le corpus connu doit normalement être
+ * préparé par Docling. S'il est configuré, le Worker met encore la réponse du
+ * service externe en cache.
  */
 async function handleOfficePdf(request, env, ctx) {
   const url = new URL(request.url);
@@ -1903,7 +1959,7 @@ async function solidworksConvertHttpError(response) {
   return new HttpError(response.status >= 500 ? 502 : response.status, `Conversion SolidWorks : ${message}`);
 }
 
-/** Extensions 3D convertibles en GLB par le Space (FreeCAD + trimesh). */
+/** Extensions acceptées par un éventuel service GLB distinct. */
 export function isModelGlbExtension(extension = '') {
   return MODEL3D_GLB_EXTENSIONS.has(String(extension).toLowerCase());
 }
@@ -1914,9 +1970,9 @@ export function isModel3dQuality(value = '') {
 }
 
 /**
- * URL publique du Space de conversion 3D (sans slash final).
- * Par défaut le Space Rupture ; surchargeable via `MODEL3D_CONVERT_URL`.
- * Une valeur explicitement vide désactive la conversion.
+ * URL d'un éventuel service de conversion 3D distinct (sans slash final).
+ * Aucun service n'est activé par défaut : ktongue/Rupture est réservé à
+ * Docling. Une valeur vide désactive la conversion à la demande.
  */
 export function getModel3dConvertUrl(env) {
   if (env && Object.hasOwn(env, 'MODEL3D_CONVERT_URL')) {
@@ -1949,11 +2005,11 @@ function handleModel3dStatus(env) {
 }
 
 /**
- * Convertit un modèle 3D en GLB via le Space FreeCAD (pipeline type 3Dfindit).
+ * Compatibilité GLB via un éventuel service 3D distinct.
  *
- * Pipeline : Hugging Face (source) → Space `/api/convert-3d` → GLB mis en
- * cache dans le Cache API. Les métadonnées viewer (triangles, bbox, volume)
- * transitent dans l’en-tête `X-Model3D-Meta` (base64url JSON).
+ * Aucun service n'est activé par défaut. Lorsqu'une URL est explicitement
+ * configurée, les métadonnées viewer transitent encore dans l'en-tête
+ * `X-Model3D-Meta` (base64url JSON).
  */
 async function handleModel3dGlb(request, env, ctx) {
   const url = new URL(request.url);
@@ -2296,7 +2352,7 @@ function responseFromCache(cached, cacheStatus, cacheControl) {
   return response;
 }
 
-async function proxyGoChat(request, env) {
+async function proxyGoChat(request, env, pdfFile = false) {
   const origin = String(env?.GO_API_ORIGIN || '').trim().replace(/\/+$/, '');
   if (!/^https?:\/\//i.test(origin)) {
     return jsonResponse(
@@ -2327,6 +2383,12 @@ async function proxyGoChat(request, env) {
   }
   const headers = new Headers();
   headers.set('Accept', request.headers.get('Accept') || 'application/json');
+  if (pdfFile) {
+    for (const name of ['Range', 'If-Range']) {
+      const value = request.headers.get(name);
+      if (value) headers.set(name, value);
+    }
+  }
   const contentType = request.headers.get('Content-Type');
   if (contentType) headers.set('Content-Type', contentType);
   const cookie = request.headers.get('Cookie');
@@ -2348,7 +2410,10 @@ async function proxyGoChat(request, env) {
     );
   }
   const responseHeaders = new Headers();
-  for (const name of ['content-type', 'cache-control']) {
+  const forwardedHeaders = pdfFile
+    ? ['content-type', 'cache-control', 'content-length', 'content-range', 'accept-ranges', 'content-disposition', 'etag', 'last-modified']
+    : ['content-type', 'cache-control'];
+  for (const name of forwardedHeaders) {
     const value = upstream.headers.get(name);
     if (value) responseHeaders.set(name, value);
   }
@@ -2384,7 +2449,8 @@ async function proxyGoAuth(request, env) {
     return jsonResponse({ error: 'Origine Go invalide.' }, { status: 501, cacheControl: 'no-store' });
   }
   const declared = Number(request.headers.get('Content-Length') || 0);
-  if (declared > 16 * 1024) {
+  const maxBody = new URL(request.url).pathname.startsWith('/api/annotations') ? 32 * 1024 : 16 * 1024;
+  if (declared > maxBody) {
     return jsonResponse({ error: 'Requête de compte trop volumineuse.' }, { status: 413, cacheControl: 'no-store' });
   }
   const headers = new Headers();

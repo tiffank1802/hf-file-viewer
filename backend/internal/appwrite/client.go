@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	maxResponseBytes = 64 * 1024
+	maxResponseBytes = 2 * 1024 * 1024
 	userAgent        = "enise-docs-go"
 )
 
@@ -58,15 +58,17 @@ func (e *APIError) Error() string {
 
 // Client appelle l'API REST Appwrite avec la session de l'étudiant, pas une clé admin.
 type Client struct {
-	Endpoint           string
-	ProjectID          string
-	DatabaseID         string
-	ProfileTable       string
-	FavoritesTable     string
-	ConversationsTable string
-	MessagesTable      string
-	Flavor             string
-	HTTP               *http.Client
+	Endpoint            string
+	ProjectID           string
+	DatabaseID          string
+	ProfileTable        string
+	FavoritesTable      string
+	ConversationsTable  string
+	MessagesTable       string
+	AnnotationsTable    string
+	PDFAnnotationsTable string
+	Flavor              string
+	HTTP                *http.Client
 }
 
 func (c *Client) httpClient() *http.Client {
@@ -131,9 +133,12 @@ func (c *Client) do(ctx context.Context, method, path, session string, body any)
 		return nil, err
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(raw) > maxResponseBytes {
+		return nil, &APIError{Status: http.StatusBadGateway, Type: "response_too_large"}
 	}
 	result := &callResult{Status: resp.StatusCode, Body: raw, Cookies: resp.Cookies()}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -466,8 +471,8 @@ var frenchByType = map[string]string{
 	"row_invalid_structure":       "Profil refusé par la table.",
 	"missing_session":             "Session non ouverte.",
 	"not_configured":              "Compte non configuré.",
-	"table_not_found":             "Table absente. Lance npm run appwrite:setup.",
-	"collection_not_found":        "Table absente. Lance npm run appwrite:setup.",
+	"table_not_found":             "Table absente. Contacte l’administrateur pour vérifier le stockage.",
+	"collection_not_found":        "Table absente. Contacte l’administrateur pour vérifier le stockage.",
 }
 
 func userFrom(raw []byte) (User, error) {

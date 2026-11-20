@@ -26,16 +26,17 @@ const staticCSP = "default-src 'self'; script-src 'self' https://static.cloudfla
 
 // Server sert le même contrat /api que le Worker, avec un cache chaud.
 type Server struct {
-	cfg           config.Config
-	cache         *cache.Store
-	client        *http.Client
-	llmClient     *http.Client
-	convertClient *http.Client
-	linkClient    *http.Client
-	tokens        *tokenCache
-	chatHits      *chatLimiter
-	authClient    *http.Client
-	authHits      *authLimiter
+	cfg              config.Config
+	cache            *cache.Store
+	client           *http.Client
+	llmClient        *http.Client
+	convertClient    *http.Client
+	linkClient       *http.Client
+	tokens           *tokenCache
+	chatHits         *chatLimiter
+	readerMetricHits *readerMetricLimiter
+	authClient       *http.Client
+	authHits         *authLimiter
 
 	// Une seule relecture de l’index à la fois, avec un délai minimal entre
 	// deux tentatives.
@@ -64,10 +65,11 @@ func New(cfg config.Config) *Server {
 			Transport:     convertTransport,
 			CheckRedirect: redirectPolicy,
 		},
-		linkClient: newLinkClient(),
-		tokens:     &tokenCache{},
-		chatHits:   newChatLimiter(),
-		authHits:   newAuthLimiter(),
+		linkClient:       newLinkClient(),
+		tokens:           &tokenCache{},
+		chatHits:         newChatLimiter(),
+		readerMetricHits: newReaderMetricLimiter(),
+		authHits:         newAuthLimiter(),
 		authClient: &http.Client{
 			Timeout:   12 * time.Second,
 			Transport: transport,
@@ -119,12 +121,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Printf("%s %s %d %s", r.Method, r.URL.RequestURI(), writer.status, time.Since(started).Round(time.Millisecond))
 }
 
+func isAllowedTauriOrigin(origin string) bool {
+	switch strings.TrimSpace(origin) {
+	case "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	applyAPISecurity(w.Header())
+	if origin := strings.TrimSpace(r.Header.Get("Origin")); isAllowedTauriOrigin(origin) {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges, ETag, Last-Modified, X-Cache-Status, X-Model3D-Meta, Retry-After")
+		w.Header().Add("Vary", "Origin")
+	}
 	if r.Method == http.MethodOptions {
-		w.Header().Set("Allow", "GET, HEAD, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Range, Content-Type, Authorization")
+		w.Header().Set("Allow", "GET, HEAD, POST, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Range, If-Range, Content-Type, Authorization")
 		w.Header().Set("Access-Control-Max-Age", "86400")
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -137,6 +154,20 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		err = s.allow(w, r, http.MethodGet, s.handleChatStatus)
 	case r.URL.Path == "/api/chat":
 		err = s.allow(w, r, http.MethodPost, s.handleChat)
+	case r.URL.Path == "/api/reader/pdf-revision":
+		err = s.allow(w, r, http.MethodGet, s.handlePDFRevision)
+	case r.URL.Path == "/api/reader/document":
+		err = s.allow(w, r, http.MethodGet, s.handleReaderDocument)
+	case r.URL.Path == "/api/reader/page":
+		err = s.allow(w, r, http.MethodGet, s.handleReaderPage)
+	case r.URL.Path == "/api/reader/blocks":
+		err = s.allow(w, r, http.MethodGet, s.handleReaderBlocks)
+	case r.URL.Path == "/api/reader/asset":
+		err = s.allow(w, r, http.MethodGet, s.handleReaderAsset)
+	case r.URL.Path == "/api/reader/metrics":
+		err = s.allow(w, r, http.MethodPost, s.handleReaderMetric)
+	case r.URL.Path == "/api/annotations" || strings.HasPrefix(r.URL.Path, "/api/annotations/"):
+		err = s.handleAnnotations(w, r)
 	case r.URL.Path == "/api/chat/conversations" || strings.HasPrefix(r.URL.Path, "/api/chat/conversations/"):
 		err = s.handleChatHistory(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/auth/"):
@@ -208,12 +239,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) error {
 		index = "stale"
 	}
 	writeJSON(w, r, http.StatusOK, map[string]any{
-		"ok":       true,
-		"service":  "enise-docs",
-		"backend":  "go",
-		"bucketId": s.cfg.BucketID,
-		"cache":    "memory",
-		"index":    index,
+		"ok":              true,
+		"service":         "enise-docs",
+		"backend":         "go",
+		"bucketId":        s.cfg.BucketID,
+		"derivedBucketId": s.cfg.DerivedBucketID,
+		"cache":           "memory",
+		"index":           index,
 	}, "no-store", nil)
 	return nil
 }

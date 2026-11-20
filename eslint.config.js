@@ -5,7 +5,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
 
 export default [
-  { ignores: ['dist/**', 'node_modules/**', '.wrangler/**'] },
+  { ignores: ['dist/**', 'node_modules/**', '.wrangler/**', '.cache/**', 'src-tauri/**'] },
   js.configs.recommended,
   {
     files: ['src/**/*.{js,jsx}'],
@@ -52,7 +52,7 @@ export default [
     },
   },
   {
-    files: ['scripts/**/*.mjs', 'scripts/**/*.js', 'vite.config.js'],
+    files: ['scripts/**/*.mjs', 'scripts/**/*.js', 'vite.config.js', 'playwright*.config.js'],
     languageOptions: {
       ecmaVersion: 2024,
       sourceType: 'module',

@@ -48,7 +48,7 @@ export function useFavorites(user) {
       if (payload.unprovisioned) {
         setItems([]);
         setSyncState('unprovisioned');
-        setSyncError(payload.error || 'La table favorites est absente. Lance npm run appwrite:setup.');
+        setSyncError(payload.error || 'La table favorites est absente. Contacte l’administrateur pour vérifier le stockage.');
         return;
       }
       if (payload.enabled === false) {

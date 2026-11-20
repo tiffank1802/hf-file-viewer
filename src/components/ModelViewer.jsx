@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { getExtension, isModelExtension, isShareCadExtension, isSolidworksExtension, modelViewerKind } from '../utils/files';
+import { apiCredentials, apiUrl } from '../utils/runtime';
 import AutodeskViewer from './AutodeskViewer';
 import GlbViewer from './GlbViewer';
 import ShareCadViewer from './ShareCadViewer';
@@ -22,8 +23,9 @@ function useModel3dStatus(enabled) {
 
     const controller = new AbortController();
     setStatus('loading');
-    fetch('/api/model3d/status', {
+    fetch(apiUrl('/api/model3d/status'), {
       signal: controller.signal,
+      credentials: apiCredentials(),
       headers: { Accept: 'application/json' },
     })
       .then((response) => (response.ok ? response.json() : { status: 'not-configured' }))

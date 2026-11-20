@@ -32,6 +32,19 @@ export const ROLE_USERS_VERIFIED = 'users/verified';
  */
 export const ROLE_CREATE = ROLE_USERS;
 
+/**
+ * Go limite l'ancre JSON à 16 000 octets. Pour l'adaptateur SQL Appwrite
+ * examiné (Utopia Database 3.5 et 8.3), une string de plus de 16 381
+ * caractères utilise un stockage TEXT plutôt qu'un VARCHAR compté à raison de
+ * quatre octets par caractère dans la largeur maximale de ligne. 16 000 faisait
+ * donc dépasser cette limite avec les autres colonnes. Le contrat de l'API Go
+ * reste à 16 000 octets ; cette taille de colonne ne le relève pas.
+ *
+ * Le stockage exact dépend de la version et de l'adaptateur : tester le modèle
+ * sur une base de staging du même environnement avant toute écriture réelle.
+ */
+export const APPWRITE_ANCHOR_COLUMN_SIZE = 16_384;
+
 /** Colonnes et index communs aux deux dialectes ; seule la traduction change. */
 export const TABLES = [
   {
@@ -110,7 +123,77 @@ export const TABLES = [
       { key: 'idx_msg_convo_seq', type: 'key', columns: ['conversationId', 'seq'] },
     ],
   },
+  {
+    id: 'annotations',
+    name: 'Annotations privées du lecteur',
+    rowSecurity: true,
+    permissions: [`create("${ROLE_CREATE}")`],
+    columns: [
+      { type: 'string', key: 'userId', size: 36, required: true },
+      { type: 'string', key: 'documentKey', size: 64, required: true },
+      { type: 'string', key: 'sourcePath', size: 1024, required: true },
+      { type: 'string', key: 'artifactId', size: 160, required: true },
+      { type: 'string', key: 'blockId', size: 160, required: false, default: '' },
+      { type: 'integer', key: 'page', required: false, min: 0, max: 100000 },
+      { type: 'string', key: 'anchorJson', size: APPWRITE_ANCHOR_COLUMN_SIZE, required: true },
+      { type: 'enum', key: 'kind', elements: ['highlight', 'note', 'question', 'bookmark'], required: false, default: 'highlight' },
+      { type: 'enum', key: 'color', elements: ['yellow', 'green', 'blue', 'pink'], required: false, default: 'yellow' },
+      { type: 'string', key: 'body', size: 4000, required: false, default: '' },
+      { type: 'enum', key: 'status', elements: ['active', 'needs-review', 'archived'], required: false, default: 'active' },
+    ],
+    indexes: [
+      { key: 'idx_annotation_document', type: 'key', columns: ['documentKey', '$updatedAt'] },
+      { key: 'idx_annotation_revision', type: 'key', columns: ['documentKey', 'artifactId', '$updatedAt'] },
+      { key: 'idx_annotation_user', type: 'key', columns: ['userId', '$updatedAt'] },
+    ],
+  },
+  {
+    // Additive PDF-only store. Legacy Docling annotations remain untouched.
+    id: 'pdf_annotations_v2',
+    name: 'Annotations privées PDF',
+    rowSecurity: true,
+    permissions: [`create("${ROLE_CREATE}")`],
+    columns: [
+      { type: 'string', key: 'userId', size: 36, required: true },
+      { type: 'string', key: 'documentKey', size: 64, required: true },
+      { type: 'string', key: 'sourcePath', size: 1024, required: true },
+      { type: 'string', key: 'sourceRevision', size: 160, required: true },
+      { type: 'string', key: 'artifactId', size: 160, required: false, default: '' },
+      { type: 'string', key: 'blockId', size: 160, required: false, default: '' },
+      { type: 'integer', key: 'page', required: false, min: 0, max: 100000 },
+      { type: 'string', key: 'anchorJson', size: APPWRITE_ANCHOR_COLUMN_SIZE, required: true },
+      { type: 'enum', key: 'kind', elements: ['highlight', 'note', 'question', 'bookmark'], required: false, default: 'highlight' },
+      { type: 'enum', key: 'color', elements: ['yellow', 'green', 'blue', 'pink'], required: false, default: 'yellow' },
+      { type: 'string', key: 'body', size: 4000, required: false, default: '' },
+      { type: 'enum', key: 'status', elements: ['active', 'needs-review', 'archived'], required: false, default: 'active' },
+    ],
+    indexes: [
+      { key: 'idx_pdf_annot_document', type: 'key', columns: ['documentKey', '$updatedAt'] },
+      { key: 'idx_pdf_annot_revision', type: 'key', columns: ['documentKey', 'sourceRevision', '$updatedAt'] },
+      { key: 'idx_pdf_annot_user', type: 'key', columns: ['userId', '$updatedAt'] },
+    ],
+  },
 ];
+
+/** Keep setup/status/dry-run aligned with the IDs consumed by the Go API. */
+export function configuredTables(env = {}) {
+  const configured = {
+    profiles: env.APPWRITE_PROFILE_TABLE_ID || env.VITE_APPWRITE_PROFILE_TABLE_ID,
+    favorites: env.APPWRITE_FAVORITES_TABLE_ID || env.VITE_APPWRITE_FAVORITES_TABLE_ID,
+    conversations: env.APPWRITE_CONVERSATIONS_TABLE_ID,
+    messages: env.APPWRITE_MESSAGES_TABLE_ID,
+    annotations: env.APPWRITE_ANNOTATIONS_TABLE_ID,
+    pdf_annotations_v2: env.APPWRITE_PDF_ANNOTATIONS_TABLE_ID,
+  };
+  const seen = new Set();
+  return TABLES.map((table) => {
+    const id = String(configured[table.id] || table.id).trim();
+    if (!isValidAppwriteUid(id)) throw new Error(`Identifiant Appwrite invalide : ${id}`);
+    if (seen.has(id)) throw new Error(`Les tables Appwrite doivent être distinctes : ${id}`);
+    seen.add(id);
+    return id === table.id ? table : { ...table, id };
+  });
+}
 
 /**
  * Une « table » (2.x) et une « collection » (1.x) sont le même objet.
@@ -360,25 +443,23 @@ export function validateModel(tables = TABLES) {
 }
 
 /**
- * Compare les permissions d'une table lues dans la base à celles du modèle.
- *
- * Trois états méritent d'être distingués, parce qu'ils n'ont pas le même
- * symptôme côté application :
- * - `empty` : aucune permission ⇒ ni lecture ni écriture depuis le navigateur —
- *   l'inscription réussit, la ligne `profiles` n'arrive jamais ;
- * - `missing` : le modèle a changé depuis la dernière application ⇒ relancer le
- *   script (le PUT est idempotent) ;
- * - `noCreate` : des permissions existent mais aucune `create()` ⇒ lecture seule
- *   pour tous, donc profil et favoris muets.
+ * Compare les permissions au niveau de la table, dans les deux sens. Une liste
+ * vide n'exclut pas la lecture/modification d'une ligne autorisée séparément
+ * lorsque la sécurité par ligne est active. Une réponse qui omet les permissions
+ * est inconnue, pas équivalente à une liste vide.
  */
 export function permissionsDrift(expected = [], live) {
-  const current = Array.isArray(live) ? live : [];
+  const known = Array.isArray(live);
+  const current = known ? live : [];
   const missing = expected.filter((entry) => !current.includes(entry));
+  const extra = current.filter((entry) => !expected.includes(entry));
   return {
-    empty: current.length === 0,
-    noCreate: current.length > 0 && !current.some((entry) => entry.startsWith('create(')),
+    known,
+    empty: known && current.length === 0,
+    noCreate: known && !current.some((entry) => entry.startsWith('create(')),
     missing,
-    aligned: current.length > 0 && missing.length === 0 && current.some((entry) => entry.startsWith('create(')),
+    extra,
+    aligned: known && missing.length === 0 && extra.length === 0,
   };
 }
 
@@ -387,14 +468,23 @@ export function columnDrift(declared, live) {
   if (!live) return null;
   const drift = {};
   const is = (key, expected, actual) => {
-    if (actual === undefined || actual === null) return;
+    if (actual === undefined) return;
     if (expected !== actual) drift[key] = { expected, actual };
   };
-  is('required', declared.required ?? false, live.required);
-  is('size', declared.size, live.size);
+  // Appwrite représente les enums comme type=string, format=enum ; certains
+  // mocks et versions renvoient directement type=enum. Un champ absent n'est
+  // pas une preuve de conformité : le signaler comme inconnu.
+  const liveType = live.format === 'enum' ? 'enum' : live.type;
+  is('type', declared.type, liveType ?? 'inconnu');
+  is('required', declared.required ?? false, live.required ?? 'inconnu');
+  if (declared.size !== undefined) is('size', declared.size, live.size ?? 'inconnu');
   if (declared.default !== undefined || live.default !== undefined) is('default', declared.default ?? null, live.default ?? null);
-  const enumIssue = enumDrift(declared, live);
-  if (enumIssue) drift.elements = { expected: declared.elements, actual: liveEnumElements(live) };
+  if (live.array === true) is('array', false, true);
+  if (live.encrypt === true) is('encrypt', false, true);
+  if (declared.type === 'enum') {
+    const elements = liveEnumElements(live);
+    if (!elements || enumDrift(declared, live)) drift.elements = { expected: declared.elements, actual: elements };
+  }
   return Object.keys(drift).length ? drift : null;
 }
 

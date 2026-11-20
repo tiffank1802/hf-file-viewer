@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import {
+  FiBookOpen,
   FiCheck,
   FiDownload,
   FiExternalLink,
@@ -7,11 +8,15 @@ import {
   FiShare2,
   FiX,
 } from 'react-icons/fi';
-import { fileProxyUrl, huggingFaceFileUrl } from '../services/api';
+import { canOpenStructuredReader } from '../reader/route';
+import { fileProxyUrl, huggingFaceFileUrl, mediaFileUrl } from '../services/api';
 import { formatBytes, getExtension } from '../utils/files';
+import { isAndroidRuntime, isTauriRuntime } from '../utils/runtime';
 import { FileTypeIcon } from './Icons';
 import ModelViewer from './ModelViewer';
 import OfficeViewer from './OfficeViewer';
+
+const PdfReader = lazy(() => import('../reader/PdfReader'));
 
 const MAX_TEXT_PREVIEW_BYTES = 2 * 1024 * 1024;
 
@@ -28,7 +33,7 @@ function DownloadPrompt({ file }) {
   );
 }
 
-export default function PreviewModal({ file, onClose, favorite, onToggleFavorite }) {
+export default function PreviewModal({ file, onClose, favorite, onToggleFavorite, onStudy, onRead }) {
   const [textContent, setTextContent] = useState('');
   const [textLoading, setTextLoading] = useState(false);
   const [textError, setTextError] = useState('');
@@ -93,6 +98,8 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
 
   const proxyUrl = fileProxyUrl(file.path);
   const extension = getExtension(file.path).toUpperCase() || 'FICHIER';
+  const canStudy = ['pdf', 'office', 'text', 'image'].includes(file.kind);
+  const canOpenReader = canOpenStructuredReader(file.path);
 
   const shareFile = async () => {
     const shareUrl = huggingFaceFileUrl(file.path);
@@ -111,13 +118,24 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
 
   const renderPreview = () => {
     if (file.kind === 'pdf') {
-      return <iframe className="pdf-frame" src={proxyUrl} title={`Aperçu de ${file.name}`} />;
+      const page = Number(file.previewPage);
+      if (isTauriRuntime() || isAndroidRuntime()) {
+        return (
+          <Suspense fallback={<div className="preview-loader"><span /><p>Chargement du PDF…</p></div>}>
+            <div className="pdf-frame pdf-reader-modal-host">
+              <PdfReader url={proxyUrl} targetPage={page > 0 ? page : 1} />
+            </div>
+          </Suspense>
+        );
+      }
+      const source = page > 0 ? `${proxyUrl}#page=${page}` : proxyUrl;
+      return <iframe className="pdf-frame" src={source} title={`Aperçu de ${file.name}`} />;
     }
     if (file.kind === 'image') {
       return <div className="image-preview"><img src={proxyUrl} alt={file.name} /></div>;
     }
     if (file.kind === 'video') {
-      return <div className="media-preview"><video src={proxyUrl} controls preload="metadata" /></div>;
+      return <div className="media-preview"><video src={mediaFileUrl(file.path)} controls preload="metadata" /></div>;
     }
     if (file.kind === 'audio') {
       return (
@@ -125,7 +143,7 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
           <span><FileTypeIcon kind="audio" size={42} /></span>
           <h3>{file.name}</h3>
           <p>Ressource audio · {formatBytes(file.size)}</p>
-          <audio src={proxyUrl} controls preload="metadata" />
+          <audio src={mediaFileUrl(file.path)} controls preload="metadata" />
         </div>
       );
     }
@@ -155,6 +173,17 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
             </div>
           </div>
           <div className="preview-actions">
+            {(canStudy || canOpenReader) && (onStudy || (canOpenReader && onRead)) && (
+              <button
+                type="button"
+                className="preview-study"
+                onClick={() => (canOpenReader && onRead ? onRead(file) : onStudy?.(file))}
+                aria-label={canOpenReader ? 'Ouvrir le lecteur documentaire interactif' : 'Étudier ce document avec l’IA'}
+                title={canOpenReader ? 'Lecteur interactif' : 'Étudier avec l’IA'}
+              >
+                <FiBookOpen aria-hidden="true" /><span>{canOpenReader ? 'Ouvrir dans le lecteur' : 'Étudier'}</span>
+              </button>
+            )}
             <button
               type="button"
               className={favorite ? 'is-favorite' : ''}

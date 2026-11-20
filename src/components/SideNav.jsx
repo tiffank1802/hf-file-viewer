@@ -1,5 +1,6 @@
-import { FiClock, FiHeart, FiInfo, FiSearch, FiSliders } from 'react-icons/fi';
+import { FiClock, FiDownload, FiHeart, FiInfo, FiSearch, FiSliders, FiSmartphone } from 'react-icons/fi';
 import { SIDE_LINKS } from '../config';
+import { isTauriRuntime } from '../utils/runtime';
 import { NavigationIcon } from './Icons';
 import FolderIcon from './explorer/FolderIcon';
 import PinnedFolders from './explorer/PinnedFolders';
@@ -16,6 +17,7 @@ export default function SideNav({
   favoriteCount,
   onOpenSearch,
   onOpenFavorites,
+  onOpenDownload,
   spaces = [],
   pinned = [],
   onMovePinned,
@@ -28,6 +30,7 @@ export default function SideNav({
   // Dossiers présents dans le bucket mais absents des liens fixes : ils
   // apparaissent ici dès que l’index les découvre.
   const otherSpaces = spaces.filter((space) => space.dynamic);
+  const inTauri = isTauriRuntime();
 
   return (
     <aside className="library-sidebar finder-sidebar glass-panel" aria-label="Navigation de la bibliothèque">
@@ -86,6 +89,13 @@ export default function SideNav({
           Recherche globale
         </button>
         <PinnedFolders folders={pinned} path={path} navigate={navigate} onMove={onMovePinned} />
+        {onOpenDownload && (
+          <button className="sidebar-utility sidebar-utility--app" type="button" onClick={onOpenDownload}>
+            <span>{inTauri ? <FiSmartphone aria-hidden="true" /> : <FiDownload aria-hidden="true" />}</span>
+            {inTauri ? 'Autres appareils' : 'Télécharger l’app'}
+            {!inTauri && <em className="sidebar-app-badge">App</em>}
+          </button>
+        )}
       </div>
 
       <div className="sidebar-section sidebar-tags">

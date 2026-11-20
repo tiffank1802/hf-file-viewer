@@ -15,9 +15,12 @@ import (
 // au bucket doit apparaître en quelques minutes, côté site comme côté
 // Assistant.
 const (
-	defaultBucketID       = "ktongue/ENISE-SITE"
-	defaultHFOrigin       = "https://huggingface.co"
-	defaultModel3DURL     = "https://ktongue-rupture.hf.space"
+	defaultBucketID        = "ktongue/ENISE-SITE"
+	defaultDerivedBucketID = "ktongue/ENISE-SITE-DERIVED"
+	defaultHFOrigin        = "https://huggingface.co"
+	// ktongue/Rupture est désormais le préprocesseur Docling. La conversion
+	// 3D à la demande exige un service distinct explicitement configuré.
+	defaultModel3DURL     = ""
 	defaultAddr           = "0.0.0.0:8788"
 	defaultTreeTTL        = 5 * time.Minute
 	defaultIndexTTL       = 10 * time.Minute
@@ -53,17 +56,18 @@ const (
 // Config rassemble les mêmes variables que le Worker Cloudflare.
 // Les secrets restent côté processus : le navigateur ne les voit jamais.
 type Config struct {
-	Addr       string
-	Root       string
-	StaticDir  string
-	CacheDir   string
-	HFOrigin   string
-	BucketID   string
-	HFToken    string
-	TreeTTL    time.Duration
-	IndexTTL   time.Duration
-	FileTTL    time.Duration
-	StaleGrace time.Duration
+	Addr            string
+	Root            string
+	StaticDir       string
+	CacheDir        string
+	HFOrigin        string
+	BucketID        string
+	DerivedBucketID string
+	HFToken         string
+	TreeTTL         time.Duration
+	IndexTTL        time.Duration
+	FileTTL         time.Duration
+	StaleGrace      time.Duration
 
 	MaxCacheableFileBytes int64
 	OfficeConvertURL      string
@@ -105,16 +109,18 @@ type Config struct {
 	CloudflareAIBase    string
 	CloudflareAIModel   string
 
-	AppwriteEnabled            bool
-	AppwriteEndpoint           string
-	AppwriteProjectID          string
-	AppwriteDatabaseID         string
-	AppwriteProfileTable       string
-	AppwriteFavoritesTable     string
-	AppwriteConversationsTable string
-	AppwriteMessagesTable      string
-	AppwriteFlavor             string
-	AppwritePublicOrigin       string
+	AppwriteEnabled             bool
+	AppwriteEndpoint            string
+	AppwriteProjectID           string
+	AppwriteDatabaseID          string
+	AppwriteProfileTable        string
+	AppwriteFavoritesTable      string
+	AppwriteConversationsTable  string
+	AppwriteMessagesTable       string
+	AppwriteAnnotationsTable    string
+	AppwritePDFAnnotationsTable string
+	AppwriteFlavor              string
+	AppwritePublicOrigin        string
 }
 
 func Load(root string) Config {
@@ -141,6 +147,7 @@ func Load(root string) Config {
 		CacheDir:              firstNonEmpty(get("CACHE_DIR"), filepath.Join(root, ".cache", "go-api")),
 		HFOrigin:              firstNonEmpty(get("HF_ORIGIN"), defaultHFOrigin),
 		BucketID:              firstNonEmpty(get("HF_BUCKET_ID"), defaultBucketID),
+		DerivedBucketID:       firstNonEmpty(get("HF_DERIVED_BUCKET_ID"), defaultDerivedBucketID),
 		HFToken:               unsetPlaceholder(get("HF_TOKEN")),
 		TreeTTL:               durationSeconds(get("TREE_CACHE_TTL"), defaultTreeTTL),
 		IndexTTL:              durationSeconds(get("INDEX_CACHE_TTL"), defaultIndexTTL),
@@ -176,6 +183,9 @@ func Load(root string) Config {
 	if !catalog.ValidBucketID(cfg.BucketID) {
 		cfg.BucketID = defaultBucketID
 	}
+	if !catalog.ValidBucketID(cfg.DerivedBucketID) {
+		cfg.DerivedBucketID = defaultDerivedBucketID
+	}
 	cfg.NvidiaAPIKey = unsetPlaceholder(firstNonEmpty(get("NVIDIA_API_KEY"), get("NVIDIA_NIM_API_KEY")))
 	cfg.NvidiaAPIBase = catalog.TrimTrailingSlashes(firstNonEmpty(get("NVIDIA_API_BASE"), defaultNvidiaBase))
 	cfg.NvidiaModel = firstNonEmpty(sanitizeModel(get("NVIDIA_MODEL")), defaultNvidiaModel)
@@ -201,6 +211,8 @@ func Load(root string) Config {
 	cfg.AppwriteFavoritesTable = firstNonEmpty(get("APPWRITE_FAVORITES_TABLE_ID"), get("VITE_APPWRITE_FAVORITES_TABLE_ID"), "favorites")
 	cfg.AppwriteConversationsTable = firstNonEmpty(get("APPWRITE_CONVERSATIONS_TABLE_ID"), "conversations")
 	cfg.AppwriteMessagesTable = firstNonEmpty(get("APPWRITE_MESSAGES_TABLE_ID"), "messages")
+	cfg.AppwriteAnnotationsTable = firstNonEmpty(get("APPWRITE_ANNOTATIONS_TABLE_ID"), "annotations")
+	cfg.AppwritePDFAnnotationsTable = firstNonEmpty(get("APPWRITE_PDF_ANNOTATIONS_TABLE_ID"), "pdf_annotations_v2")
 	cfg.AppwritePublicOrigin = strings.TrimSpace(get("APPWRITE_PUBLIC_ORIGIN"))
 	cfg.AppwriteFlavor = "tablesdb"
 	if strings.EqualFold(firstNonEmpty(get("APPWRITE_FLAVOR"), get("VITE_APPWRITE_FLAVOR")), "databases") {

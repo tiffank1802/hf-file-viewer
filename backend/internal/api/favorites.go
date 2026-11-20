@@ -66,7 +66,7 @@ func (s *Server) handleFavoritesList(w http.ResponseWriter, r *http.Request) err
 		if appwrite.IsMissingTable(err) {
 			writeJSON(w, r, http.StatusOK, map[string]any{
 				"ok": true, "enabled": true, "unprovisioned": true, "items": []any{},
-				"error": "La table favorites est absente. Lance npm run appwrite:setup.",
+				"error": "La table favorites est absente. Contacte l’administrateur pour vérifier le stockage.",
 			}, "no-store", nil)
 			return nil
 		}
@@ -216,7 +216,7 @@ func (s *Server) favoriteGate(w http.ResponseWriter, r *http.Request) error {
 
 func (s *Server) favoriteFail(err error) error {
 	if appwrite.IsMissingTable(err) {
-		return catalog.Error(http.StatusConflict, "La table favorites est absente. Lance npm run appwrite:setup.")
+		return catalog.Error(http.StatusConflict, "La table favorites est absente. Contacte l’administrateur pour vérifier le stockage.")
 	}
 	return s.authFail(err)
 }

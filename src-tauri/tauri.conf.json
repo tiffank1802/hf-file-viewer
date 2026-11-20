@@ -1,0 +1,71 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "ENISE Docs",
+  "mainBinaryName": "enise-docs",
+  "version": "1.0.0",
+  "identifier": "fr.eclyon.enise.docs",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:3000",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "ENISE Docs — Bibliothèque étudiante",
+        "width": 1340,
+        "height": 860,
+        "minWidth": 360,
+        "minHeight": 560,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost eniseapi: http://eniseapi.localhost https://eniseapi.localhost; script-src 'self' 'wasm-unsafe-eval' https://developer.api.autodesk.com; style-src 'self' 'unsafe-inline' https://developer.api.autodesk.com; img-src 'self' asset: http://asset.localhost eniseapi: http://eniseapi.localhost https://eniseapi.localhost data: blob: https:; media-src 'self' eniseapi: http://eniseapi.localhost https://eniseapi.localhost blob: https:; frame-src 'self' eniseapi: http://eniseapi.localhost https://eniseapi.localhost blob: https://view.officeapps.live.com https://developer.api.autodesk.com https://iframe.sharecad.org; connect-src 'self' ipc: http://ipc.localhost eniseapi: http://eniseapi.localhost https://eniseapi.localhost https:; font-src 'self' data: https://developer.api.autodesk.com; worker-src 'self' blob: https://developer.api.autodesk.com; object-src 'none'; base-uri 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Education",
+    "publisher": "Centrale Lyon ENISE",
+    "shortDescription": "Bibliothèque documentaire étudiante Centrale Lyon ENISE",
+    "longDescription": "ENISE Docs réunit les cours, TD, annales, modèles CAO 3D et ressources étudiantes de Centrale Lyon ENISE sur macOS, iOS, Android et Windows.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "iOS": {
+      "minimumSystemVersion": "14.0"
+    },
+    "android": {
+      "minSdkVersion": 24
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "wix": {
+        "language": "fr-FR"
+      },
+      "nsis": {
+        "languages": [
+          "French",
+          "English"
+        ],
+        "displayLanguageSelector": false,
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

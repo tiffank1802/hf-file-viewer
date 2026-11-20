@@ -7,6 +7,7 @@ import {
   FiLock,
 } from 'react-icons/fi';
 import { fileProxyUrl } from '../../services/api';
+import { apiCredentials, apiUrl } from '../../utils/runtime';
 import {
   describeShortcutTarget,
   formatBytes,
@@ -85,8 +86,9 @@ export default function UrlViewer({ file }) {
 
     const controller = new AbortController();
     setPreviewLoading(true);
-    fetch(`/api/link/preview?url=${encodeURIComponent(target)}`, {
+    fetch(apiUrl(`/api/link/preview?url=${encodeURIComponent(target)}`), {
       signal: controller.signal,
+      credentials: apiCredentials(),
       headers: { Accept: 'application/json' },
     })
       .then((response) => (response.ok ? response.json() : null))

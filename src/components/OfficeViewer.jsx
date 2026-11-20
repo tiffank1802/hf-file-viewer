@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { FiDownload } from 'react-icons/fi';
 import { MAX_OFFICE_WEB_VIEWER_BYTES, OFFICE_WEB_VIEWER_BASE_URL } from '../config';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import { fileProxyUrl } from '../services/api';
+import { fileProxyPath, fileProxyUrl } from '../services/api';
+import { apiCredentials, apiUrl, publicApiUrl } from '../utils/runtime';
 import {
   formatBytes,
   getExtension,
@@ -50,7 +51,7 @@ function OfficeWebFrame({ file }) {
     );
   }
 
-  const fileUrl = new URL(fileProxyUrl(file.path), window.location.origin).href;
+  const fileUrl = publicApiUrl(fileProxyPath(file.path));
   const viewerUrl = `${OFFICE_WEB_VIEWER_BASE_URL}?src=${encodeURIComponent(fileUrl)}`;
 
   return (
@@ -77,8 +78,9 @@ function useConvertStatus(enabled) {
 
     const controller = new AbortController();
     setStatus('loading');
-    fetch('/api/office/status', {
+    fetch(apiUrl('/api/office/status'), {
       signal: controller.signal,
+      credentials: apiCredentials(),
       headers: { Accept: 'application/json' },
     })
       .then((response) => (response.ok ? response.json() : { status: 'not-configured' }))

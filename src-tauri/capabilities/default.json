@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capacités par défaut pour ENISE Docs sur macOS, Windows, Linux, iOS et Android.",
+  "windows": [
+    "main"
+  ],
+  "platforms": [
+    "macOS",
+    "windows",
+    "linux",
+    "iOS",
+    "android"
+  ],
+  "permissions": [
+    "core:default",
+    "opener:default"
+  ]
+}
