@@ -1,0 +1,84 @@
+name: Publish ENISE Docs 1.1.0 test packages
+
+# One-off release from the already validated native builds of the merge commit.
+# No stable release, updater manifest, or store distribution is produced here.
+on:
+  push:
+    branches: ['arena/197b0080-hf-file-viewer']
+    paths: ['.github/workflows/publish-v110-test.yml']
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: enise-docs-v110-test-publication
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: v1.1.0-test.1
+  BUILD_RUN: '44765015626'
+  BUILD_SHA: 9278581860b8a90fe124b772391aafd48a709ffc
+
+jobs:
+  publish:
+    if: github.repository == 'tiffank1802/hf-file-viewer'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.BUILD_SHA }}
+          persist-credentials: false
+      - name: Verify build provenance and the existing prerelease draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          actual=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN" \
+            --jq '[.head_repository.full_name,.path,.event,.head_branch,.head_sha,.conclusion] | @tsv')
+          expected=$(printf '%s\t%s\t%s\t%s\t%s\t%s' "$GITHUB_REPOSITORY" '.github/workflows/tauri-build.yml' push master "$BUILD_SHA" success)
+          if [ "$actual" != "$expected" ]; then
+            echo '::error::Le run source ne correspond pas au build natif validé.'
+            exit 1
+          fi
+          draft=$(gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,targetCommitish --jq '[.isDraft,.isPrerelease,.targetCommitish] | @tsv')
+          if [ "$draft" != "$(printf 'true\ttrue\t%s' "$BUILD_SHA")" ]; then
+            echo '::error::Le brouillon de préversion ne cible pas le commit compilé.'
+            exit 1
+          fi
+      - uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ env.BUILD_RUN }}
+          pattern: enise-docs-*
+          path: native-builds
+          merge-multiple: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Prepare only the macOS, Windows, Android and iOS assets
+        run: |
+          node scripts/prepare-app-release.mjs native-builds release-assets
+          (cd release-assets && sha256sum -c SHA256SUMS.txt)
+      - name: Upload, verify and publish the prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          run_gh() {
+            local output
+            if output=$(gh "$@" 2>&1); then
+              printf '%s\n' "$output"
+            else
+              printf '::error::Échec gh %s %s : %s\n' "$1" "$2" "${output//$'\n'/ }"
+              return 1
+            fi
+          }
+          run_gh release upload "$RELEASE_TAG" release-assets/* --clobber
+          for file in release-assets/*; do
+            printf '%s\t%s\n' "${file#release-assets/}" "$(stat -c %s "$file")"
+          done | sort > expected-assets.tsv
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[] | [.name,.size] | @tsv' | sort > uploaded-assets.tsv
+          diff -u expected-assets.tsv uploaded-assets.tsv
+          run_gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
