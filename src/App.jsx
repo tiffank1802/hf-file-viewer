@@ -152,6 +152,7 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     return (
       <>
+        <AppUpdateBanner suspended />
         <Suspense fallback={<div className="reader-route-loading">Préparation du lecteur interactif…</div>}>
           {/* Discard the previous account's private reader state on account changes. */}
           <DocumentWorkspace
@@ -174,6 +175,8 @@ export default function App() {
   }
 
   return (
+    <>
+    <AppUpdateBanner suspended={Boolean(selectedFile || studyFile || authPanel.open || searchState.open || downloadOpen)} />
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Aller au contenu</a>
       <div className="page-aurora" aria-hidden="true">
@@ -205,7 +208,6 @@ export default function App() {
         </div>
       )}
 
-      <AppUpdateBanner suspended={Boolean(selectedFile || readerFile || studyFile || authPanel.open || searchState.open || downloadOpen)} />
       <main id="main-content">
         {library.path === '' && (
           <>
@@ -329,5 +331,6 @@ export default function App() {
         onRead={openReader}
       />
     </div>
+    </>
   );
 }

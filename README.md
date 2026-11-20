@@ -137,10 +137,11 @@ Wrangler construit `dist/`, crée ou met à jour le Worker `enise-docs`, télév
 
 ### Builds GitHub et mise à jour côté utilisateur
 
-Le workflow [ENISE Docs Build](./.github/workflows/enise-build.yml) valide et archive le frontend web et le binaire Go Linux sur chaque push vers `master`, `main` ou une branche `arena/**`. Il **ne déploie pas** ces artefacts : l’URL publique ne change qu’après un déploiement Cloudflare ou Go.
+Le workflow [ENISE Docs Build](./.github/workflows/enise-build.yml) valide et archive le web et le binaire Go Linux x64. Après validation, le job **Deploy Cloudflare Workers** déploie l’archive web exacte sur `enise-docs` depuis `master` et la branche Arena de cette livraison. GitHub Actions doit disposer de `CLOUDFLARE_API_TOKEN` (jeton autorisé à modifier ce Worker et ses assets) et `CLOUDFLARE_ACCOUNT_ID` (secret ou variable). Si le domaine de production diffère de l’URL `workers.dev`, renseigner `CLOUDFLARE_PRODUCTION_URL`. Le job vérifie l’accueil, `/api/health` et l’identifiant du build dans `/version.json`, servi avec `Cache-Control: no-store`. Il ne redéploie ni Go sur Cloud Run, ni le Space Hugging Face.
 
-- **Web / raccourci installé depuis le navigateur :** après déploiement, fermer puis rouvrir en ligne ou actualiser suffit. Le HTML est revérifié (`Cache-Control: no-cache`) ; les fichiers Vite sous `/build-assets/` ont un nom basé sur leur contenu et restent en cache si ce contenu ne change pas. Les ressources à nom stable sont revérifiées. Aucun installateur à retélécharger. Ne pas servir le HTML avec une règle CDN « Cache Everything » qui ignore ces en-têtes ; si un service worker est ajouté plus tard, ne pas le laisser figer la navigation sur un ancien HTML.
-- **Versions natives Tauri :** elles embarquent le frontend et ne bénéficient pas de ce mécanisme. Pour macOS et Windows, utiliser le [plugin Updater Tauri](https://v2.tauri.app/plugin/updater/) : vérifier une version signée au lancement, proposer son installation puis redémarrer. Cela évite la réinstallation manuelle, mais le plugin télécharge normalement un artefact de mise à jour, pas seulement les fichiers modifiés. iOS et Android utilisent la mise à jour via leur canal de distribution (App Store/TestFlight ou Google Play). Ces installateurs et leur updater ne sont pas construits sur cette branche web/Go.
+- **Web / raccourci navigateur :** « Mettre à jour » actualise la page ; « Plus tard » ne recharge rien. Fermer puis rouvrir en ligne charge la dernière version déployée sans installateur. Les ressources Vite dont le contenu ne change pas restent en cache. Ne pas imposer une règle CDN « Cache Everything » sur le HTML ni `/version.json`.
+- **Tauri :** macOS, Windows et Linux AppImage utilisent le [plugin Updater Tauri](https://v2.tauri.app/plugin/updater/) lorsque le build embarque la clé publique et qu’un `latest.json` signé par artefact est publié. Le paquet est téléchargé seulement après accord ; il n’est pas différentiel. Pour Linux `.deb` et pour les builds sans updater signé, l’alerte ouvre la page des versions. Les anciens clients 1.0.0 doivent installer manuellement une première version équipée de l’updater.
+- **Mobile :** l’alerte ouvre les versions GitHub ; elle n’installe rien. Un APK doit conserver la clé de distribution d’origine pour remplacer un APK existant. Sur iOS, une distribution installable requiert signature et provisioning Apple, par exemple via TestFlight.
 
 Les réglages de production sont dans [`wrangler.jsonc`](./wrangler.jsonc) :
 
@@ -625,7 +626,7 @@ Les détails, limites et étapes de validation sont dans [`docs/PDF_UNIFIED_READ
 
 ## Applications natives Tauri v2 (macOS, iOS, Android, Windows)
 
-Le dépôt inclut une enveloppe **Tauri v2** (`src-tauri/`) permettant de compiler le site en application native légère pour **macOS** (Universal `.dmg`/`.app`), **iOS** (`.ipa` + Simulateur), **Android** (`.apk` signé + `.aab`) et **Windows** (`.exe` NSIS + `.msi` WiX), sans modifier le comportement du site Web sur Cloudflare Workers.
+Le dépôt inclut une enveloppe **Tauri v2** (`src-tauri/`) permettant de compiler le site en application native légère pour **macOS** (Universal `.dmg`/`.app`), **iOS** (`.ipa` + Simulateur), **Android** (`.apk` signé + `.aab`) **Windows** (`.exe` NSIS + `.msi` WiX) et **Linux x64** (AppImage + `.deb`), sans modifier le comportement du site Web sur Cloudflare Workers.
 
 - Plan architectural détaillé et guide de signature : [`docs/TAURI_MULTIPLATFORM_PLAN.md`](./docs/TAURI_MULTIPLATFORM_PLAN.md)
 - Pipeline CI parallèle multi-OS : [`.github/workflows/tauri-build.yml`](./.github/workflows/tauri-build.yml)
@@ -648,9 +649,10 @@ Les artefacts temporaires d’un run Actions restent accessibles aux personnes a
 
 Pour publier une nouvelle version :
 
-1. Mettre à jour `version` dans `src-tauri/tauri.conf.json`, puis créer un **brouillon** GitHub Release avec un compte autorisé, en ciblant exactement le SHA du commit à compiler. Exemple : `gh release create v1.0.1 --draft --target <SHA_DU_COMMIT> --title 'ENISE Docs v1.0.1' --notes-file .github/APP_RELEASE_NOTES.md`. Le `GITHUB_TOKEN` du dépôt ne peut pas créer une release (403), mais peut remplir et publier un brouillon existant.
+1. Aligner les versions de `package.json`, `src-tauri/Cargo.toml` et `src-tauri/tauri.conf.json`, puis créer un **brouillon** GitHub Release avec un compte autorisé, en ciblant exactement le SHA du commit à compiler. Exemple : `gh release create v1.0.1 --draft --target <SHA_DU_COMMIT> --title 'ENISE Docs v1.0.1' --notes-file .github/APP_RELEASE_NOTES.md`. Le `GITHUB_TOKEN` du dépôt ne peut pas créer une release (403), mais peut remplir et publier un brouillon existant.
 2. Pousser le tag stable correspondant `vMAJEUR.MINEUR.PATCH`, ou, lorsque le workflow est disponible sur la branche par défaut, lancer **Actions → Tauri Multiplatform Build → Run workflow** sur la branche à compiler en renseignant `release_tag` (par exemple `v1.0.1`). Le SHA choisi doit toujours être celui du brouillon.
-3. Le workflow attend les quatre builds, vérifie les fichiers et les publie ensemble après upload. Une release déjà publique n’est jamais écrasée ; si un build ou un upload échoue, le brouillon reste privé.
+3. Configurer `TAURI_UPDATER_PUBLIC_KEY` dans les variables Actions et `TAURI_SIGNING_PRIVATE_KEY` (plus `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` si nécessaire) dans les secrets Actions. Conserver durablement la même paire. Configurer le keystore Android de distribution via `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` et, si différent, `ANDROID_KEY_PASSWORD`. Les builds de branche sans clé Android sont des builds de test, pas des mises à jour compatibles.
+4. Le workflow attend les cinq builds et vérifie les fichiers avant de publier. Les signatures Tauri sont incorporées à `latest.json` ; elles ne remplacent ni la notarisation Apple ni une signature d’éditeur Windows. Si une signature requise, un build ou un upload échoue, le brouillon reste privé.
 
 Pour utiliser un miroir HTTPS, définir les variables publiques de build `VITE_APP_RELEASE_BASE_URL` et `VITE_APP_RELEASE_PAGE_URL` (voir `.env.example`) et y déposer tous les fichiers aux mêmes noms. Les changements frontend doivent ensuite être déployés sur le site, par exemple avec `npm run deploy` depuis un environnement autorisé sur Cloudflare.
 

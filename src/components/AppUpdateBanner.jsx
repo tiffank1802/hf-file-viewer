@@ -13,6 +13,7 @@ export default function AppUpdateBanner({ suspended = false }) {
   const [installState, setInstallState] = useState('');
   const signed = useRef(null);
   const running = useRef(false);
+  const installedVersion = useRef(null);
   const inTauri = isTauriRuntime();
   const webBuild = import.meta.env.VITE_ENISE_BUILD_ID;
   const useUpdater = import.meta.env.VITE_ENISE_SIGNED_UPDATER === '1';
@@ -24,7 +25,7 @@ export default function AppUpdateBanner({ suspended = false }) {
     let lastCheck = -Infinity;
     let timedCheck = false;
     const check = async () => {
-      if (signal.aborted || document.visibilityState === 'hidden' || running.current || timedCheck || Date.now() - lastCheck < MIN_CHECK_GAP) return;
+      if (signal.aborted || document.visibilityState === 'hidden' || running.current || installedVersion.current || timedCheck || Date.now() - lastCheck < MIN_CHECK_GAP) return;
       timedCheck = true;
       lastCheck = Date.now();
       try {
@@ -41,7 +42,7 @@ export default function AppUpdateBanner({ suspended = false }) {
             if (signal.aborted || running.current) { await update?.close(); return; }
             const previous = signed.current;
             signed.current = update;
-            await previous?.close().catch(() => {});
+            void previous?.close().catch(() => {});
             if (update) { setOffer({ version: update.version, kind: 'signed' }); return; }
           } catch { /* Unavailable signed feed: fall back to the release page. */ }
         }
@@ -79,6 +80,7 @@ export default function AppUpdateBanner({ suspended = false }) {
     setInstallState('Téléchargement de la mise à jour…');
     try {
       await update.downloadAndInstall();
+      installedVersion.current = update.version;
       setInstallState('Mise à jour installée. Ferme puis rouvre l’application.');
     } catch {
       setInstallState('Installation impossible. Tu peux réessayer ou consulter les versions publiées.');
@@ -91,6 +93,7 @@ export default function AppUpdateBanner({ suspended = false }) {
       <p role="status"><FiRefreshCw aria-hidden="true" /><span>{installState || `Nouvelle version ${inTauri ? `${offer.version} ` : ''}disponible.`}</span></p>
       <div>
         {!installed && <button type="button" onClick={updateNow} disabled={installing}>{offer.kind === 'release' ? 'Voir la mise à jour' : 'Mettre à jour'}</button>}
+        {installState.startsWith('Installation impossible') && <button type="button" onClick={() => openExternalUrl(DEFAULT_RELEASE_PAGE_URL)}>Versions publiées</button>}
         {!installing && <button type="button" onClick={() => { setDismissed(offer.version); setInstallState(''); }}>{installed ? 'Fermer' : 'Plus tard'}</button>}
       </div>
     </aside>
