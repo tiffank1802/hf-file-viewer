@@ -714,3 +714,20 @@ test('la conversation ouvre ses sources PDF dans un aperçu clair sans lecteur n
   await expect(preview.locator('iframe')).toHaveCount(0);
   await expect(preview.locator('.reader-pdf-text')).toContainText('Energie cinetique');
 });
+
+test('le texte saisi reste lisible sur les champs du lecteur en mode système sombre', async ({ page }, testInfo) => {
+  test.skip(!['chromium', 'mobile-chromium'].includes(testInfo.project.name), 'Vérification desktop et mobile Chromium.');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await mockUnifiedPDF(page);
+  await page.goto(`/read?path=${encodeURIComponent(PDF_PATH)}`);
+  const showAssistant = page.getByRole('button', { name: 'Afficher l’assistant' });
+  if (testInfo.project.name === 'mobile-chromium') await showAssistant.click();
+  const question = page.getByRole('textbox', { name: 'Question à l’assistant du document' });
+  await expect(question).toBeEnabled();
+  await question.fill('Question lisible');
+  await expect(question).toBeFocused();
+  await expect(question).toHaveValue('Question lisible');
+  await expect(question).toHaveCSS('background-color', 'rgb(252, 255, 253)');
+  await expect(question).toHaveCSS('color', 'rgb(25, 60, 50)');
+  await expect(question).toHaveCSS('color-scheme', /only light|light only/);
+});
