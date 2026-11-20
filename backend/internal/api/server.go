@@ -26,16 +26,17 @@ const staticCSP = "default-src 'self'; script-src 'self' https://static.cloudfla
 
 // Server sert le même contrat /api que le Worker, avec un cache chaud.
 type Server struct {
-	cfg           config.Config
-	cache         *cache.Store
-	client        *http.Client
-	llmClient     *http.Client
-	convertClient *http.Client
-	linkClient    *http.Client
-	tokens        *tokenCache
-	chatHits      *chatLimiter
-	authClient    *http.Client
-	authHits      *authLimiter
+	cfg              config.Config
+	cache            *cache.Store
+	client           *http.Client
+	llmClient        *http.Client
+	convertClient    *http.Client
+	linkClient       *http.Client
+	tokens           *tokenCache
+	chatHits         *chatLimiter
+	readerMetricHits *readerMetricLimiter
+	authClient       *http.Client
+	authHits         *authLimiter
 
 	// Une seule relecture de l’index à la fois, avec un délai minimal entre
 	// deux tentatives.
@@ -64,10 +65,11 @@ func New(cfg config.Config) *Server {
 			Transport:     convertTransport,
 			CheckRedirect: redirectPolicy,
 		},
-		linkClient: newLinkClient(),
-		tokens:     &tokenCache{},
-		chatHits:   newChatLimiter(),
-		authHits:   newAuthLimiter(),
+		linkClient:       newLinkClient(),
+		tokens:           &tokenCache{},
+		chatHits:         newChatLimiter(),
+		readerMetricHits: newReaderMetricLimiter(),
+		authHits:         newAuthLimiter(),
 		authClient: &http.Client{
 			Timeout:   12 * time.Second,
 			Transport: transport,
@@ -122,8 +124,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	applyAPISecurity(w.Header())
 	if r.Method == http.MethodOptions {
-		w.Header().Set("Allow", "GET, HEAD, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, OPTIONS")
+		w.Header().Set("Allow", "GET, HEAD, POST, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Range, Content-Type, Authorization")
 		w.Header().Set("Access-Control-Max-Age", "86400")
 		w.WriteHeader(http.StatusNoContent)
@@ -137,6 +139,18 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		err = s.allow(w, r, http.MethodGet, s.handleChatStatus)
 	case r.URL.Path == "/api/chat":
 		err = s.allow(w, r, http.MethodPost, s.handleChat)
+	case r.URL.Path == "/api/reader/document":
+		err = s.allow(w, r, http.MethodGet, s.handleReaderDocument)
+	case r.URL.Path == "/api/reader/page":
+		err = s.allow(w, r, http.MethodGet, s.handleReaderPage)
+	case r.URL.Path == "/api/reader/blocks":
+		err = s.allow(w, r, http.MethodGet, s.handleReaderBlocks)
+	case r.URL.Path == "/api/reader/asset":
+		err = s.allow(w, r, http.MethodGet, s.handleReaderAsset)
+	case r.URL.Path == "/api/reader/metrics":
+		err = s.allow(w, r, http.MethodPost, s.handleReaderMetric)
+	case r.URL.Path == "/api/annotations" || strings.HasPrefix(r.URL.Path, "/api/annotations/"):
+		err = s.handleAnnotations(w, r)
 	case r.URL.Path == "/api/chat/conversations" || strings.HasPrefix(r.URL.Path, "/api/chat/conversations/"):
 		err = s.handleChatHistory(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/auth/"):
@@ -208,12 +222,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) error {
 		index = "stale"
 	}
 	writeJSON(w, r, http.StatusOK, map[string]any{
-		"ok":       true,
-		"service":  "enise-docs",
-		"backend":  "go",
-		"bucketId": s.cfg.BucketID,
-		"cache":    "memory",
-		"index":    index,
+		"ok":              true,
+		"service":         "enise-docs",
+		"backend":         "go",
+		"bucketId":        s.cfg.BucketID,
+		"derivedBucketId": s.cfg.DerivedBucketID,
+		"cache":           "memory",
+		"index":           index,
 	}, "no-store", nil)
 	return nil
 }

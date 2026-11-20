@@ -70,13 +70,14 @@ Mêmes noms que `wrangler.jsonc` / `.dev.vars` :
 
 | Variable | Rôle |
 |---|---|
-| `HF_BUCKET_ID` | bucket, défaut `ktongue/ENISE-SITE` |
-| `HF_TOKEN` | lecture seule, seulement si le bucket devient privé |
+| `HF_BUCKET_ID` | bucket source, défaut `ktongue/ENISE-SITE` |
+| `HF_DERIVED_BUCKET_ID` | artefacts Docling, défaut `ktongue/ENISE-SITE-DERIVED` |
+| `HF_TOKEN` | lecture seule, seulement si un bucket devient privé |
 | `ADDR` | écoute, défaut `0.0.0.0:8788` (`PORT` est aussi accepté) |
 | `CACHE_DIR` | cache disque |
 | `STATIC_DIR` | dossier `dist/` à servir avec l’API |
-| `OFFICE_CONVERT_URL` | Space LibreOffice, vide = PDF désactivé |
-| `MODEL3D_CONVERT_URL` | Space FreeCAD, défaut Rupture, vide = désactivé |
+| `OFFICE_CONVERT_URL` | service Office distinct, vide = PDF à la demande désactivé |
+| `MODEL3D_CONVERT_URL` | service 3D distinct, vide = désactivé (défaut) |
 | `SOLIDWORKS_CONVERT_URL` | service HOOPS, vide = désactivé |
 | `APS_CLIENT_ID` / `APS_CLIENT_SECRET` | Autodesk, jamais exposés |
 | `CLOUDFLARE_ACCOUNT_ID` | IA intégrée Cloudflare (Workers AI). Les deux ensemble activent le moteur « cloudflare », essayé en premier |
@@ -99,7 +100,7 @@ Mêmes noms que `wrangler.jsonc` / `.dev.vars` :
 | `APPWRITE_PUBLIC_ORIGIN` | origine des liens d’email, par exemple `https://le-site`. Vide = hôte de la requête, seulement s’il n’est pas usurpé |
 | `APPWRITE_ENABLED` | `0` masque le bouton de connexion |
 
-`MODEL3D_CONVERT_URL` absent active Rupture. Une valeur explicitement vide désactive la conversion, comme le Worker.
+`MODEL3D_CONVERT_URL` est vide par défaut. Le Space `ktongue/Rupture` est réservé au prétraitement documentaire Docling et ne doit pas être utilisé par ces routes 3D.
 
 ## Publier l’API sur Firebase (Cloud Run)
 
@@ -158,6 +159,22 @@ Ne pas publier `HF_TOKEN`, la clé NVIDIA ni les secrets APS dans l’image. Les
 
 Le bouton **Assistant** interroge Go, pas le fournisseur directement. Go classe l’index déjà en mémoire, renvoie tout de suite les cartes, lit les extraits (texte, PDF, docx, pptx, xlsx) puis demande une rédaction si une clé est définie. Chaque chemin proposé est un chemin de l’index : un chemin inventé par le modèle n’ouvre pas un fichier.
 
+Depuis l’aperçu d’un fichier, **Étudier avec l’IA** envoie un scope explicite :
+
+```json
+{
+  "message": "Résume ce document",
+  "intent": "summary",
+  "scope": {
+    "type": "document",
+    "sourcePath": "GM/3A/cours.pdf",
+    "artifactId": "optionnel-pour-epingler-la-revision"
+  }
+}
+```
+
+Le backend valide le chemin dans l’index source, résout `reader/v1/catalog.json`, vérifie le manifest publié et lit `document.json` avec `chunks.jsonl`. Les métadonnées du `HybridChunker` sont reliées aux `blockId`, pages et boîtes Docling. La récupération sélectionne les sections utiles — ou un échantillon réparti sur les sections pour un résumé — puis le modèle reçoit uniquement des preuves `[S1]`, `[S2]`, etc. Les événements SSE `scope` et `citations` indiquent le mode, la couverture et les ancres navigables. Tant que l’artefact n’est pas prêt, le même scope retombe sur l’extracteur historique et annonce `source-fallback` ; il ne lance jamais de conversion.
+
 Deux profils de question :
 
 - **recherche** (« où sont les polys de mécanique ») : deux documents lus, résumé du meilleur ;
@@ -173,7 +190,7 @@ En production Cloudflare, le Worker ne fait pas lui-même l’appel NVIDIA. Sans
 
 Le bouton **Se connecter** parle à Go (`/api/auth/*`). Go ouvre la session Appwrite et pose un cookie `enise_session` HttpOnly. Le mot de passe n’est pas écrit dans une table, et il ne revient jamais dans le JSON.
 
-Les favoris du compte passent par `/api/favorites`. Ils ne sont plus gardés dans le navigateur. La base `enise_docs` et les tables `profiles` et `favorites` se créent une fois :
+Les favoris passent par `/api/favorites`. Les annotations privées du lecteur passent par le CRUD `/api/annotations` : Go vérifie le propriétaire, le document indexé, la révision Docling et le passage avant d’écrire. La lecture structurée utilise `/api/reader/blocks` pour des fenêtres bornées et `/api/reader/asset` uniquement pour les illustrations déclarées par l’artefact courant ; aucun chunk IA n’est envoyé au navigateur. R6 ajoute `POST /api/reader/metrics` : le schéma n’accepte que des événements, enums, classes numériques et durées connus, limite le corps à 4 Kio et le débit à 120 mesures/minute/adresse. Un chemin, une citation, une question, une note ou un identifiant arbitraire est rejeté. La base `enise_docs` et ses tables, dont `profiles`, `favorites`, `conversations`, `messages` et `annotations`, se créent une fois :
 
 ```bash
 # APPWRITE_API_KEY dans .dev.vars, ou devant la commande
@@ -181,7 +198,7 @@ npm run appwrite:setup
 npm run appwrite:status
 ```
 
-Le Worker relaie `/api/auth/*` et `/api/favorites` vers `GO_API_ORIGIN` en transmettant le cookie. Sans cette origine, ces routes répondent 501 et le bouton reste masqué.
+Le Worker relaie `/api/auth/*`, `/api/favorites` et `/api/annotations` vers `GO_API_ORIGIN` en transmettant le cookie HttpOnly. Sans cette origine, ces routes répondent 501.
 
 ## Tests
 

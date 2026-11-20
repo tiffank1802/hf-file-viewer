@@ -110,6 +110,30 @@ export const TABLES = [
       { key: 'idx_msg_convo_seq', type: 'key', columns: ['conversationId', 'seq'] },
     ],
   },
+  {
+    id: 'annotations',
+    name: 'Annotations privées du lecteur',
+    rowSecurity: true,
+    permissions: [`create("${ROLE_CREATE}")`],
+    columns: [
+      { type: 'string', key: 'userId', size: 36, required: true },
+      { type: 'string', key: 'documentKey', size: 64, required: true },
+      { type: 'string', key: 'sourcePath', size: 1024, required: true },
+      { type: 'string', key: 'artifactId', size: 160, required: true },
+      { type: 'string', key: 'blockId', size: 160, required: false, default: '' },
+      { type: 'integer', key: 'page', required: false, min: 0, max: 100000 },
+      { type: 'string', key: 'anchorJson', size: 16000, required: true },
+      { type: 'enum', key: 'kind', elements: ['highlight', 'note', 'question', 'bookmark'], required: false, default: 'highlight' },
+      { type: 'enum', key: 'color', elements: ['yellow', 'green', 'blue', 'pink'], required: false, default: 'yellow' },
+      { type: 'string', key: 'body', size: 4000, required: false, default: '' },
+      { type: 'enum', key: 'status', elements: ['active', 'needs-review', 'archived'], required: false, default: 'active' },
+    ],
+    indexes: [
+      { key: 'idx_annotation_document', type: 'key', columns: ['documentKey', '$updatedAt'] },
+      { key: 'idx_annotation_revision', type: 'key', columns: ['documentKey', 'artifactId', '$updatedAt'] },
+      { key: 'idx_annotation_user', type: 'key', columns: ['userId', '$updatedAt'] },
+    ],
+  },
 ];
 
 /**

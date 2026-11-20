@@ -5,8 +5,9 @@
 # Optionnel : uniquement si le bucket Hugging Face devient privé.
 HF_TOKEN="hf_your_read_only_token"
 
-# Optionnel : surcharge locale du bucket configuré dans wrangler.jsonc.
+# Optionnel : surcharge locale des buckets source et dérivé.
 # HF_BUCKET_ID="ktongue/ENISE-SITE"
+# HF_DERIVED_BUCKET_ID="ktongue/ENISE-SITE-DERIVED"
 
 # Autodesk Platform Services (APS / Forge) pour la visualisation 3D.
 # Créer une application APS avec les scopes :
@@ -72,6 +73,9 @@ APS_CLIENT_SECRET="your_aps_client_secret"
 # Clé serveur Appwrite, uniquement pour `npm run appwrite:setup`.
 # Console → API Keys, scope databases.write (et tablesdb.write). Jamais en VITE_.
 # APPWRITE_API_KEY=""
+# Optionnel : les identifiants par défaut sont profiles, favorites,
+# conversations, messages et annotations.
+# APPWRITE_ANNOTATIONS_TABLE_ID="annotations"
 
 # MAX_SOLIDWORKS_BYTES="104857600"
 # MAX_SOLIDWORKS_DEPENDENCY_FILES="64"

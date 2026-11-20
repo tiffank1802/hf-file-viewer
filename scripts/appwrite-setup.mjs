@@ -537,7 +537,7 @@ async function main() {
     'À faire ensuite',
     '---------------',
     '1. Rien à mettre dans le navigateur. Go utilise déjà la base enise_docs.',
-    '   Relance npm run dev, puis connecte-toi : profil et favoris s’écrivent.',
+    '   Relance npm run dev, puis connecte-toi : profil, favoris et annotations s’écrivent.',
     '2. Console → Settings → Auth : 12 caractères minimum.',
     '3. Pour les emails (vérification, mot de passe oublié), ajoute le hostname',
     '   du site dans Console → Settings → Domains & Platforms.',

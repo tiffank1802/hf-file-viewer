@@ -113,6 +113,16 @@ test('--write-origin met à jour GO_API_ORIGIN dans wrangler.jsonc', () => {
   assert.ok(updated.startsWith('{\n  "vars": {'), 'le reste du fichier est préservé');
 });
 
+test('--write-origin est idempotent quand la bonne origine est déjà configurée', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wrangler-'));
+  const file = join(dir, 'wrangler.jsonc');
+  const content = '{\n  "vars": {\n    "GO_API_ORIGIN": "https://api.test"\n  }\n}\n';
+  writeFileSync(file, content);
+
+  assert.equal(writeOrigin(dir, 'https://api.test'), 'https://api.test');
+  assert.equal(readFileSync(file, 'utf8'), content);
+});
+
 test('--write-origin échoue proprement sans variable GO_API_ORIGIN', () => {
   const dir = mkdtempSync(join(tmpdir(), 'wrangler-'));
   writeFileSync(join(dir, 'wrangler.jsonc'), '{\n  "name": "enise-docs"\n}\n');

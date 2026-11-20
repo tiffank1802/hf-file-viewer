@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	maxResponseBytes = 64 * 1024
+	maxResponseBytes = 2 * 1024 * 1024
 	userAgent        = "enise-docs-go"
 )
 
@@ -65,6 +65,7 @@ type Client struct {
 	FavoritesTable     string
 	ConversationsTable string
 	MessagesTable      string
+	AnnotationsTable   string
 	Flavor             string
 	HTTP               *http.Client
 }

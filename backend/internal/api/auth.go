@@ -469,6 +469,7 @@ func (s *Server) appwrite() *appwrite.Client {
 		FavoritesTable:     s.cfg.AppwriteFavoritesTable,
 		ConversationsTable: s.cfg.AppwriteConversationsTable,
 		MessagesTable:      s.cfg.AppwriteMessagesTable,
+		AnnotationsTable:   s.cfg.AppwriteAnnotationsTable,
 		Flavor:             s.cfg.AppwriteFlavor,
 		HTTP:               s.authClient,
 	}
