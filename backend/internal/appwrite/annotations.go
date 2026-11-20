@@ -11,24 +11,27 @@ import (
 	"strings"
 )
 
-const annotationListLimit = 100
+// Notes can contain sizable anchors and bodies; keep each JSON response well
+// below the shared Appwrite response limit, then paginate without truncation.
+const annotationListLimit = 25
 
 // Annotation est une ligne privée du lecteur interactif.
 type Annotation struct {
-	RowID       string `json:"rowId"`
-	UserID      string `json:"-"`
-	DocumentKey string `json:"documentKey"`
-	SourcePath  string `json:"sourcePath"`
-	ArtifactID  string `json:"artifactId"`
-	BlockID     string `json:"blockId,omitempty"`
-	Page        int    `json:"page,omitempty"`
-	AnchorJSON  string `json:"anchorJson"`
-	Kind        string `json:"kind"`
-	Color       string `json:"color"`
-	Body        string `json:"body,omitempty"`
-	Status      string `json:"status"`
-	CreatedAt   string `json:"createdAt,omitempty"`
-	UpdatedAt   string `json:"updatedAt,omitempty"`
+	RowID          string `json:"rowId"`
+	UserID         string `json:"-"`
+	DocumentKey    string `json:"documentKey"`
+	SourcePath     string `json:"sourcePath"`
+	ArtifactID     string `json:"artifactId"`
+	SourceRevision string `json:"sourceRevision,omitempty"`
+	BlockID        string `json:"blockId,omitempty"`
+	Page           int    `json:"page,omitempty"`
+	AnchorJSON     string `json:"anchorJson"`
+	Kind           string `json:"kind"`
+	Color          string `json:"color"`
+	Body           string `json:"body,omitempty"`
+	Status         string `json:"status"`
+	CreatedAt      string `json:"createdAt,omitempty"`
+	UpdatedAt      string `json:"updatedAt,omitempty"`
 }
 
 // AnnotationPatch borne les seuls champs mutables après la création de l'ancre.
@@ -40,6 +43,29 @@ type AnnotationPatch struct {
 
 func (c *Client) HasAnnotations() bool {
 	return c.HasDatabase() && ValidID(firstNonEmpty(c.AnnotationsTable, "annotations"))
+}
+
+// PDFAnnotations uses a separate, additive table; legacy Docling rows stay
+// untouched and remain available to older applications.
+func (c *Client) PDFAnnotations() *Client {
+	copy := *c
+	target := firstNonEmpty(c.PDFAnnotationsTable, "pdf_annotations_v2")
+	// A misconfiguration must never make a PDF-prefixed ID address an old
+	// annotation or another existing table. Fail closed before any request.
+	for _, existing := range []string{
+		firstNonEmpty(c.AnnotationsTable, "annotations"),
+		firstNonEmpty(c.ProfileTable, "profiles"),
+		firstNonEmpty(c.FavoritesTable, "favorites"),
+		firstNonEmpty(c.ConversationsTable, "conversations"),
+		firstNonEmpty(c.MessagesTable, "messages"),
+	} {
+		if target == existing {
+			copy.AnnotationsTable = "!invalid-pdf-table!"
+			return &copy
+		}
+	}
+	copy.AnnotationsTable = target
+	return &copy
 }
 
 func (c *Client) ListAnnotations(ctx context.Context, session, userID, documentKey string) ([]Annotation, error) {
@@ -167,20 +193,58 @@ func (c *Client) listAnnotationsAt(ctx context.Context, api dataAPI, session, us
 			{Method: "orderDesc", Attribute: "$updatedAt"},
 		}, queries...)
 	}
-	result, err := c.do(ctx, http.MethodGet, queryPath(api.create, queries), session, nil)
-	if err != nil {
-		return nil, err
-	}
 	items := make([]Annotation, 0)
-	for _, row := range rowList(result.Body) {
-		item := annotationFromMap(row)
-		if item.RowID == "" || item.UserID != userID || item.DocumentKey != documentKey {
-			continue
+	cursor := ""
+	for page := 0; page < 400; page++ {
+		pageQueries := append([]appwriteQuery(nil), queries...)
+		if cursor != "" {
+			pageQueries = append(pageQueries, appwriteQuery{Method: "cursorAfter", Values: []any{cursor}})
 		}
-		items = append(items, item)
+		result, err := c.do(ctx, http.MethodGet, queryPath(api.create, pageQueries), session, nil)
+		if err != nil {
+			return nil, err
+		}
+		rows, err := annotationRowList(result.Body)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			item := annotationFromMap(row)
+			if item.RowID != "" && item.UserID == userID && item.DocumentKey == documentKey {
+				items = append(items, item)
+			}
+		}
+		if len(rows) < annotationListLimit {
+			sort.SliceStable(items, func(i, j int) bool { return items[i].UpdatedAt > items[j].UpdatedAt })
+			return items, nil
+		}
+		next := annotationFromMap(rows[len(rows)-1]).RowID
+		if next == "" || next == cursor {
+			return nil, &APIError{Status: http.StatusBadGateway, Type: "annotation_pagination_invalid"}
+		}
+		cursor = next
 	}
-	sort.SliceStable(items, func(i, j int) bool { return items[i].UpdatedAt > items[j].UpdatedAt })
-	return items, nil
+	// Explicit failure is safer than silently hiding older notes.
+	return nil, &APIError{Status: http.StatusBadGateway, Type: "annotation_pagination_limit"}
+}
+
+func annotationRowList(raw []byte) ([]map[string]any, error) {
+	var payload struct {
+		Rows      json.RawMessage `json:"rows"`
+		Documents json.RawMessage `json:"documents"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, &APIError{Status: http.StatusBadGateway, Type: "annotation_response_invalid"}
+	}
+	value := payload.Rows
+	if len(value) == 0 {
+		value = payload.Documents
+	}
+	var rows []map[string]any
+	if len(value) == 0 || json.Unmarshal(value, &rows) != nil || rows == nil {
+		return nil, &APIError{Status: http.StatusBadGateway, Type: "annotation_response_invalid"}
+	}
+	return rows, nil
 }
 
 func (c *Client) createAnnotationAt(ctx context.Context, api dataAPI, session string, data map[string]any, permissions []string) (Annotation, error) {
@@ -220,7 +284,7 @@ func (c *Client) getOwnedAnnotation(ctx context.Context, api dataAPI, session, u
 }
 
 func annotationData(userID string, item Annotation) map[string]any {
-	return map[string]any{
+	data := map[string]any{
 		"userId":      userID,
 		"documentKey": item.DocumentKey,
 		"sourcePath":  clip(item.SourcePath, 1024),
@@ -233,6 +297,10 @@ func annotationData(userID string, item Annotation) map[string]any {
 		"body":        clip(item.Body, 4000),
 		"status":      clip(item.Status, 24),
 	}
+	if item.SourceRevision != "" {
+		data["sourceRevision"] = clip(item.SourceRevision, 160)
+	}
+	return data
 }
 
 func annotationFromPayload(raw []byte) Annotation {
@@ -249,20 +317,21 @@ func annotationFromMap(row map[string]any) Annotation {
 	}
 	data := mapData(row)
 	return Annotation{
-		RowID:       firstString(row, nil, "$id"),
-		UserID:      firstString(row, data, "userId"),
-		DocumentKey: firstString(row, data, "documentKey"),
-		SourcePath:  firstString(row, data, "sourcePath"),
-		ArtifactID:  firstString(row, data, "artifactId"),
-		BlockID:     firstString(row, data, "blockId"),
-		Page:        firstInt(row, data, "page"),
-		AnchorJSON:  firstString(row, data, "anchorJson"),
-		Kind:        firstNonEmpty(firstString(row, data, "kind"), "highlight"),
-		Color:       firstNonEmpty(firstString(row, data, "color"), "yellow"),
-		Body:        firstString(row, data, "body"),
-		Status:      firstNonEmpty(firstString(row, data, "status"), "active"),
-		CreatedAt:   firstString(row, data, "$createdAt"),
-		UpdatedAt:   firstString(row, data, "$updatedAt"),
+		RowID:          firstString(row, nil, "$id"),
+		UserID:         firstString(row, data, "userId"),
+		DocumentKey:    firstString(row, data, "documentKey"),
+		SourcePath:     firstString(row, data, "sourcePath"),
+		ArtifactID:     firstString(row, data, "artifactId"),
+		SourceRevision: firstString(row, data, "sourceRevision"),
+		BlockID:        firstString(row, data, "blockId"),
+		Page:           firstInt(row, data, "page"),
+		AnchorJSON:     firstString(row, data, "anchorJson"),
+		Kind:           firstNonEmpty(firstString(row, data, "kind"), "highlight"),
+		Color:          firstNonEmpty(firstString(row, data, "color"), "yellow"),
+		Body:           firstString(row, data, "body"),
+		Status:         firstNonEmpty(firstString(row, data, "status"), "active"),
+		CreatedAt:      firstString(row, data, "$createdAt"),
+		UpdatedAt:      firstString(row, data, "$updatedAt"),
 	}
 }
 

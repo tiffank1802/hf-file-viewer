@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  FiDownload,
   FiExternalLink,
   FiMenu,
   FiSearch,
@@ -7,11 +8,20 @@ import {
   FiX,
 } from 'react-icons/fi';
 import { BUCKET_URL } from '../config';
+import { isTauriRuntime } from '../utils/runtime';
 import UserChip from './UserChip';
 
-export default function Header({ navigate, onOpenSearch, onOpenAuth, onOpenFavorites, favoriteCount = 0 }) {
+export default function Header({
+  navigate,
+  onOpenSearch,
+  onOpenAuth,
+  onOpenFavorites,
+  onOpenDownload,
+  favoriteCount = 0,
+}) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const inTauri = isTauriRuntime();
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 16);
@@ -52,6 +62,18 @@ export default function Header({ navigate, onOpenSearch, onOpenAuth, onOpenFavor
           <button type="button" onClick={() => goTo('GM')}>Cours</button>
           <button type="button" onClick={() => goTo('TOEIC')}>TOEIC</button>
           <button type="button" onClick={scrollToAbout}>À propos</button>
+          {!inTauri && onOpenDownload && (
+            <button
+              type="button"
+              className="mobile-download-link"
+              onClick={() => {
+                setMenuOpen(false);
+                onOpenDownload();
+              }}
+            >
+              Télécharger l’app <FiDownload aria-hidden="true" />
+            </button>
+          )}
           <a className="mobile-contribute" href={BUCKET_URL} target="_blank" rel="noreferrer">
             Voir le dépôt <FiExternalLink aria-hidden="true" />
           </a>
@@ -63,6 +85,18 @@ export default function Header({ navigate, onOpenSearch, onOpenAuth, onOpenFavor
             <span>Rechercher</span>
             <kbd>⌘ K</kbd>
           </button>
+          {!inTauri && onOpenDownload && (
+            <button
+              className="app-download-header-btn"
+              type="button"
+              onClick={onOpenDownload}
+              aria-label="Télécharger ENISE Docs pour ordinateur ou mobile"
+              title="Télécharger ENISE Docs pour Windows, macOS, Android ou iOS"
+            >
+              <FiDownload aria-hidden="true" />
+              <span>Application</span>
+            </button>
+          )}
           <UserChip
             favoriteCount={favoriteCount}
             onOpenAuth={onOpenAuth}

@@ -22,10 +22,11 @@ export default function AnnotationPanel({
       </div>
     );
   }
-  if (loading) return <p className="reader-annotation-message">Chargement des annotations…</p>;
+  if (loading && items.length === 0) return <p className="reader-annotation-message">Chargement des annotations…</p>;
 
   return (
     <div className="reader-annotation-list">
+      {loading && <p className="reader-annotation-message" role="status">Actualisation des annotations…</p>}
       {error && (
         <div className="reader-annotation-error" role="alert">
           <p>{error}</p>
@@ -64,7 +65,7 @@ function AnnotationItem({ item, saving, onOpen, onUpdate, onDelete }) {
     <article className={`reader-annotation-item color-${item.color || 'yellow'}${review ? ' needs-review' : ''}`}>
       <button type="button" className="reader-annotation-target" onClick={() => onOpen(item)}>
         <span><FiMapPin aria-hidden="true" /> {item.page ? `Page ${item.page}` : 'Passage structuré'}</span>
-        <small>{review ? 'À vérifier après reconversion' : item.kind === 'note' ? 'Note privée' : 'Surlignage privé'}</small>
+        <small>{review ? 'À vérifier : ancienne version ou ancienne structure' : item.kind === 'note' ? 'Note privée' : 'Surlignage privé'}</small>
         <blockquote>{item.anchor?.quote || 'Passage ancré dans le document'}</blockquote>
       </button>
       {editing ? (
@@ -99,13 +100,11 @@ function AnnotationItem({ item, saving, onOpen, onUpdate, onDelete }) {
         <p className="reader-annotation-body">{item.body}</p>
       ) : null}
       <footer>
-        {!review && (
-          <button type="button" disabled={saving} onClick={() => {
-            setBody(item.body || '');
-            setColor(item.color || 'yellow');
-            setEditing(true);
-          }}><FiEdit3 aria-hidden="true" /> Modifier</button>
-        )}
+        <button type="button" disabled={saving} onClick={() => {
+          setBody(item.body || '');
+          setColor(item.color || 'yellow');
+          setEditing(true);
+        }}><FiEdit3 aria-hidden="true" /> Modifier</button>
         <button
           type="button"
           disabled={saving}

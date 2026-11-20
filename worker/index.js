@@ -71,6 +71,35 @@ const API_SECURITY_HEADERS = {
   'X-Robots-Tag': 'noindex, nofollow',
 };
 
+const TAURI_CORS_ORIGINS = new Set([
+  'tauri://localhost',
+  'http://tauri.localhost',
+  'https://tauri.localhost',
+]);
+
+const CORS_EXPOSE_HEADERS = 'Content-Range, Content-Length, Accept-Ranges, ETag, Last-Modified, X-Cache-Status, X-Model3D-Meta, Retry-After';
+
+export function resolveAllowedCorsOrigin(request, env) {
+  const origin = String(request?.headers?.get('Origin') || '').trim();
+  if (!origin) return '';
+  if (TAURI_CORS_ORIGINS.has(origin)) return origin;
+  const extra = String(env?.CORS_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return extra.includes(origin) ? origin : '';
+}
+
+function withCorsHeaders(response, allowedOrigin) {
+  if (!allowedOrigin || !response) return response;
+  const wrapped = new Response(response.body, response);
+  wrapped.headers.set('Access-Control-Allow-Origin', allowedOrigin);
+  wrapped.headers.set('Access-Control-Allow-Credentials', 'true');
+  wrapped.headers.set('Access-Control-Expose-Headers', CORS_EXPOSE_HEADERS);
+  wrapped.headers.append('Vary', 'Origin');
+  return wrapped;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -79,19 +108,30 @@ export default {
       return env.ASSETS.fetch(request);
     }
 
+    const allowedOrigin = resolveAllowedCorsOrigin(request, env);
+
     if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204,
-        headers: {
-          ...API_SECURITY_HEADERS,
-          Allow: 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
-          'Access-Control-Allow-Methods': 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
-          'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization',
-          'Access-Control-Max-Age': '86400',
-        },
-      });
+      return withCorsHeaders(
+        new Response(null, {
+          status: 204,
+          headers: {
+            ...API_SECURITY_HEADERS,
+            Allow: 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
+            'Access-Control-Allow-Methods': 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers': 'Range, If-Range, Content-Type, Authorization',
+            'Access-Control-Max-Age': '86400',
+          },
+        }),
+        allowedOrigin,
+      );
     }
 
+    const response = await handleApiRequest(request, url, env, ctx);
+    return withCorsHeaders(response, allowedOrigin);
+  },
+};
+
+async function handleApiRequest(request, url, env, ctx) {
     try {
       if (url.pathname === '/api/health') {
         return handleHealth(env);
@@ -113,6 +153,9 @@ export default {
       // décoratif ; sans `path`, il porte le chemin complet du fichier.
       if (url.pathname === '/api/file' || url.pathname.startsWith('/api/file/')) {
         assertMethod(request, ['GET', 'HEAD']);
+        // The reader must not use the path-only edge cache: its PDF ranges
+        // are checked against a strong upstream revision by the Go API.
+        if (url.searchParams.get('reader') === '1') return await proxyGoChat(request, env, true);
         return await handleFile(request, env, ctx);
       }
 
@@ -211,8 +254,7 @@ export default {
         { status: 500, cacheControl: 'no-store' },
       );
     }
-  },
-};
+}
 
 /** Cache navigateur des documents d’index : court, pour voir les nouveautés. */
 export function browserCacheControl(env) {
@@ -2310,7 +2352,7 @@ function responseFromCache(cached, cacheStatus, cacheControl) {
   return response;
 }
 
-async function proxyGoChat(request, env) {
+async function proxyGoChat(request, env, pdfFile = false) {
   const origin = String(env?.GO_API_ORIGIN || '').trim().replace(/\/+$/, '');
   if (!/^https?:\/\//i.test(origin)) {
     return jsonResponse(
@@ -2341,6 +2383,12 @@ async function proxyGoChat(request, env) {
   }
   const headers = new Headers();
   headers.set('Accept', request.headers.get('Accept') || 'application/json');
+  if (pdfFile) {
+    for (const name of ['Range', 'If-Range']) {
+      const value = request.headers.get(name);
+      if (value) headers.set(name, value);
+    }
+  }
   const contentType = request.headers.get('Content-Type');
   if (contentType) headers.set('Content-Type', contentType);
   const cookie = request.headers.get('Cookie');
@@ -2362,7 +2410,10 @@ async function proxyGoChat(request, env) {
     );
   }
   const responseHeaders = new Headers();
-  for (const name of ['content-type', 'cache-control']) {
+  const forwardedHeaders = pdfFile
+    ? ['content-type', 'cache-control', 'content-length', 'content-range', 'accept-ranges', 'content-disposition', 'etag', 'last-modified']
+    : ['content-type', 'cache-control'];
+  for (const name of forwardedHeaders) {
     const value = upstream.headers.get(name);
     if (value) responseHeaders.set(name, value);
   }
@@ -2398,7 +2449,8 @@ async function proxyGoAuth(request, env) {
     return jsonResponse({ error: 'Origine Go invalide.' }, { status: 501, cacheControl: 'no-store' });
   }
   const declared = Number(request.headers.get('Content-Length') || 0);
-  if (declared > 16 * 1024) {
+  const maxBody = new URL(request.url).pathname.startsWith('/api/annotations') ? 32 * 1024 : 16 * 1024;
+  if (declared > maxBody) {
     return jsonResponse({ error: 'Requête de compte trop volumineuse.' }, { status: 413, cacheControl: 'no-store' });
   }
   const headers = new Headers();

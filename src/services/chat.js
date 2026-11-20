@@ -1,7 +1,9 @@
+import { apiCredentials, apiUrl, isTauriRuntime } from '../utils/runtime.js';
+
 export async function fetchChatStatus(signal) {
-  const response = await fetch('/api/chat/status', {
+  const response = await fetch(apiUrl('/api/chat/status'), {
     signal,
-    credentials: 'same-origin',
+    credentials: apiCredentials(),
     headers: { Accept: 'application/json' },
   });
   const payload = await response.json().catch(() => ({}));
@@ -14,14 +16,32 @@ export async function fetchChatStatus(signal) {
 }
 
 export async function streamChat({ message, intent, scope, history, contextPath, conversationId, provider, model, catalog, signal, onEvent }) {
-  const response = await fetch('/api/chat', {
+  const serializedBody = JSON.stringify({
+    message,
+    intent,
+    scope,
+    history,
+    contextPath,
+    conversationId,
+    provider,
+    model,
+    catalog,
+  });
+
+  if (isTauriRuntime()) {
+    await streamChatViaTauri({ serializedBody, signal, onEvent });
+    return;
+  }
+
+  const response = await fetch(apiUrl('/api/chat'), {
     method: 'POST',
     signal,
+    credentials: apiCredentials(),
     headers: {
       Accept: 'text/event-stream',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ message, intent, scope, history, contextPath, conversationId, provider, model, catalog }),
+    body: serializedBody,
   });
   const contentType = response.headers.get('Content-Type') || '';
   if (!response.ok || !contentType.includes('text/event-stream') || !response.body) {
@@ -50,10 +70,78 @@ export async function streamChat({ message, intent, scope, history, contextPath,
   if (buffer.trim()) consume(buffer);
 }
 
+async function streamChatViaTauri({ serializedBody, signal, onEvent }) {
+  if (signal?.aborted) {
+    throw new DOMException('La requête a été annulée.', 'AbortError');
+  }
+  const { Channel, invoke } = await import('@tauri-apps/api/core');
+  if (signal?.aborted) {
+    throw new DOMException('La requête a été annulée.', 'AbortError');
+  }
+  const streamId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  let buffer = '';
+  let streamError = null;
+
+  const consume = (block) => {
+    const event = parseEvent(block);
+    if (event) onEvent(event);
+  };
+
+  const onChunk = new Channel();
+  onChunk.onmessage = (msg) => {
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.kind === 'chunk' && typeof msg.text === 'string') {
+      buffer += msg.text;
+      const blocks = buffer.split('\n\n');
+      buffer = blocks.pop() || '';
+      blocks.forEach(consume);
+    } else if (msg.kind === 'error') {
+      const error = new Error(msg.message || 'L’assistant n’a pas pu répondre.');
+      error.status = Number(msg.status) || 502;
+      streamError = error;
+    } else if (msg.kind === 'done' && buffer.trim()) {
+      consume(buffer);
+      buffer = '';
+    }
+  };
+
+  const onAbort = () => {
+    void invoke('tauri_chat_cancel', { streamId }).catch(() => {});
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
+
+  try {
+    await invoke('tauri_chat_stream', {
+      streamId,
+      body: serializedBody,
+      onEvent: onChunk,
+    });
+  } catch (err) {
+    if (signal?.aborted) {
+      throw new DOMException('La requête a été annulée.', 'AbortError');
+    }
+    const error = new Error(typeof err === 'string' ? err : err?.message || 'L’assistant n’a pas pu répondre.');
+    error.status = 502;
+    throw error;
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
+
+  if (signal?.aborted) {
+    throw new DOMException('La requête a été annulée.', 'AbortError');
+  }
+  if (streamError) {
+    throw streamError;
+  }
+  if (buffer.trim()) {
+    consume(buffer);
+  }
+}
+
 export async function listConversations(signal) {
-  const response = await fetch('/api/chat/conversations', {
+  const response = await fetch(apiUrl('/api/chat/conversations'), {
     signal,
-    credentials: 'same-origin',
+    credentials: apiCredentials(),
     headers: { Accept: 'application/json' },
   });
   const payload = await response.json().catch(() => ({}));
@@ -66,9 +154,9 @@ export async function listConversations(signal) {
 }
 
 export async function loadConversation(id, signal) {
-  const response = await fetch(`/api/chat/conversations/${encodeURIComponent(id)}`, {
+  const response = await fetch(apiUrl(`/api/chat/conversations/${encodeURIComponent(id)}`), {
     signal,
-    credentials: 'same-origin',
+    credentials: apiCredentials(),
     headers: { Accept: 'application/json' },
   });
   const payload = await response.json().catch(() => ({}));

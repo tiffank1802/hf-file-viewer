@@ -1,11 +1,13 @@
+import { apiCredentials, apiUrl } from '../utils/runtime.js';
+
 export const MIN_PASSWORD_LENGTH = 12;
 export const PROMOTIONS = ['3A', '4A', '5A', 'Alumni', 'Staff'];
 export const FILIERES = ['GM', 'GC', 'GP', 'Autre'];
 
 async function request(path, { method = 'GET', body } = {}) {
-  const response = await fetch(path, {
+  const response = await fetch(apiUrl(path), {
     method,
-    credentials: 'same-origin',
+    credentials: apiCredentials(),
     headers: {
       Accept: 'application/json',
       ...(body ? { 'Content-Type': 'application/json' } : {}),

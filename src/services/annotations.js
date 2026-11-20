@@ -1,5 +1,12 @@
+import { apiCredentials, apiUrl } from '../utils/runtime.js';
+
 export async function listAnnotations(sourcePath, artifactId, signal) {
   const params = new URLSearchParams({ path: sourcePath, artifactId });
+  return annotationRequest(`/api/annotations?${params}`, { signal });
+}
+
+export async function listPDFAnnotations(sourcePath, sourceRevision, signal) {
+  const params = new URLSearchParams({ path: sourcePath, sourceRevision });
   return annotationRequest(`/api/annotations?${params}`, { signal });
 }
 
@@ -29,10 +36,10 @@ export async function deleteAnnotation(id, signal) {
 async function annotationRequest(url, options = {}) {
   let response;
   try {
-    response = await fetch(url, {
+    response = await fetch(apiUrl(url), {
       method: options.method || 'GET',
       signal: options.signal,
-      credentials: 'same-origin',
+      credentials: apiCredentials(),
       headers: {
         Accept: 'application/json',
         ...(options.body ? { 'Content-Type': 'application/json' } : {}),

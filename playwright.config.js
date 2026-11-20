@@ -1,6 +1,12 @@
 import process from 'node:process';
 import { defineConfig, devices } from '@playwright/test';
 
+// Optional fallback for environments that provide a compatible Chromium binary.
+const chromiumExecutable = process.env.PDF_TEST_CHROMIUM_PATH;
+const chromiumLaunchOptions = chromiumExecutable
+  ? { executablePath: chromiumExecutable, args: ['--no-sandbox', '--disable-dev-shm-usage'] }
+  : undefined;
+
 export default defineConfig({
   testDir: './tests/e2e',
   timeout: 30_000,
@@ -20,9 +26,9 @@ export default defineConfig({
     timeout: 120_000,
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'chromium', use: { ...devices['Desktop Chrome'], launchOptions: chromiumLaunchOptions } },
     { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
     { name: 'webkit', use: { ...devices['Desktop Safari'] } },
-    { name: 'mobile-chromium', use: { ...devices['Pixel 7'] } },
+    { name: 'mobile-chromium', use: { ...devices['Pixel 7'], launchOptions: chromiumLaunchOptions } },
   ],
 });

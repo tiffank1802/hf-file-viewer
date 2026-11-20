@@ -1,7 +1,7 @@
-import { FiArrowUp, FiExternalLink, FiHeart } from 'react-icons/fi';
+import { FiArrowUp, FiDownload, FiExternalLink, FiHeart } from 'react-icons/fi';
 import { BUCKET_URL } from '../config';
 
-export default function Footer() {
+export default function Footer({ onOpenDownload }) {
   return (
     <footer className="site-footer" id="about">
       <div className="footer-top">
@@ -20,6 +20,11 @@ export default function Footer() {
         </div>
         <div className="footer-links">
           <span>Ressources</span>
+          {onOpenDownload && (
+            <button type="button" className="footer-download-link" onClick={onOpenDownload}>
+              Application Win · Mac · Mobile <FiDownload aria-hidden="true" />
+            </button>
+          )}
           <a href={BUCKET_URL} target="_blank" rel="noreferrer">Dépôt Hugging Face <FiExternalLink aria-hidden="true" /></a>
           <a href="https://www.ec-lyon.fr/" target="_blank" rel="noreferrer">Centrale Lyon <FiExternalLink aria-hidden="true" /></a>
           <a href="https://polytechnique.cm/" target="_blank" rel="noreferrer">ENSPY <FiExternalLink aria-hidden="true" /></a>

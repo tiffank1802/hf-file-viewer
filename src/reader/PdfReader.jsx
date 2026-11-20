@@ -8,9 +8,12 @@ import {
   useState,
 } from 'react';
 import { FiRefreshCw } from 'react-icons/fi';
-import { GlobalWorkerOptions, TextLayer, getDocument } from 'pdfjs-dist';
+import { GlobalWorkerOptions, PDFDataRangeTransport, TextLayer, getDocument } from 'pdfjs-dist';
 import workerSource from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import 'pdfjs-dist/web/pdf_viewer.css';
+import { isTauriRuntime } from '../utils/runtime';
+import { normalizedQuadsForViewport, pdfQuadsFromClientRects } from './selectionAnchor';
+import { createTauriPDFSource, PDF_RANGE_CHUNK_SIZE } from './tauriPdfRange';
 
 GlobalWorkerOptions.workerSrc = workerSource;
 
@@ -18,11 +21,13 @@ const PdfReader = forwardRef(function PdfReader({
   url,
   zoom = 1.2,
   highlights = [],
+  indexedPages = new Map(),
   targetPage = 1,
   onDocument,
   onFirstPage,
   onPageChange,
   onError,
+  onRetry,
 }, ref) {
   const [pdf, setPdf] = useState(null);
   const [error, setError] = useState('');
@@ -33,33 +38,49 @@ const PdfReader = forwardRef(function PdfReader({
 
   useEffect(() => {
     if (!url) return undefined;
-    const task = getDocument({
-      url,
-      withCredentials: true,
-      disableAutoFetch: true,
-      disableStream: true,
-      rangeChunkSize: 256 * 1024,
-    });
+    const controller = new AbortController();
+    let task;
+    let source;
     let active = true;
+    let rangeFailed = false;
+    const fail = (reason) => {
+      if (!active || rangeFailed || reason?.name === 'AbortError') return;
+      rangeFailed = true;
+      const message = reason?.message || 'Le PDF ne peut pas être chargé.';
+      setError(message);
+      onError?.(message);
+      void task?.destroy();
+    };
     openedAt.current = performance.now();
     firstPageReported.current = false;
     setPdf(null);
     setError('');
-    task.promise
-      .then((document) => {
-        if (!active) return;
-        setPdf(document);
-        onDocument?.(document);
-      })
-      .catch((reason) => {
-        if (!active) return;
-        const message = reason?.message || 'Le PDF ne peut pas être chargé.';
-        setError(message);
-        onError?.(message);
+    void (async () => {
+      const tauri = isTauriRuntime();
+      source = tauri
+        ? await createTauriPDFSource(url, { signal: controller.signal, onError: fail, RangeTransport: PDFDataRangeTransport })
+        : { url };
+      if (!active) {
+        source.range?.abort();
+        return;
+      }
+      task = getDocument({
+        ...source,
+        withCredentials: !tauri,
+        disableAutoFetch: true,
+        disableStream: true,
+        rangeChunkSize: PDF_RANGE_CHUNK_SIZE,
       });
+      const document = await task.promise;
+      if (!active || rangeFailed) return;
+      setPdf(document);
+      onDocument?.(document, url);
+    })().catch(fail);
     return () => {
       active = false;
-      void task.destroy();
+      controller.abort();
+      source?.range?.abort();
+      void task?.destroy();
     };
   }, [attempt, onDocument, onError, url]);
 
@@ -83,15 +104,29 @@ const PdfReader = forwardRef(function PdfReader({
   const highlightsByPage = useMemo(() => {
     const grouped = new Map();
     for (const item of highlights) {
-      const pageNumber = Number(item.page);
-      if (!(pageNumber > 0)) continue;
-      if (!grouped.has(pageNumber)) grouped.set(pageNumber, []);
-      grouped.get(pageNumber).push(item);
+      const pages = item.segments?.length ? item.segments.map((segment) => Number(segment.page)) : [Number(item.page)];
+      for (const pageNumber of new Set(pages)) {
+        if (!(pageNumber > 0)) continue;
+        if (!grouped.has(pageNumber)) grouped.set(pageNumber, []);
+        grouped.get(pageNumber).push(item);
+      }
     }
     return grouped;
   }, [highlights]);
 
-  useImperativeHandle(ref, () => ({ scrollToPage }), [scrollToPage]);
+  useImperativeHandle(ref, () => ({
+    scrollToPage,
+    async selectionGeometry(pageNumber, clientRects, pageRect) {
+      if (!pdf) return null;
+      const page = await pdf.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: zoom });
+      return {
+        page: pageNumber,
+        pageView: [...page.view],
+        quads: pdfQuadsFromClientRects(clientRects, pageRect, viewport),
+      };
+    },
+  }), [pdf, scrollToPage, zoom]);
 
   useEffect(() => {
     if (!pdf || targetPage <= 1) return undefined;
@@ -105,7 +140,10 @@ const PdfReader = forwardRef(function PdfReader({
         <strong>Le lecteur PDF interactif est indisponible.</strong>
         <p>{error}</p>
         <span className="reader-recovery-actions">
-          <button type="button" onClick={() => setAttempt((value) => value + 1)}>
+          <button type="button" onClick={() => {
+            onRetry?.();
+            setAttempt((value) => value + 1);
+          }}>
             <FiRefreshCw aria-hidden="true" /> Réessayer
           </button>
           <a href={url} target="_blank" rel="noreferrer">Ouvrir le PDF original</a>
@@ -128,6 +166,7 @@ const PdfReader = forwardRef(function PdfReader({
             pageNumber={page}
             zoom={zoom}
             highlights={highlightsByPage.get(page) || []}
+            textAvailable={indexedPages.has(page) ? Boolean(indexedPages.get(page)?.trim()) : null}
             register={registerPage}
             onRendered={markFirstPage}
             onVisible={onPageChange}
@@ -138,12 +177,13 @@ const PdfReader = forwardRef(function PdfReader({
   );
 });
 
-function PdfPage({ pdf, pageNumber, zoom, highlights, register, onRendered, onVisible }) {
+function PdfPage({ pdf, pageNumber, zoom, highlights, textAvailable, register, onRendered, onVisible }) {
   const shellRef = useRef(null);
   const canvasRef = useRef(null);
   const textRef = useRef(null);
   const [nearViewport, setNearViewport] = useState(pageNumber <= 2);
   const [baseSize, setBaseSize] = useState({ width: 700, height: 990 });
+  const [pageViewport, setPageViewport] = useState(null);
   const [renderError, setRenderError] = useState('');
   const [renderAttempt, setRenderAttempt] = useState(0);
   const [rendered, setRendered] = useState(false);
@@ -189,6 +229,7 @@ function PdfPage({ pdf, pageNumber, zoom, highlights, register, onRendered, onVi
     pdf.getPage(pageNumber).then(async (page) => {
       if (!active) return;
       const viewport = page.getViewport({ scale: zoom });
+      setPageViewport(viewport);
       setBaseSize({ width: viewport.width / zoom, height: viewport.height / zoom });
       const canvas = canvasRef.current;
       const textContainer = textRef.current;
@@ -231,7 +272,9 @@ function PdfPage({ pdf, pageNumber, zoom, highlights, register, onRendered, onVi
   }, [nearViewport, onRendered, pageNumber, pdf, renderAttempt, zoom]);
 
   const positionedHighlights = highlights.flatMap((highlight, highlightIndex) => {
-    const regions = highlight.rects?.length ? highlight.rects : (highlight.bbox ? [highlight.bbox] : []);
+    const segment = highlight.segments?.find((item) => Number(item.page) === pageNumber);
+    const pdfRegions = segment ? normalizedQuadsForViewport(segment.quads, pageViewport) : [];
+    const regions = pdfRegions.length ? pdfRegions : (highlight.rects?.length ? highlight.rects : (highlight.bbox ? [highlight.bbox] : []));
     return regions
       .map((region, rectIndex) => ({
         ...normalizedHighlightRect(region, size, zoom),
@@ -271,6 +314,9 @@ function PdfPage({ pdf, pageNumber, zoom, highlights, register, onRendered, onVi
         )}
       </div>
       <span className="reader-page-number">{pageNumber}</span>
+      {nearViewport && rendered && textAvailable === false && (
+        <p className="reader-pdf-scan-notice" role="status">Aucun texte sélectionnable détecté sur cette page. Un OCR est nécessaire pour analyser un scan.</p>
+      )}
       {renderError && (
         <p className="reader-page-error" role="alert">
           <span>{renderError}</span>

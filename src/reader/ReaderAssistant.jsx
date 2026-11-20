@@ -14,6 +14,8 @@ import { emitReaderMetric } from './readerMetrics';
 const ReaderAssistant = forwardRef(function ReaderAssistant({
   document,
   selection,
+  pdfIndex,
+  getPDFContext,
   onCitation,
   onClose,
 }, ref) {
@@ -21,14 +23,16 @@ const ReaderAssistant = forwardRef(function ReaderAssistant({
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [scope, setScope] = useState(null);
+  const [coverage, setCoverage] = useState(null);
   const [announcement, setAnnouncement] = useState('');
   const abortRef = useRef(null);
   const idRef = useRef(0);
-  const ready = document?.status === 'structured-ready';
+  const pdfMode = Boolean(document?.pdfMode);
+  const ready = pdfMode ? Boolean(document?.sourceRevision) : document?.status === 'structured-ready';
 
   const ask = useCallback(async (question, intent = 'explain-selection', anchor = selection?.anchor) => {
     const text = String(question || '').trim();
-    if (!text || busy || !ready || !document?.sourcePath) return;
+    if (!text || busy || abortRef.current || !ready || !document?.sourcePath) return;
     const startedAt = performance.now();
     setAnnouncement('Recherche des preuves dans le document.');
     idRef.current += 1;
@@ -46,7 +50,6 @@ const ReaderAssistant = forwardRef(function ReaderAssistant({
     ]);
     setInput('');
     setBusy(true);
-    abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     const patch = (recipe) => {
@@ -55,24 +58,32 @@ const ReaderAssistant = forwardRef(function ReaderAssistant({
       )));
     };
     try {
+      const pdfContext = pdfMode && !anchor ? getPDFContext?.(text) : undefined;
+      if (pdfMode && !anchor && !pdfContext?.passages?.length) {
+        throw new Error('Aucun texte disponible dans l’index. Attendez la lecture des pages ou sélectionnez un passage.');
+      }
       await streamChat({
         message: text,
         intent,
         scope: {
           type: 'document',
           sourcePath: document.sourcePath,
-          artifactId: document.artifactId || undefined,
+          artifactId: pdfMode ? undefined : document.artifactId || undefined,
+          sourceRevision: pdfMode ? document.sourceRevision : undefined,
+          pdfContext,
           anchor: anchor || undefined,
         },
         history,
         contextPath: document.sourcePath.split('/').slice(0, -1).join('/'),
         signal: controller.signal,
         onEvent: ({ event, data }) => {
+          if (controller.signal.aborted) return;
           if (event === 'scope') {
             setScope(data);
             patch((message) => ({ ...message, scope: data }));
           }
           if (event === 'citations') {
+            if (data.coverage) setCoverage(data.coverage);
             patch((message) => ({ ...message, citations: data.citations || [] }));
           }
           if (event === 'thinking') patch((message) => ({ ...message, thinking: true }));
@@ -81,6 +92,7 @@ const ReaderAssistant = forwardRef(function ReaderAssistant({
           }
           if (event === 'done') {
             if (data.scope) setScope(data.scope);
+            if (data.coverage) setCoverage(data.coverage);
             setAnnouncement('La réponse de l’assistant est prête.');
             emitReaderMetric('assistant', {
               action: intent,
@@ -116,7 +128,10 @@ const ReaderAssistant = forwardRef(function ReaderAssistant({
       });
       patch((message) => (message.pending ? { ...message, pending: false } : message));
     } catch (error) {
-      if (error.name !== 'AbortError') {
+      if (error.name === 'AbortError') {
+        setAnnouncement('Demande annulée.');
+        patch((message) => ({ ...message, text: message.text || 'Demande annulée.', pending: false, thinking: false }));
+      } else {
         setAnnouncement('La réponse a échoué. Vous pouvez réessayer.');
         emitReaderMetric('assistant', {
           action: intent,
@@ -133,9 +148,12 @@ const ReaderAssistant = forwardRef(function ReaderAssistant({
         }));
       }
     } finally {
-      setBusy(false);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setBusy(false);
+      }
     }
-  }, [busy, document, messages, ready, selection]);
+  }, [busy, document, getPDFContext, messages, pdfMode, ready, selection]);
 
   useImperativeHandle(ref, () => ({ ask }), [ask]);
 
@@ -147,7 +165,7 @@ const ReaderAssistant = forwardRef(function ReaderAssistant({
         <div><FiMessageCircle aria-hidden="true" /></div>
         <span>
           <strong>Assistant du document</strong>
-          <small>{scopeLabel(scope, ready)}</small>
+          <small>{scopeLabel(scope, ready, pdfMode)}</small>
         </span>
         <button type="button" className="reader-panel-close" onClick={onClose} aria-label="Fermer l’assistant">
           <FiX aria-hidden="true" />
@@ -161,12 +179,20 @@ const ReaderAssistant = forwardRef(function ReaderAssistant({
         </div>
       )}
       <div className="reader-assistant-log">
+        {pdfMode && (
+          <p className="reader-assistant-disclosure">
+            {pdfIndex?.totalPages > 0 ? `Index local : ${pdfIndex.indexedPages}/${pdfIndex.totalPages} pages${pdfIndex.complete ? '' : ' (incomplet)'}. ` : ''}
+            La question et les extraits retenus sont transmis au service IA lors de l’envoi. Le texte du lecteur n’est pas vérifié par le serveur.
+            {coverage?.kind === 'partial-pdf-reader' && ' Les passages fournis ne constituent pas une lecture exhaustive.'}
+            {pdfIndex?.error && ` ${pdfIndex.error}`}
+          </p>
+        )}
         {messages.length === 0 && (
           <div className="reader-assistant-empty">
-            <strong>{ready ? 'Sélectionnez un passage' : 'Assistant structuré indisponible'}</strong>
-            <p>{ready
-              ? 'Demandez une explication ancrée dans les sections et pages Docling du document.'
-              : 'Le PDF reste lisible, mais aucune question ne sera envoyée tant que son artefact Docling prêt n’est pas disponible.'}</p>
+            <strong>{ready ? 'Posez votre question' : 'Assistant indisponible'}</strong>
+            <p>{pdfMode
+              ? (ready ? 'Sélectionnez un passage dans le PDF ou posez une question sur les pages indexées.' : 'La version du PDF doit être vérifiée avant l’envoi.')
+              : (ready ? 'Demandez une explication ancrée dans les sections et pages structurées.' : 'La structure de ce document doit être disponible avant l’envoi.')}</p>
           </div>
         )}
         {messages.map((message) => (
@@ -214,7 +240,7 @@ const ReaderAssistant = forwardRef(function ReaderAssistant({
           aria-label="Question à l’assistant du document"
           value={input}
           disabled={!ready}
-          placeholder={!ready ? 'Artefact Docling requis' : (selection ? 'Posez une question sur la sélection…' : 'Posez une question sur ce document…')}
+          placeholder={!ready ? (pdfMode ? 'Vérification du PDF…' : 'Structure requise') : (selection ? 'Posez une question sur la sélection…' : 'Posez une question sur ce document…')}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
@@ -223,9 +249,11 @@ const ReaderAssistant = forwardRef(function ReaderAssistant({
             }
           }}
         />
-        <button type="submit" disabled={!ready || busy || !input.trim()} aria-label="Envoyer la question">
-          <FiArrowUp aria-hidden="true" />
-        </button>
+        {busy ? (
+          <button type="button" onClick={() => abortRef.current?.abort()} aria-label="Annuler la réponse"><FiX aria-hidden="true" /></button>
+        ) : (
+          <button type="submit" disabled={!ready || !input.trim()} aria-label="Envoyer la question"><FiArrowUp aria-hidden="true" /></button>
+        )}
       </form>
     </aside>
   );
@@ -250,7 +278,8 @@ function renderInline(text, citations, onCitation) {
   });
 }
 
-function scopeLabel(scope, ready) {
+function scopeLabel(scope, ready, pdfMode) {
+  if (pdfMode || scope?.knowledgeSource === 'pdf-reader') return ready ? 'PDF original · texte fourni par le lecteur' : 'Vérification du PDF';
   if (scope?.anchor?.verified) return 'Sélection vérifiée par Docling';
   if (scope?.status === 'structured-ready' || ready) return 'Structure Docling prête';
   if (scope?.knowledgeSource === 'source-fallback') return 'Lecture source partielle';

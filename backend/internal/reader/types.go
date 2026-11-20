@@ -163,18 +163,29 @@ type Chunk struct {
 	Pages       []int
 }
 
+// PDFSegment uses unrotated PDF user-space coordinates, independent of zoom.
+type PDFSegment struct {
+	Page     int         `json:"page"`
+	PageView []float64   `json:"pageView"`
+	Quads    [][]float64 `json:"quads"`
+}
+
 // Evidence est la seule forme de contenu documentaire injectée au modèle.
 type Evidence struct {
-	CitationID  string   `json:"citationId"`
-	SourcePath  string   `json:"sourcePath"`
-	ArtifactID  string   `json:"artifactId"`
-	ChunkID     string   `json:"chunkId"`
-	BlockIDs    []string `json:"blockIds,omitempty"`
-	HeadingPath []string `json:"headingPath,omitempty"`
-	Page        int      `json:"page,omitempty"`
-	BBox        *BBox    `json:"bbox,omitempty"`
-	Kind        string   `json:"kind,omitempty"`
-	Text        string   `json:"text,omitempty"`
+	CitationID     string       `json:"citationId"`
+	SourcePath     string       `json:"sourcePath"`
+	ArtifactID     string       `json:"artifactId"`
+	ChunkID        string       `json:"chunkId"`
+	BlockIDs       []string     `json:"blockIds,omitempty"`
+	HeadingPath    []string     `json:"headingPath,omitempty"`
+	Page           int          `json:"page,omitempty"`
+	BBox           *BBox        `json:"bbox,omitempty"`
+	Kind           string       `json:"kind,omitempty"`
+	Text           string       `json:"text,omitempty"`
+	SourceRevision string       `json:"sourceRevision,omitempty"`
+	Origin         string       `json:"origin,omitempty"`
+	Verified       *bool        `json:"verified,omitempty"`
+	Segments       []PDFSegment `json:"segments,omitempty"`
 }
 
 // Coverage empêche de présenter un échantillon comme une lecture exhaustive.
@@ -186,6 +197,9 @@ type Coverage struct {
 	SelectedSections int     `json:"selectedSections"`
 	TotalSections    int     `json:"totalSections"`
 	BlockCoverage    float64 `json:"blockCoverage"`
+	IndexedPages     int     `json:"indexedPages,omitempty"`
+	TotalPages       int     `json:"totalPages,omitempty"`
+	Complete         bool    `json:"complete,omitempty"`
 }
 
 type Query struct {

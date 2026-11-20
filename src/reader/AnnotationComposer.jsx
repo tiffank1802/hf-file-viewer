@@ -8,7 +8,7 @@ const COLORS = [
   { id: 'pink', label: 'Rose' },
 ];
 
-export default function AnnotationComposer({ selection, saving, onSave, onClose }) {
+export default function AnnotationComposer({ selection, saving, error, onSave, onClose }) {
   const [body, setBody] = useState('');
   const [color, setColor] = useState('yellow');
   const textareaRef = useRef(null);
@@ -75,6 +75,7 @@ export default function AnnotationComposer({ selection, saving, onSave, onClose 
             </label>
           ))}
         </fieldset>
+        {error && <p className="reader-note-error" role="alert">{error}</p>}
         <footer>
           <button type="button" onClick={onClose}>Annuler</button>
           <button

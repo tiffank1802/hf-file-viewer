@@ -196,7 +196,7 @@ export function describeShortcutTarget(url = '') {
 export function normalizeBucketItem(item) {
   const path = String(item.path || '');
   const type = item.type === 'directory' ? 'directory' : 'file';
-  const count = Number(item.count);
+  const count = item.count == null ? NaN : Number(item.count);
   return {
     ...item,
     path,
@@ -240,7 +240,7 @@ export function applyFolderCounts(items = [], counts = {}) {
   if (!counts || typeof counts !== 'object') return items;
   return items.map((item) => {
     if (!item || item.type !== 'directory') return item;
-    const value = Number(counts[item.path]);
+    const value = counts[item.path] == null ? NaN : Number(counts[item.path]);
     if (!Number.isFinite(value)) return item;
     if (item.count === value) return item;
     return { ...item, count: value };

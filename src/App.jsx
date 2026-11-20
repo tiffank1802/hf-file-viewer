@@ -1,5 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FiHeart, FiHome, FiSearch } from 'react-icons/fi';
+import { FiDownload, FiHeart, FiHome, FiSearch } from 'react-icons/fi';
+import AppDownloadModal from './components/AppDownloadModal';
+import AppUpdateBanner from './components/AppUpdateBanner';
 import CategoryGrid from './components/CategoryGrid';
 import Explorer from './components/Explorer';
 import Footer from './components/Footer';
@@ -13,17 +15,23 @@ import SideNav from './components/SideNav';
 import AuthPanel from './components/AuthPanel';
 import CloudflareAnalytics from './components/CloudflareAnalytics';
 import { useLibrary } from './hooks/useLibrary';
+import { useFinderPreferences } from './hooks/useFinderPreferences';
 import { useIndexCatalog } from './hooks/useIndexCatalog';
 import { buildHomeCards } from './utils/spaces';
 import { useAuth } from './hooks/useAuth';
 import { useFavorites } from './hooks/useFavorites';
-import { normalizeBucketItem } from './utils/files';
+import { useExplorerPersonal } from './hooks/useExplorerPersonal';
+import { getName, normalizeBucketItem } from './utils/files';
+import { orderPinnedFolders } from './utils/explorerPersonal';
+import { isTauriRuntime } from './utils/runtime';
 import './index.css';
+import './components/explorer/explorer.css';
 
 const DocumentWorkspace = lazy(() => import('./reader/DocumentWorkspace'));
 
 export default function App() {
   const library = useLibrary();
+  const finderSettings = useFinderPreferences(library.path);
   const catalog = useIndexCatalog();
   // Les cartes d’accueil et la barre latérale sont dérivées de l’index et du
   // listage racine (`/api/tree`, l’en-tête du bucket) : un dossier ajouté
@@ -37,22 +45,39 @@ export default function App() {
   const [readerFile, setReaderFile] = useState(() => readerFileFromRoute(window.location.pathname, window.location.search));
   const readerReturnUrl = useRef('/');
   const readerOpenedHere = useRef(false);
-  const [searchState, setSearchState] = useState({ open: false, mode: 'search' });
+  const [searchState, setSearchState] = useState({ open: false, mode: 'search', sequence: 0 });
   const [authPanel, setAuthPanel] = useState({ open: false, mode: 'signin' });
+  const [downloadOpen, setDownloadOpen] = useState(false);
   const [dismissedAlertKey, setDismissedAlertKey] = useState(null);
+  const inTauri = isTauriRuntime();
   const auth = useAuth();
+  const personal = useExplorerPersonal(auth.user?.id);
+  const recordRecent = personal.record;
+  const authStatus = auth.status;
+  const currentPath = library.path;
   const favorites = useFavorites(auth.user);
   const favoriteItems = favorites.items;
   const favoritePaths = favorites.paths;
+  const pinned = useMemo(() => orderPinnedFolders(favoriteItems.filter((item) => item.type === 'directory'), personal.pinnedOrder), [favoriteItems, personal.pinnedOrder]);
   const favoritesAlert = favorites.sync.actionError
     || (['write-failed', 'read-failed', 'unprovisioned', 'import', 'disabled'].includes(favorites.sync.state) ? favorites.sync.error : null);
   const favoritesAlertKey = favoritesAlert ? `${favorites.sync.state}::${favoritesAlert}` : null;
 
-  const openSearch = useCallback((mode = 'search') => {
-    setSearchState({ open: true, mode });
+  const openSearch = useCallback((mode = 'search', options = {}) => {
+    setSearchState((previous) => ({ open: true, mode, sequence: previous.sequence + 1, ...options }));
   }, []);
+  const openFile = useCallback((item) => {
+    if (authStatus !== 'loading') recordRecent(item);
+    setSelectedFile(item);
+  }, [authStatus, recordRecent]);
+
+  useEffect(() => {
+    if (authStatus !== 'loading' && currentPath) recordRecent({ path: currentPath, name: getName(currentPath), type: 'directory' });
+  }, [authStatus, currentPath, recordRecent]);
   const openAuth = useCallback((mode = 'signin') => setAuthPanel({ open: true, mode }), []);
   const closeAuth = useCallback(() => setAuthPanel((current) => ({ ...current, open: false })), []);
+  const openDownload = useCallback(() => setDownloadOpen(true), []);
+  const closeDownload = useCallback(() => setDownloadOpen(false), []);
   const closeSearch = useCallback(() => {
     setSearchState((current) => ({ ...current, open: false }));
   }, []);
@@ -91,7 +116,10 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     if (params.get('recover') === '1') openAuth('recover');
     else if (params.get('verify') === '1') openAuth('signin');
-  }, [openAuth]);
+    else if (params.get('download') === '1' || params.get('app') === '1' || window.location.hash === '#download') {
+      openDownload();
+    }
+  }, [openAuth, openDownload]);
 
   useEffect(() => {
     const onPopState = () => setReaderFile(readerFileFromRoute(window.location.pathname, window.location.search));
@@ -101,6 +129,7 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (event) => {
+      if (event.defaultPrevented || event.isComposing || searchState.open || authPanel.open || selectedFile || document.querySelector('.finder-dialog[open]')) return;
       const target = event.target;
       const isTyping = target instanceof HTMLElement && (
         target.matches('input, textarea, select') || target.isContentEditable
@@ -108,14 +137,14 @@ export default function App() {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
         openSearch('search');
-      } else if (event.key === '/' && !isTyping) {
+      } else if (event.key === '/' && !isTyping && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
         openSearch('search');
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [openSearch]);
+  }, [authPanel.open, openSearch, searchState.open, selectedFile]);
 
   const selectedIsFavorite = selectedFile ? favoritePaths.includes(selectedFile.path) : false;
 
@@ -123,9 +152,11 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     return (
       <>
+        <AppUpdateBanner suspended />
         <Suspense fallback={<div className="reader-route-loading">Préparation du lecteur interactif…</div>}>
+          {/* Discard the previous account's private reader state on account changes. */}
           <DocumentWorkspace
-            key={readerFile.path}
+            key={`${readerFile.path}:${auth.user?.id || 'anonymous'}`}
             file={readerFile}
             initialPage={Number(params.get('page')) || Number(readerFile.previewPage) || 1}
             authenticated={auth.isAuthenticated}
@@ -144,6 +175,8 @@ export default function App() {
   }
 
   return (
+    <>
+    <AppUpdateBanner suspended={Boolean(selectedFile || studyFile || authPanel.open || searchState.open || downloadOpen)} />
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Aller au contenu</a>
       <div className="page-aurora" aria-hidden="true">
@@ -157,6 +190,7 @@ export default function App() {
         onOpenSearch={() => openSearch('search')}
         onOpenAuth={openAuth}
         onOpenFavorites={() => openSearch('favorites')}
+        onOpenDownload={openDownload}
         favoriteCount={favoriteItems.length}
       />
 
@@ -179,6 +213,7 @@ export default function App() {
           <>
             <Hero
               onOpenSearch={() => openSearch('search')}
+              onOpenDownload={openDownload}
               navigate={library.navigate}
               catalog={catalog}
               spaceCount={home.spaces.length}
@@ -202,19 +237,30 @@ export default function App() {
               <p>Naviguez par année, semestre ou matière. Ouvrez un aperçu avant de télécharger.</p>
             </div>
           )}
-          <div className="library-layout">
-            <SideNav
+          <div className={`library-layout${finderSettings.preferences.showSidebar ? '' : ' finder-sidebar-hidden'}`}>
+            {finderSettings.preferences.showSidebar && <SideNav
               path={library.path}
               navigate={library.navigate}
               favoriteCount={favoriteItems.length}
               onOpenSearch={() => openSearch('search')}
               onOpenFavorites={() => openSearch('favorites')}
+              onOpenDownload={openDownload}
               spaces={home.spaces}
-            />
+              pinned={pinned}
+              onMovePinned={(from, to) => personal.movePinned(pinned.map((item) => item.path), from, to)}
+              recentCount={personal.recent.length}
+              searches={personal.searches}
+              onOpenRecent={() => openSearch('recent')}
+              onOpenTag={(tag) => openSearch('search', { filters: { tag } })}
+              onOpenSaved={(search) => openSearch('search', { filters: search.filters, query: search.query, savedId: search.id })}
+            />}
             <Explorer
+              settings={finderSettings}
               library={library}
               catalog={catalog}
-              onOpenFile={setSelectedFile}
+              onOpenFile={openFile}
+              onOpenSearch={(folder) => openSearch('search', { filters: { folder } })}
+              personal={authStatus === 'loading' ? null : personal}
               favorites={favoritePaths}
               onToggleFavorite={toggleFavorite}
             />
@@ -222,9 +268,9 @@ export default function App() {
         </section>
       </main>
 
-      <Footer />
+      <Footer onOpenDownload={openDownload} />
 
-      <nav className="mobile-bottom-nav" aria-label="Navigation mobile">
+      <nav className={`mobile-bottom-nav ${!inTauri ? 'has-app-tab' : ''}`} aria-label="Navigation mobile">
         <button type="button" className={!library.path ? 'active' : ''} onClick={() => library.navigate('', { scroll: false })}>
           <FiHome aria-hidden="true" /><span>Accueil</span>
         </button>
@@ -235,7 +281,14 @@ export default function App() {
           <span className="mobile-favorite-icon"><FiHeart aria-hidden="true" />{favoriteItems.length > 0 && <i>{favoriteItems.length}</i>}</span>
           <span>Favoris</span>
         </button>
+        {!inTauri && (
+          <button type="button" onClick={openDownload}>
+            <FiDownload aria-hidden="true" /><span>Installer</span>
+          </button>
+        )}
       </nav>
+
+      <AppDownloadModal open={downloadOpen} onClose={closeDownload} />
 
       <AuthPanel
         open={authPanel.open}
@@ -244,21 +297,26 @@ export default function App() {
         onClose={closeAuth}
       />
 
-      <SearchPalette
-        open={searchState.open}
+      {searchState.open && <SearchPalette
+        key={`${personal.key}:${searchState.sequence}`}
         mode={searchState.mode}
         onClose={closeSearch}
         onNavigate={library.navigate}
-        onOpenFile={setSelectedFile}
+        onOpenFile={openFile}
         favoriteItems={favoriteItems}
         catalog={catalog}
-      />
+        library={library}
+        personal={personal}
+        initialFilters={searchState.filters}
+        initialQuery={searchState.query}
+        initialSavedId={searchState.savedId}
+      />}
 
       <LibraryChat
         path={library.path}
         catalog={catalog}
         onNavigate={library.navigate}
-        onOpenFile={setSelectedFile}
+        onOpenFile={openFile}
         onOpenAuth={openAuth}
         studyDocument={studyFile}
         onClearStudy={() => setStudyFile(null)}
@@ -273,5 +331,6 @@ export default function App() {
         onRead={openReader}
       />
     </div>
+    </>
   );
 }

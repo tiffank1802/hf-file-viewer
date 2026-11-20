@@ -529,3 +529,42 @@ test('les redirections vers le login Microsoft sont détectées', () => {
   assert.equal(isAuthWallUrl(''), false);
   assert.equal(isAuthWallUrl('pas une url'), false);
 });
+
+test('le PDF du lecteur et ses Range passent par Go sans cache Worker', async () => {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    seen.push({ url: req.url, range: req.headers.range, ifRange: req.headers['if-range'], cookie: req.headers.cookie });
+    res.writeHead(206, {
+      'content-type': 'application/pdf',
+      'content-range': 'bytes 4-7/20',
+      'content-length': '4',
+      'accept-ranges': 'bytes',
+      etag: '"revision-a"',
+      'cache-control': 'no-store',
+    });
+    res.end('test');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const { port } = server.address();
+    const revision = `etag-sha256:${'a'.repeat(64)}`;
+    const url = `https://enise.test/api/file?path=GM%2Fcours.pdf&reader=1&revision=${encodeURIComponent(revision)}`;
+    for (let i = 0; i < 2; i += 1) {
+      const response = await worker.fetch(new Request(url, { headers: {
+        Range: 'bytes=4-7', 'If-Range': '"revision-a"', Cookie: 'enise_session=private', Origin: 'tauri://localhost',
+      } }), { GO_API_ORIGIN: `http://127.0.0.1:${port}` }, {});
+      assert.equal(response.status, 206);
+      assert.equal(await response.text(), 'test');
+      assert.equal(response.headers.get('content-range'), 'bytes 4-7/20');
+      assert.equal(response.headers.get('accept-ranges'), 'bytes');
+      assert.equal(response.headers.get('etag'), '"revision-a"');
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      assert.equal(response.headers.get('access-control-allow-origin'), 'tauri://localhost');
+    }
+    assert.equal(seen.length, 2, 'chaque requête rejoint Go');
+    assert.ok(seen.every((item) => item.range === 'bytes=4-7' && item.ifRange === '"revision-a"' && item.cookie === 'enise_session=private'));
+    assert.match(seen[0].url, /reader=1&revision=etag-sha256%3A/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

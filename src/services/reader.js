@@ -1,3 +1,4 @@
+import { apiCredentials, apiUrl } from '../utils/runtime.js';
 import { LibraryApiError } from './api.js';
 
 const RETRY_DELAYS = [200, 700];
@@ -8,9 +9,9 @@ async function readerJson(url, signal) {
   for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt += 1) {
     let response;
     try {
-      response = await fetch(url, {
+      response = await fetch(apiUrl(url), {
         signal,
-        credentials: 'same-origin',
+        credentials: apiCredentials(),
         headers: { Accept: 'application/json' },
       });
     } catch (error) {
@@ -29,6 +30,27 @@ async function readerJson(url, signal) {
     await abortableDelay(retryAfter ?? RETRY_DELAYS[attempt], signal);
   }
   throw lastError || new LibraryApiError('Le document structuré est indisponible.');
+}
+
+export function fetchPDFRevision(sourcePath, signal) {
+  const params = new URLSearchParams({ path: sourcePath });
+  return readerJson(`/api/reader/pdf-revision?${params}`, signal);
+}
+
+export function pdfReaderUrl(sourcePath, revision = '') {
+  const params = new URLSearchParams({ path: sourcePath, reader: '1' });
+  if (revision.startsWith('etag-sha256:')) params.set('revision', revision);
+  return apiUrl(`/api/file?${params}`);
+}
+
+export async function hashPDFBytes(pdf, maxBytes = 64 * 1024 * 1024) {
+  if (!globalThis.crypto?.subtle) throw new Error('Le calcul sécurisé de l’empreinte PDF est indisponible.');
+  const data = await pdf.getData();
+  if (!data?.byteLength || data.byteLength > maxBytes) {
+    throw new Error('Ce PDF dépasse la limite de 64 Mio pour la vérification sans ETag fort.');
+  }
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', data);
+  return `sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
 export function fetchReaderDocument(sourcePath, artifactId = '', signal) {
@@ -72,7 +94,7 @@ export function readerAssetUrl(sourcePath, artifactId, assetId) {
     artifactId,
     asset: assetId,
   });
-  return `/api/reader/asset?${params}`;
+  return apiUrl(`/api/reader/asset?${params}`);
 }
 
 export function retryAfterMs(value) {
