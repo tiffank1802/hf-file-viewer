@@ -58,7 +58,7 @@ jobs:
             exit 1
           fi
       - run: npm ci
-      - name: Rebuild the Finder UI from the published release commit
+      - name: Rebuild the Finder and PDF reader UI from the release commit
         shell: bash
         run: |
           export GITHUB_SHA="$BUILD_SHA" VITE_API_ORIGIN='' VITE_ENISE_PREVIEW_TAG="$RELEASE_TAG"
@@ -74,7 +74,14 @@ jobs:
             grep -q 'finder-toolbar' "dist/build-assets/$index"
             grep -q 'finder-preview-toggle' "dist/build-assets/$index"
             grep -q "$GITHUB_SHA" "dist/build-assets/$index"
-            printf '%s\n' "$index" >> "$RUNNER_TEMP/finder-asset-keys.txt"
+            reader=$(basename dist/build-assets/DocumentWorkspace-*.js)
+            pdf=$(basename dist/build-assets/PdfReader-*.js)
+            style=$(sed -nE 's|.*href="/build-assets/(index-[^"]+\.css)".*|\1|p' dist/index.html)
+            grep -q 'reader-selection-toolbar' "dist/build-assets/$reader"
+            grep -q 'pdf-geometry/v1' "dist/build-assets/$pdf"
+            grep -q 'chat-pdf-backdrop' "dist/build-assets/$style"
+            grep -q 'reader-page-controls input' "dist/build-assets/$style"
+            printf '%s\t%s\t%s\t%s\n' "$index" "$reader" "$pdf" "$style" >> "$RUNNER_TEMP/finder-asset-keys.txt"
           done
       - uses: actions/download-artifact@v7
         with:
@@ -101,7 +108,7 @@ jobs:
           chmod +x public-bundles/ENISE-Docs-linux-x64.AppImage
           (cd extracted/linux-appimage && ../../public-bundles/ENISE-Docs-linux-x64.AppImage --appimage-extract 'usr/bin/enise-docs')
           dpkg-deb -x public-bundles/ENISE-Docs-linux-x64.deb extracted/linux-deb
-      - name: Match the embedded entry point of each application to the Finder frontend
+      - name: Match the Finder entry point, PDF reader and styles embedded in each application
         shell: bash
         run: |
           python3 - <<'PY'
@@ -109,7 +116,8 @@ jobs:
           import plistlib
           from pathlib import Path
 
-          keys = [key.encode() for key in set((Path(os.environ['RUNNER_TEMP']) / 'finder-asset-keys.txt').read_text().splitlines())]
+          key_sets = [tuple(key.encode() for key in row.split('\t')) for row in
+                      set((Path(os.environ['RUNNER_TEMP']) / 'finder-asset-keys.txt').read_text().splitlines())]
           root = Path('extracted')
           android = sorted((root / 'android').glob('lib/*/libenise_docs_lib.so'))
           if not android:
@@ -139,11 +147,11 @@ jobs:
               matches = set()
               for file in files:
                   data = file.read_bytes()
-                  matches.update(key.decode() for key in keys if key in data)
+                  matches.update(" + ".join(key.decode() for key in keys) for keys in key_sets if all(key in data for key in keys))
               if matches:
-                  print(f'::notice::{platform}: embedded Finder entry point {", ".join(sorted(matches))}')
+                  print(f'::notice::{platform}: embedded Finder and PDF reader assets {", ".join(sorted(matches))}')
               else:
-                  print(f'::error::{platform}: expected Finder asset not found in {files}')
+                  print(f'::error::{platform}: expected Finder and PDF reader assets not found in {files}')
                   failed.append(platform)
           if failed:
               raise SystemExit(1)
@@ -159,7 +167,7 @@ jobs:
             {release: $tag, source_commit: .head_sha, source_branch: .head_branch,
              build_run: .id, build_url: .html_url, build_started_at: .run_started_at,
              native_jobs: [$jobs[0].jobs[] | select(.conclusion == "success") | {name, completed_at, html_url}],
-             finder_embedded_frontend: "verified in macOS, Windows NSIS, Android, iOS, Linux AppImage and Linux DEB binaries"}' source-run.json > release-assets/BUILD-PROVENANCE.json
+             finder_and_pdf_reader_embedded_frontend: "verified in macOS, Windows NSIS, Android, iOS, Linux AppImage and Linux DEB binaries"}' source-run.json > release-assets/BUILD-PROVENANCE.json
           (cd release-assets && sha256sum BUILD-PROVENANCE.json ENISE-Docs-* > SHA256SUMS.txt && sha256sum -c SHA256SUMS.txt)
       - name: Upload all verified assets and publish the prerelease
         env:
