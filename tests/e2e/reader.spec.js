@@ -171,7 +171,8 @@ test('sélection structurée → IA citée → retour au bloc → note persisté
 
   await expect(page.getByRole('heading', { name: 'Énergie cinétique' })).toBeVisible();
   await selectStructuredText(page);
-  await page.getByRole('button', { name: 'Expliquer' }).click();
+  await page.getByRole('button', { name: 'Expliquer', exact: true }).click();
+  await page.getByRole('button', { name: 'Envoyer la question' }).click();
 
   await expect(page.getByText('La vitesse intervient au carré')).toBeVisible();
   await page.locator('.library-chat-citation').first().click();
@@ -286,6 +287,7 @@ async function mockUnifiedPDF(page, { ranges = false, scanned = false, fixture =
       if (body.message.includes('attendre')) await new Promise((resolve) => setTimeout(resolve, 4000));
       const anchor = body.scope.anchor;
       const passage = body.scope.pdfContext?.passages?.[0];
+      if (scanned && !anchor && !passage) return json({ error: 'Aucun extrait exploitable pour ce périmètre : PDF scanné sans texte ni conversion Docling de cette version.' }, 400);
       const citation = { citationId: 'S1', sourcePath: PDF_PATH, sourceRevision: body.scope.sourceRevision, page: anchor?.page || passage?.page || 1, segments: anchor?.segments, origin: 'pdf-text', verified: false };
       const coverage = { kind: 'partial-pdf-reader', indexedPages: 1, totalPages: 1 };
       const events = [
@@ -355,7 +357,7 @@ test('PDF unifié : note privée, réouverture, zoom, ancienne version et questi
   expect(state.chats.at(-1).scope.sourceRevision).toBe(state.revision);
   expect(state.chats.at(-1).scope.pdfContext.passages[0].text).toContain('vitesse');
   expect(state.chats.at(-1).scope.artifactId).toBeUndefined();
-  await expect(page.getByText(/texte du lecteur n’est pas vérifié par le serveur/i)).toBeVisible();
+  await expect(page.getByText(/extraits issus de PDF.js ne sont pas vérifiés par le serveur/i)).toBeVisible();
 
   state.revision = `etag-sha256:${'b'.repeat(64)}`;
   await page.reload();
@@ -374,6 +376,7 @@ test('PDF unifié : citation de sélection et annulation de la réponse', async 
   await page.goto(`/read?path=${encodeURIComponent(PDF_PATH)}`);
   await selectPDFText(page);
   await page.getByRole('button', { name: 'Expliquer', exact: true }).click();
+  await page.getByRole('button', { name: 'Envoyer la question' }).click();
   await expect(page.getByText(/La vitesse intervient au carré/).first()).toBeVisible();
   expect(state.chats[0].scope.anchor.schemaVersion).toBe('pdf-anchor/v1');
   expect(state.chats[0].scope.anchor.segments).toHaveLength(1);
@@ -427,8 +430,9 @@ test('PDF unifié : page sans texte signale le besoin d’OCR sans envoyer de fa
   await expect(page.getByText(/Index local : 1\/1 pages/)).toBeVisible();
   await page.getByLabel('Question à l’assistant du document').fill('Que contient ce scan ?');
   await page.getByRole('button', { name: 'Envoyer la question' }).click();
-  await expect(page.getByText(/Aucun texte disponible dans l’index/)).toBeVisible();
-  expect(state.chats).toHaveLength(0);
+  await expect(page.getByText(/Aucun extrait exploitable pour ce périmètre/)).toBeVisible();
+  expect(state.chats).toHaveLength(1);
+  expect(state.chats[0].scope.pdfContext.passages).toEqual([]);
 });
 
 test('PDF unifié : transport Tauri simulé utilise une plage pour ouvrir le PDF', async ({ page }, testInfo) => {
@@ -540,6 +544,7 @@ test('PDF unifié sur mobile : expliquer une sélection ouvre le flux IA sans an
   await selectPDFText(page);
   await page.getByRole('button', { name: 'Expliquer', exact: true }).click();
   await expect(page.getByRole('complementary', { name: 'Assistant du document' })).toBeVisible();
+  await page.getByRole('button', { name: 'Envoyer la question' }).click();
   await expect(page.getByText('La vitesse intervient au carré')).toBeVisible();
   await expect(page.getByText('Demande annulée.', { exact: true })).toHaveCount(0);
   expect(state.chats).toHaveLength(1);
@@ -551,9 +556,12 @@ test('PDF unifié : un double clic rapide ne lance pas deux réponses concurrent
   const state = await mockUnifiedPDF(page);
   await page.goto(`/read?path=${encodeURIComponent(PDF_PATH)}`);
   await selectPDFText(page);
-  await page.getByRole('button', { name: 'Expliquer', exact: true }).evaluate((button) => {
-    button.click();
-    button.click();
+  await page.getByRole('button', { name: 'Expliquer', exact: true }).click();
+  const send = page.getByRole('button', { name: 'Envoyer la question' });
+  await expect(send).toBeEnabled();
+  await send.evaluate((button) => {
+    button.form.requestSubmit();
+    button.form.requestSubmit();
   });
   await expect(page.locator('.reader-message.assistant').last()).toContainText('La vitesse intervient au carré');
   expect(state.chats).toHaveLength(1);
@@ -685,4 +693,24 @@ test('PDF unifié : double clic et changement de mode isolent les écritures en 
     releaseOld();
     releaseNew?.();
   }
+});
+
+test('la conversation ouvre ses sources PDF dans un aperçu clair sans lecteur natif sombre', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium', 'Parcours de conversation sur ordinateur.');
+  await mockUnifiedPDF(page);
+  const source = { path: PDF_PATH, type: 'file', name: 'reader-r6.pdf' };
+  await page.route('**/api/chat', (route) => route.fulfill({
+    contentType: 'text/event-stream',
+    body: `event: done\ndata: ${JSON.stringify({ answer: 'Voici le cours.', documents: [source] })}\n\n`,
+  }));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Assistant', exact: true }).click();
+  const chat = page.getByRole('dialog', { name: 'Assistant bibliothèque' });
+  await chat.getByLabel('Question à l’assistant').fill('Trouve le PDF sur l’énergie.');
+  await chat.getByRole('button', { name: 'Envoyer', exact: true }).click();
+  await chat.getByRole('button', { name: /reader-r6\.pdf/ }).click();
+  const preview = page.locator('.chat-pdf-backdrop');
+  await expect(preview).toBeVisible();
+  await expect(preview.locator('iframe')).toHaveCount(0);
+  await expect(preview.locator('.reader-pdf-text')).toContainText('Energie cinetique');
 });

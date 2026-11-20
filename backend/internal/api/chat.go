@@ -273,7 +273,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) error {
 				break
 			}
 		}
-		pdfScope := body.Scope.SourceRevision != "" || body.Scope.PDFContext != nil || (body.Scope.Anchor != nil && body.Scope.Anchor.SchemaVersion == pdfAnchorSchema)
+		pdfScope := body.Scope.SourceRevision != "" || body.Scope.Page != 0 || body.Scope.PDFContext != nil || (body.Scope.Anchor != nil && body.Scope.Anchor.SchemaVersion == pdfAnchorSchema)
 		if pdfScope {
 			// Never authorize a client-supplied catalog hint as a PDF source.
 			query := r.Clone(r.Context())
@@ -380,14 +380,21 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
-	draft := s.composeAnswer(r.Context(), w, message, contextPath, sanitizeHistory(body.History, message), hits, body.Provider, body.Model, profile, study)
+	history := sanitizeHistory(body.History, message)
+	if study != nil && study.SourceRevision != "" {
+		history = nil // Earlier turns may reference pages outside the current scope.
+	}
+	draft := s.composeAnswer(r.Context(), w, message, contextPath, history, hits, body.Provider, body.Model, profile, study)
 	s.finishChat(w, r, body.ConversationID, message, draft, contextPath, hits, study)
 	return nil
 }
 
 func (s *Server) finishChat(w http.ResponseWriter, r *http.Request, conversationID, question string, draft chatDraft, contextPath string, hits []chat.Hit, study *documentStudy) {
 	hits = promoteMentioned(draft.answer, hits)
-	saved := s.rememberChat(r, conversationID, question, draft.answer, contextPath, hits)
+	saved := chatSave{}
+	if study == nil || study.SourceRevision == "" {
+		saved = s.rememberChat(r, conversationID, question, draft.answer, contextPath, hits)
+	}
 	payload := map[string]any{
 		"answer":         draft.answer,
 		"engine":         draft.engine,

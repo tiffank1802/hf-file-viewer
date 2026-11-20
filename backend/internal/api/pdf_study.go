@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	"enise-docs/backend/internal/catalog"
 	"enise-docs/backend/internal/reader"
@@ -17,7 +18,7 @@ const pdfAnchorSchema = "pdf-anchor/v1"
 // The server validates the shape, source revision and access; it deliberately
 // does not claim the browser-supplied text or geometry was extracted by Go.
 func validatePDFAnchor(anchor *chatAnchor, revision string) error {
-	if anchor == nil || anchor.SchemaVersion != pdfAnchorSchema || anchor.SourceRevision != revision || !validPDFRevision(revision) {
+	if anchor == nil || anchor.Geometry != nil || anchor.SchemaVersion != pdfAnchorSchema || anchor.SourceRevision != revision || !validPDFRevision(revision) {
 		return catalog.Error(http.StatusBadRequest, "La version ou le format de l’ancre PDF est invalide.")
 	}
 	if anchor.Origin != "pdf-text" && anchor.Origin != "ocr" {
@@ -70,7 +71,7 @@ func validatePDFAnchor(anchor *chatAnchor, revision string) error {
 	return nil
 }
 
-func (s *Server) preparePDFStudy(ctx context.Context, scope chatScope) (*documentStudy, error) {
+func (s *Server) preparePDFStudy(ctx context.Context, scope chatScope, message, intent string) (*documentStudy, error) {
 	if err := s.verifyPDFRevision(ctx, scope.SourcePath, scope.SourceRevision); err != nil {
 		return nil, err
 	}
@@ -79,15 +80,50 @@ func (s *Server) preparePDFStudy(ctx context.Context, scope chatScope) (*documen
 			return nil, err
 		}
 	}
+	if scope.Page < 0 || scope.Page > 100000 || (scope.Page > 0 && scope.Anchor != nil) {
+		return nil, catalog.Error(http.StatusBadRequest, "Le périmètre PDF est invalide.")
+	}
+	// A selection remains exactly the visible excerpt; do not silently add
+	// surrounding passages or label browser-supplied geometry as verified.
+	if scope.Anchor == nil && s.cfg.DerivedBucketID != "" {
+		structuredScope := chatScope{SourcePath: scope.SourcePath, Page: scope.Page}
+		doclingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		structured, err := s.prepareStructuredStudy(doclingCtx, structuredScope, message, intent, func(manifest *reader.Manifest) bool {
+			digest := manifest.SourceSHA256
+			if !validPDFRevision("sha256:" + digest) {
+				return false
+			}
+			if strings.HasPrefix(scope.SourceRevision, "sha256:") {
+				return scope.SourceRevision == "sha256:"+digest // bytes already verified above
+			}
+			actual, err := s.sourcePDFDigest(doclingCtx, scope.SourcePath, scope.SourceRevision)
+			return err == nil && actual == digest
+		})
+		cancel()
+		if err == nil && structured.ready() {
+			structured.SourceRevision = scope.SourceRevision
+			structured.RequestedPage = scope.Page
+			// Coverage applies to extracted structure, never to every word/image in the PDF.
+			structured.Retrieval.Coverage.Kind = "docling-extracts"
+			verified := true
+			for i := range structured.Retrieval.Evidence {
+				item := &structured.Retrieval.Evidence[i]
+				item.SourceRevision, item.Origin, item.Verified = scope.SourceRevision, "docling", &verified
+				item.BBox = nil // no exact projection to the PDF.js viewport
+			}
+			return structured, nil
+		}
+	}
 	study := &documentStudy{
-		SourcePath: scope.SourcePath, SourceRevision: scope.SourceRevision,
+		RequestedPage: scope.Page,
+		SourcePath:    scope.SourcePath, SourceRevision: scope.SourceRevision,
 		KnowledgeSource: "pdf-reader", Status: "pdf-ready", Title: path.Base(scope.SourcePath),
 		Anchor: scope.Anchor, AnchorVerified: false,
 	}
 	verified := false
 	evidence := make([]reader.Evidence, 0, 9)
 	if scope.Anchor != nil {
-		text := strings.TrimSpace(scope.Anchor.Prefix + " " + scope.Anchor.Quote + " " + scope.Anchor.Suffix)
+		text := strings.TrimSpace(scope.Anchor.Quote)
 		evidence = append(evidence, reader.Evidence{
 			CitationID: "S1", SourcePath: scope.SourcePath, SourceRevision: scope.SourceRevision,
 			Page: scope.Anchor.Page, Segments: scope.Anchor.Segments, Kind: "selection",
@@ -95,7 +131,7 @@ func (s *Server) preparePDFStudy(ctx context.Context, scope chatScope) (*documen
 		})
 	}
 	ctxData := scope.PDFContext
-	if ctxData != nil {
+	if ctxData != nil && scope.Anchor == nil {
 		if ctxData.TotalPages < 1 || ctxData.TotalPages > 100000 || ctxData.IndexedPages < 0 || ctxData.IndexedPages > ctxData.TotalPages || len(ctxData.Passages) > 8 {
 			return nil, catalog.Error(http.StatusBadRequest, "La couverture de l’index PDF est invalide.")
 		}
@@ -104,7 +140,7 @@ func (s *Server) preparePDFStudy(ctx context.Context, scope chatScope) (*documen
 			text := strings.TrimSpace(passage.Text)
 			length := len([]rune(text))
 			budget += length
-			if passage.Page < 1 || passage.Page > ctxData.TotalPages || length == 0 || length > 2000 || budget > 16000 || (passage.Origin != "" && passage.Origin != "pdf-text" && passage.Origin != "ocr") {
+			if (scope.Page > 0 && passage.Page != scope.Page) || passage.Page < 1 || passage.Page > ctxData.TotalPages || length == 0 || length > 2000 || budget > 16000 || (passage.Origin != "" && passage.Origin != "pdf-text" && passage.Origin != "ocr") {
 				return nil, catalog.Error(http.StatusBadRequest, "Un passage de l’index PDF est invalide ou trop volumineux.")
 			}
 			origin := passage.Origin
@@ -121,14 +157,37 @@ func (s *Server) preparePDFStudy(ctx context.Context, scope chatScope) (*documen
 		study.Retrieval.Coverage.TotalPages = ctxData.TotalPages
 		// An indexed page is not necessarily entirely included in this prompt.
 		// Never call this an exhaustive summary merely because indexing finished.
-		study.Retrieval.Coverage.Complete = ctxData.Complete && ctxData.IndexedPages == ctxData.TotalPages
+		study.Retrieval.Coverage.Complete = scope.Page == 0 && ctxData.Complete && ctxData.IndexedPages == ctxData.TotalPages
 	}
 	if len(evidence) == 0 {
-		return nil, catalog.Error(http.StatusBadRequest, "Sélectionne du texte ou attends qu’une page du PDF soit indexée.")
+		return nil, catalog.Error(http.StatusBadRequest, "Aucun extrait exploitable pour ce périmètre : indexation en cours, ou PDF scanné sans texte ni conversion Docling de cette version.")
 	}
 	study.Retrieval.Evidence = evidence
 	study.Retrieval.Coverage.Kind = "partial-pdf-reader"
 	study.Retrieval.Coverage.SelectedChunks = len(evidence)
 	study.Retrieval.Coverage.TotalChunks = study.Retrieval.Coverage.TotalPages
 	return study, nil
+}
+
+// Page scope excludes multi-page chunks even when they rank highly.
+func doclingPage(document *reader.Document, page int) *reader.Document {
+	out := &reader.Document{SourcePath: document.SourcePath, ArtifactID: document.ArtifactID, Title: document.Title}
+	for _, block := range document.Blocks {
+		if block.Page != page || block.MultiPage {
+			continue
+		}
+		out.Blocks = append(out.Blocks, block)
+		text := block.Text
+		if block.Markdown != "" {
+			text = block.Markdown
+		}
+		if strings.TrimSpace(text) == "" {
+			text = block.Caption
+		}
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		out.Chunks = append(out.Chunks, reader.Chunk{ID: block.ID, Text: text, BlockIDs: []string{block.ID}, Pages: []int{page}})
+	}
+	return out
 }

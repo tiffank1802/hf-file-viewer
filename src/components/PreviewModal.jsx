@@ -119,7 +119,7 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
   const renderPreview = () => {
     if (file.kind === 'pdf') {
       const page = Number(file.previewPage);
-      if (isTauriRuntime() || isAndroidRuntime()) {
+      if (file.chatPDFPreview || isTauriRuntime() || isAndroidRuntime()) {
         return (
           <Suspense fallback={<div className="preview-loader"><span /><p>Chargement du PDF…</p></div>}>
             <div className="pdf-frame pdf-reader-modal-host">
@@ -162,7 +162,7 @@ export default function PreviewModal({ file, onClose, favorite, onToggleFavorite
   };
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className={`modal-backdrop${file.chatPDFPreview ? ' chat-pdf-backdrop' : ''}`} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="preview-modal" role="dialog" aria-modal="true" aria-labelledby="preview-title">
         <header className="preview-header">
           <div className="preview-file-heading">

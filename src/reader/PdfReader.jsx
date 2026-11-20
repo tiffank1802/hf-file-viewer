@@ -12,6 +12,7 @@ import { GlobalWorkerOptions, PDFDataRangeTransport, TextLayer, getDocument } fr
 import workerSource from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import 'pdfjs-dist/web/pdf_viewer.css';
 import { isTauriRuntime } from '../utils/runtime';
+import { PdfGeometryInput, PdfShape } from './PdfGeometryLayer';
 import { normalizedQuadsForViewport, pdfQuadsFromClientRects } from './selectionAnchor';
 import { createTauriPDFSource, PDF_RANGE_CHUNK_SIZE } from './tauriPdfRange';
 
@@ -23,6 +24,9 @@ const PdfReader = forwardRef(function PdfReader({
   highlights = [],
   indexedPages = new Map(),
   targetPage = 1,
+  geometryMode,
+  sourceRevision,
+  onGeometry,
   onDocument,
   onFirstPage,
   onPageChange,
@@ -116,6 +120,29 @@ const PdfReader = forwardRef(function PdfReader({
 
   useImperativeHandle(ref, () => ({
     scrollToPage,
+    async scrollToAnchor(pageNumber, segments, geometry) {
+      if (!pdf || (!segments?.length && !geometry)) { scrollToPage(pageNumber); return; }
+      try {
+        const page = await pdf.getPage(pageNumber);
+        const element = pageElements.current.get(pageNumber);
+        const parent = element?.closest('.reader-document');
+        if (!parent) return;
+        const viewport = page.getViewport({ scale: zoom });
+        const points = geometry?.points?.map(([x, y]) => viewport.convertToViewportPoint(x, y));
+        const region = normalizedQuadsForViewport(segments?.find((item) => item.page === pageNumber)?.quads, viewport)[0];
+        const y = points?.length ? Math.min(...points.map((point) => point[1])) : region?.y * viewport.height;
+        const x = points?.length ? Math.min(...points.map((point) => point[0])) : region?.x * viewport.width;
+        if (!Number.isFinite(y) || !Number.isFinite(x)) { scrollToPage(pageNumber); return; }
+        const bounds = element.getBoundingClientRect();
+        const frame = parent.getBoundingClientRect();
+        const visibleX = bounds.left - frame.left + x;
+        parent.scrollTo({
+          top: bounds.top - frame.top + parent.scrollTop + y - Math.min(70, parent.clientHeight / 6),
+          left: visibleX < 0 || visibleX > parent.clientWidth - 24 ? parent.scrollLeft + visibleX - 24 : parent.scrollLeft,
+          behavior: 'auto',
+        });
+      } catch { scrollToPage(pageNumber); }
+    },
     async selectionGeometry(pageNumber, clientRects, pageRect) {
       if (!pdf) return null;
       const page = await pdf.getPage(pageNumber);
@@ -166,6 +193,9 @@ const PdfReader = forwardRef(function PdfReader({
             pageNumber={page}
             zoom={zoom}
             highlights={highlightsByPage.get(page) || []}
+            geometryMode={geometryMode}
+            sourceRevision={sourceRevision}
+            onGeometry={onGeometry}
             textAvailable={indexedPages.has(page) ? Boolean(indexedPages.get(page)?.trim()) : null}
             register={registerPage}
             onRendered={markFirstPage}
@@ -177,7 +207,7 @@ const PdfReader = forwardRef(function PdfReader({
   );
 });
 
-function PdfPage({ pdf, pageNumber, zoom, highlights, textAvailable, register, onRendered, onVisible }) {
+function PdfPage({ pdf, pageNumber, zoom, highlights, textAvailable, register, onRendered, onVisible, geometryMode, sourceRevision, onGeometry }) {
   const shellRef = useRef(null);
   const canvasRef = useRef(null);
   const textRef = useRef(null);
@@ -313,6 +343,18 @@ function PdfPage({ pdf, pageNumber, zoom, highlights, textAvailable, register, o
           <span className="reader-highlight-page citation" />
         )}
       </div>
+      {pageViewport && highlights.some((item) => item.geometry) && (
+        <svg className="reader-pdf-geometry" aria-hidden="true" viewBox={`0 0 ${pageViewport.width} ${pageViewport.height}`} preserveAspectRatio="none">
+          {highlights.filter((item) => item.geometry).map((item, index) => (
+            <PdfShape key={item.annotationId || index} color={item.color} shape={item.geometry.shape}
+              points={item.geometry.points.map(([x, y]) => pageViewport.convertToViewportPoint(x, y))} />
+          ))}
+        </svg>
+      )}
+      {rendered && geometryMode && sourceRevision && pageViewport && (
+        <PdfGeometryInput key={`${geometryMode}:${zoom}:${sourceRevision}`} mode={geometryMode} page={pageNumber}
+          viewport={pageViewport} sourceRevision={sourceRevision} onComplete={onGeometry} />
+      )}
       <span className="reader-page-number">{pageNumber}</span>
       {nearViewport && rendered && textAvailable === false && (
         <p className="reader-pdf-scan-notice" role="status">Aucun texte sélectionnable détecté sur cette page. Un OCR est nécessaire pour analyser un scan.</p>

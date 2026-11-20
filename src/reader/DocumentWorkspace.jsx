@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useLayoutEffect,
   useRef,
   useState,
 } from 'react';
@@ -21,6 +22,7 @@ import {
 } from 'react-icons/fi';
 import { fetchPDFRevision, fetchReaderDocument, hashPDFBytes, pdfReaderUrl } from '../services/reader';
 import { normalizeBucketItem } from '../utils/files';
+import { exportPDFAnnotations, geometryLabel } from './pdfGeometry';
 import AnnotationComposer from './AnnotationComposer';
 import AnnotationPanel from './AnnotationPanel';
 import PdfReader from './PdfReader';
@@ -29,7 +31,7 @@ import { emitReaderMetric, metricBucket, readerViewport } from './readerMetrics'
 import StructuredReader from './structured/StructuredReader';
 import { useReaderAnnotations } from './useReaderAnnotations';
 import { usePdfTextIndex } from './usePdfTextIndex';
-import { searchPDFIndex } from './pdfTextIndex';
+import { pdfPageContext, pdfPageText, searchPDFIndex } from './pdfTextIndex';
 import {
   buildPdfSelectionAnchor,
   buildStructuredSelectionAnchor,
@@ -62,11 +64,12 @@ export default function DocumentWorkspace({
   const [pageCount, setPageCount] = useState(0);
   const [zoom, setZoom] = useState(() => (isMobileReader() ? 0.68 : 1.15));
   const [viewMode, setViewMode] = useState(documentFile.kind === 'pdf' ? 'pdf' : 'structured');
-  const [sidebarOpen, setSidebarOpen] = useState(() => !isMobileReader());
+  const [sidebarOpen, setSidebarOpen] = useState(() => typeof window === 'undefined' || window.innerWidth > 1100);
   const [sidebarTab, setSidebarTab] = useState('outline');
   const [assistantOpen, setAssistantOpen] = useState(() => !isMobileReader());
   const [selection, setSelection] = useState(null);
   const [noteSelection, setNoteSelection] = useState(null);
+  const [geometryMode, setGeometryMode] = useState('');
   const [highlights, setHighlights] = useState([]);
   const [selectionError, setSelectionError] = useState('');
   const [pdfIdentity, setPdfIdentity] = useState({ strategy: '', revision: '', error: '' });
@@ -114,6 +117,7 @@ export default function DocumentWorkspace({
       blockId: item.blockId || item.anchor?.blockId || '',
       rects: item.anchor?.rects || [],
       segments: item.anchor?.segments || [],
+      geometry: item.anchor?.geometry,
       kind: 'annotation',
       color: item.color || 'yellow',
     })), [activeAnnotations]);
@@ -133,6 +137,7 @@ export default function DocumentWorkspace({
     setSelection(null);
     setNoteSelection(null);
     setPendingAsk(null);
+    setGeometryMode('');
     setHighlights([]);
     return () => { captureSequence.current += 1; };
   }, [documentFile.path, pdfRevision, viewMode]);
@@ -257,6 +262,7 @@ export default function DocumentWorkspace({
     const onKeyDown = (event) => {
       if (event.key !== 'Escape') return;
       if (noteSelection) setNoteSelection(null);
+      else if (geometryMode) setGeometryMode('');
       else if (selection) {
         captureSequence.current += 1;
         setSelection(null);
@@ -269,7 +275,7 @@ export default function DocumentWorkspace({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [assistantOpen, mobile, noteSelection, onClose, selection, sidebarOpen]);
+  }, [assistantOpen, geometryMode, mobile, noteSelection, onClose, selection, sidebarOpen]);
 
   useEffect(() => {
     if (selection?.focusToolbar) selectionToolbarRef.current?.querySelector('button:not([disabled])')?.focus();
@@ -328,10 +334,7 @@ export default function DocumentWorkspace({
     }
     setSelectionError('');
     const rangeRect = range.getBoundingClientRect();
-    const position = {
-      left: Math.max(12, Math.min(window.innerWidth - 330, rangeRect.left + rangeRect.width / 2 - 150)),
-      top: Math.max(64, rangeRect.top - 52),
-    };
+    const position = { center: rangeRect.left + rangeRect.width / 2, top: rangeRect.top, bottom: rangeRect.bottom };
 
     if (viewMode === 'structured') {
       const startElement = selectionElement(range.startContainer)?.closest?.('[data-reader-block]');
@@ -354,8 +357,7 @@ export default function DocumentWorkspace({
         ...current.filter((item) => item.kind !== 'selection'),
         { page: anchor.page, rects: [], blockId: anchor.blockId, kind: 'selection' },
       ]);
-      if (!mobile) setAssistantOpen(true);
-      return;
+        return;
     }
 
     if (!pdfRevision) {
@@ -418,25 +420,21 @@ export default function DocumentWorkspace({
       ...current.filter((item) => item.kind !== 'selection'),
       { page: anchor.page, segments: anchor.segments, kind: 'selection' },
     ]);
-    if (!mobile) setAssistantOpen(true);
-  }, [mobile, pdfIndex.pages, pdfRevision, viewMode, setSelectionError, setPage, setSelection, setHighlights, setAssistantOpen]);
+  }, [pdfIndex.pages, pdfRevision, viewMode, setSelectionError, setPage, setSelection, setHighlights]);
 
-  const askSelection = useCallback((action) => {
+  const askSelection = (action) => {
     if (!selection?.anchor) return;
-    if (assistantRef.current) assistantRef.current.ask(action.question, action.intent, selection.anchor);
-    else setPendingAsk({ ...action, anchor: selection.anchor });
-    emitReaderMetric('assistant', { action: action.intent, outcome: 'started' });
+    setPendingAsk({ ...action, anchor: selection.anchor });
+    setSelection(null);
+    window.getSelection()?.removeAllRanges();
     if (mobile) setSidebarOpen(false);
     setAssistantOpen(true);
-  }, [mobile, selection, setPendingAsk, setSidebarOpen, setAssistantOpen]);
+  };
 
   useEffect(() => {
     if (!assistantOpen || !pendingAsk) return undefined;
-    // The mobile assistant has just mounted. Defer the request until after
-    // React's effect setup/cleanup cycle, otherwise StrictMode can immediately
-    // abort the request while replaying its unmount cleanup in development.
     const timer = window.setTimeout(() => {
-      assistantRef.current?.ask(pendingAsk.question, pendingAsk.intent, pendingAsk.anchor);
+      assistantRef.current?.focusSelection(pendingAsk.anchor, pendingAsk);
       setPendingAsk(null);
     }, 0);
     return () => window.clearTimeout(timer);
@@ -470,7 +468,7 @@ export default function DocumentWorkspace({
     if (!noteSelection?.anchor) return;
     const saved = await annotations.create({
       anchor: noteSelection.anchor,
-      kind: 'note',
+      kind: body ? 'note' : 'highlight',
       color,
       body,
     });
@@ -485,9 +483,9 @@ export default function DocumentWorkspace({
     setSidebarTab('annotations');
   }, [annotations, mobile, noteSelection, setHighlights, setSelection, setNoteSelection, setAssistantOpen, setSidebarOpen, setSidebarTab]);
 
-  const openAnnotation = useCallback((annotation) => {
+  const openAnnotation = (annotation) => {
     if (annotation?.status !== 'active' || (pdfMode && (
-      annotation?.legacy || annotation?.sourceRevision !== pdfRevision || annotation?.anchor?.schemaVersion !== 'pdf-anchor/v1'
+      annotation?.legacy || annotation?.sourceRevision !== pdfRevision || (annotation?.anchor?.schemaVersion !== 'pdf-anchor/v1' && !geometryLabel(annotation?.anchor))
     ))) {
       setSelectionError('Cette annotation non active ou issue d’une ancienne version doit être vérifiée avant de la positionner sur le document actuel.');
       return;
@@ -497,8 +495,8 @@ export default function DocumentWorkspace({
     if (targetPage > 0) setPage(targetPage);
     if (viewMode === 'structured') void structuredRef.current?.scrollToBlock(blockId);
     else {
-      setPdfTargetPage(targetPage || 1);
-      pdfRef.current?.scrollToPage(targetPage || 1);
+      void pdfRef.current?.scrollToAnchor(targetPage || 1, annotation.anchor?.segments, annotation.anchor?.geometry);
+      if (mobile) setSidebarOpen(false);
     }
     setHighlights((current) => [
       ...current.filter((item) => item.kind !== 'citation'),
@@ -510,7 +508,7 @@ export default function DocumentWorkspace({
         kind: 'citation',
       },
     ]);
-  }, [pdfMode, pdfRevision, viewMode, setSelectionError, setPage, setPdfTargetPage, setHighlights]);
+  };
 
   const onStructuredVisible = useCallback((block) => {
     if (block.page > 0) setPage((current) => (current === block.page ? current : block.page));
@@ -522,7 +520,7 @@ export default function DocumentWorkspace({
     else changePage(item?.page || 1);
   }, [changePage, viewMode, setPage]);
 
-  const openCitation = useCallback((citation) => {
+  const openCitation = (citation) => {
     if (pdfMode && citation?.sourceRevision && citation.sourceRevision !== pdfRevision) {
       setSelectionError('Cette citation appartient à une autre version du PDF.');
       return;
@@ -533,8 +531,9 @@ export default function DocumentWorkspace({
     if (targetPage > 0) setPage(targetPage);
     if (viewMode === 'structured') void structuredRef.current?.scrollToBlock(blockId);
     else {
-      setPdfTargetPage(targetPage || 1);
-      pdfRef.current?.scrollToPage(targetPage || 1);
+      if (!targetPage) return;
+      void pdfRef.current?.scrollToAnchor(targetPage, citation?.segments);
+      if (mobile) setAssistantOpen(false);
     }
     const selected = highlights.find((item) => (
       item.page === targetPage
@@ -549,7 +548,7 @@ export default function DocumentWorkspace({
       ...current.filter((item) => item.kind !== 'citation'),
       { ...marker, kind: 'citation' },
     ]);
-  }, [highlights, pdfMode, pdfRevision, viewMode, setSelectionError, setPage, setPdfTargetPage, setHighlights]);
+  };
 
   const selectViewMode = useCallback((mode) => {
     if (mode === 'pdf') setPdfTargetPage(page);
@@ -561,11 +560,11 @@ export default function DocumentWorkspace({
     emitReaderMetric('mode-change', { mode, kind: documentFile.kind });
   }, [documentFile.kind, page, setPdfTargetPage, setSelection, setHighlights, setViewMode]);
 
-  const toggleSidebar = useCallback(() => {
+  const toggleSidebar = () => {
     const next = !sidebarOpen;
     setSidebarOpen(next);
-    if (next && mobile) setAssistantOpen(false);
-  }, [mobile, sidebarOpen, setSidebarOpen, setAssistantOpen]);
+    if (next && window.innerWidth <= 1100) setAssistantOpen(false);
+  };
 
   const toggleAssistant = useCallback(() => {
     const next = !assistantOpen;
@@ -581,7 +580,20 @@ export default function DocumentWorkspace({
     window.requestAnimationFrame(() => document.getElementById(`reader-${tab}-tab`)?.focus());
   }, [setSidebarTab]);
 
-  const getPDFContext = useCallback((question) => searchPDFIndex(pdfIndex, question), [pdfIndex]);
+  const getPDFContext = useCallback(async (question, forPage) => {
+    if (!forPage) return pdfIndex.totalPages ? searchPDFIndex(pdfIndex, question) : undefined;
+    if (!currentPdf || forPage > currentPdf.numPages) return undefined;
+    let text = pdfIndex.pages.get(forPage);
+    if (text === undefined) {
+      try { text = pdfPageText(await (await currentPdf.getPage(forPage)).getTextContent()); } catch { text = ''; }
+    }
+    return pdfPageContext({ ...pdfIndex, totalPages: currentPdf.numPages }, forPage, text, question);
+  }, [currentPdf, pdfIndex]);
+  const showNotes = () => {
+    setSidebarOpen(true);
+    setSidebarTab('annotations');
+    if (window.innerWidth <= 1100) setAssistantOpen(false);
+  };
   const retryMetadata = useCallback(() => setMetadataAttempt((value) => value + 1), [setMetadataAttempt]);
   const clearSelection = useCallback(() => {
     captureSequence.current += 1;
@@ -590,6 +602,28 @@ export default function DocumentWorkspace({
     setHighlights((current) => current.filter((item) => item.kind !== 'selection'));
     window.getSelection()?.removeAllRanges();
   }, [setSelectionError, setSelection, setHighlights]);
+
+  useLayoutEffect(() => {
+    const toolbar = selectionToolbarRef.current;
+    if (!toolbar || !selection?.position) return;
+    const { center, top, bottom } = selection.position;
+    const { offsetWidth: width, offsetHeight: height } = toolbar;
+    const header = 58;
+    const floor = window.innerHeight - (mobile ? 76 : 8);
+    toolbar.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, center - width / 2))}px`;
+    toolbar.style.top = `${top - height - 8 >= header ? top - height - 8 : bottom + height + 8 <= floor ? bottom + 8 : Math.max(header, floor - height)}px`;
+  }, [mobile, selection]);
+
+  const toggleGeometry = (shape) => {
+    if (!authenticated) { onRequireAuth?.(); return; }
+    clearSelection();
+    setGeometryMode((current) => current === shape ? '' : shape);
+    if (mobile) { setSidebarOpen(false); setAssistantOpen(false); }
+  };
+  const onGeometry = (anchor) => {
+    setGeometryMode('');
+    setNoteSelection({ anchor });
+  };
 
   return (
     <div className={`document-workspace${sidebarOpen ? ' sidebar-open' : ''}${assistantOpen ? ' assistant-open' : ''}`}>
@@ -648,7 +682,7 @@ export default function DocumentWorkspace({
             aria-label={sidebarOpen ? 'Masquer le plan et les notes' : 'Afficher le plan et les notes'}
             aria-expanded={sidebarOpen}
             aria-controls="reader-sidebar-panel"
-          ><FiSidebar aria-hidden="true" /></button>
+          ><FiSidebar aria-hidden="true" /><span>Notes</span></button>
           <button
             type="button"
             className={assistantOpen ? 'active' : ''}
@@ -656,13 +690,13 @@ export default function DocumentWorkspace({
             aria-label={assistantOpen ? 'Masquer l’assistant' : 'Afficher l’assistant'}
             aria-expanded={assistantOpen}
             aria-controls="reader-assistant-panel"
-          ><FiColumns aria-hidden="true" /></button>
+          ><FiColumns aria-hidden="true" /><span>Assistant</span></button>
           <button type="button" onClick={onClose} aria-label="Fermer le lecteur"><FiX /></button>
         </div>
       </header>
 
       <div className="reader-body">
-        {mobile && (sidebarOpen || assistantOpen) && (
+        {mobile && sidebarOpen && (
           <button
             type="button"
             className="reader-panel-backdrop"
@@ -724,6 +758,7 @@ export default function DocumentWorkspace({
                   onUpdate={annotations.update}
                   onDelete={annotations.remove}
                   onRetry={() => void annotations.reload()}
+                  onExport={pdfMode ? () => exportPDFAnnotations(annotations.items, documentFile.path, pdfRevision) : undefined}
                 />
               </div>
             )}
@@ -734,9 +769,9 @@ export default function DocumentWorkspace({
           id="reader-document-content"
           className="reader-document"
           tabIndex="-1"
-          onPointerUp={() => window.setTimeout(() => void captureSelection(false), 0)}
+          onPointerUp={() => { if (!geometryMode) window.setTimeout(() => void captureSelection(false), 0); }}
           onKeyUp={(event) => {
-            if (event.shiftKey) window.setTimeout(() => void captureSelection(true), 0);
+            if (!geometryMode && event.shiftKey) window.setTimeout(() => void captureSelection(true), 0);
           }}
         >
           {viewMode === 'pdf' && pdfAvailable ? (
@@ -745,6 +780,9 @@ export default function DocumentWorkspace({
               url={pdfUrl}
               zoom={zoom}
               indexedPages={pdfIndex.pages}
+              sourceRevision={pdfRevision}
+              geometryMode={geometryMode}
+              onGeometry={onGeometry}
               highlights={visibleHighlights}
               targetPage={pdfTargetPage}
               onDocument={onPdfDocument}
@@ -777,39 +815,45 @@ export default function DocumentWorkspace({
           )}
         </main>
 
-        {assistantOpen && (
-          <ReaderAssistant
-            key={`${viewMode}:${pdfMode ? pdfRevision : metadata?.artifactId || ''}`}
-            ref={assistantRef}
-            document={{
-              ...metadata,
-              sourcePath: documentFile.path,
-              pdfMode,
-              sourceRevision: pdfRevision,
-            }}
-            pdfIndex={pdfIndex}
-            getPDFContext={getPDFContext}
-            selection={selection}
-            onCitation={openCitation}
-            onClose={() => setAssistantOpen(false)}
-          />
-        )}
+        <ReaderAssistant
+          ref={assistantRef}
+          key={`${documentFile.path}:${viewMode}:${pdfMode ? pdfRevision : metadata?.artifactId || ''}`}
+          document={{
+            ...metadata,
+            sourcePath: documentFile.path,
+            pdfMode,
+            sourceRevision: pdfRevision,
+          }}
+          open={assistantOpen}
+          onShowNotes={showNotes}
+          currentPage={page}
+          pdfIndex={pdfIndex}
+          getPDFContext={getPDFContext}
+          selection={selection}
+          onCitation={openCitation}
+          onClose={() => setAssistantOpen(false)}
+        />
       </div>
 
+      {pdfMode && ready && <div className="reader-geometry-tools" role="group" aria-label="Annotations graphiques">
+        <button type="button" aria-pressed={geometryMode === 'rect'} onClick={() => toggleGeometry('rect')}>Zone</button>
+        <button type="button" aria-pressed={geometryMode === 'ink'} onClick={() => toggleGeometry('ink')}>Tracer</button>
+        {geometryMode && <span role="status">Glissez sur une page · Échap pour annuler</span>}
+      </div>}
       {selection && (
         <div
           ref={selectionToolbarRef}
           className="reader-selection-toolbar"
-          style={{ left: selection.position.left, top: selection.position.top }}
           role="toolbar"
           aria-orientation="horizontal"
           aria-label="Actions sur la sélection"
         >
+          <button type="button" disabled={!ready || annotations.saving} onClick={() => void keepHighlight()}>Surligner</button>
+          <button type="button" disabled={!ready || annotations.saving} onClick={startNote}>Ajouter une note</button>
+          <button type="button" disabled={!ready} onClick={() => askSelection({})}>Poser une question</button>
           {ACTIONS.map((action) => (
             <button key={action.label} type="button" disabled={!ready} onClick={() => askSelection(action)}>{action.label}</button>
           ))}
-          <button type="button" disabled={!ready || annotations.saving} onClick={() => void keepHighlight()}>Surligner</button>
-          <button type="button" disabled={!ready || annotations.saving} onClick={startNote}>Ajouter une note</button>
           <button type="button" className="close" onClick={clearSelection} aria-label="Fermer les actions de sélection"><FiX aria-hidden="true" /></button>
         </div>
       )}

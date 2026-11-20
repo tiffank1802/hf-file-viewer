@@ -37,6 +37,7 @@ type Manifest struct {
 	ArtifactPrefix  string            `json:"artifactPrefix"`
 	PipelineVersion string            `json:"pipelineVersion"`
 	Status          string            `json:"status"`
+	SourceSHA256    string            `json:"sourceSha256"`
 	Files           map[string]string `json:"files"`
 }
 
@@ -142,6 +143,7 @@ type Block struct {
 	AssetID     string
 	HeadingPath []string
 	Page        int
+	MultiPage   bool
 	BBox        *BBox
 }
 

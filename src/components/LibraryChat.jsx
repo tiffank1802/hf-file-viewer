@@ -246,7 +246,11 @@ export default function LibraryChat({
     }
     const page = Number(citation?.page);
     onNavigate(parentPath(item.path));
-    onOpenFile(page > 0 ? { ...item, previewPage: page, citationBlockId: citation?.blockIds?.[0] || '' } : item);
+    onOpenFile({
+      ...item,
+      ...(item.kind === 'pdf' ? { chatPDFPreview: true } : {}),
+      ...(page > 0 ? { previewPage: page, citationBlockId: citation?.blockIds?.[0] || '' } : {}),
+    });
   }
 
   function openCitation(citation) {

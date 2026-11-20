@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { geometryLabel } from './pdfGeometry';
 import { FiEdit3, FiLogIn, FiMapPin, FiRefreshCw, FiTrash2 } from 'react-icons/fi';
 
 export default function AnnotationPanel({
@@ -12,6 +13,7 @@ export default function AnnotationPanel({
   onUpdate,
   onDelete,
   onRetry,
+  onExport,
 }) {
   if (!authenticated) {
     return (
@@ -26,6 +28,7 @@ export default function AnnotationPanel({
 
   return (
     <div className="reader-annotation-list">
+      {onExport && items.length > 0 && <button type="button" className="reader-dock-tab reader-export" disabled={loading} onClick={onExport}>Exporter mes annotations (JSON)</button>}
       {loading && <p className="reader-annotation-message" role="status">Actualisation des annotations…</p>}
       {error && (
         <div className="reader-annotation-error" role="alert">
@@ -59,14 +62,15 @@ function AnnotationItem({ item, saving, onOpen, onUpdate, onDelete }) {
   const [color, setColor] = useState(item.color || 'yellow');
   useEffect(() => setBody(item.body || ''), [item.body]);
   useEffect(() => setColor(item.color || 'yellow'), [item.color]);
+  const shape = geometryLabel(item.anchor);
   const review = item.status === 'needs-review';
 
   return (
     <article className={`reader-annotation-item color-${item.color || 'yellow'}${review ? ' needs-review' : ''}`}>
       <button type="button" className="reader-annotation-target" onClick={() => onOpen(item)}>
         <span><FiMapPin aria-hidden="true" /> {item.page ? `Page ${item.page}` : 'Passage structuré'}</span>
-        <small>{review ? 'À vérifier : ancienne version ou ancienne structure' : item.kind === 'note' ? 'Note privée' : 'Surlignage privé'}</small>
-        <blockquote>{item.anchor?.quote || 'Passage ancré dans le document'}</blockquote>
+        <small>{review ? 'À vérifier : ancienne version ou ancienne structure' : shape || (item.kind === 'note' ? 'Note privée' : 'Surlignage privé')}</small>
+        <blockquote>{item.anchor?.quote || (shape ? 'Annotation graphique privée' : 'Passage ancré dans le document')}</blockquote>
       </button>
       {editing ? (
         <form

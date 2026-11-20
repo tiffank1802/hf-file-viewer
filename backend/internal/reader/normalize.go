@@ -141,6 +141,13 @@ func Normalize(sourcePath string, documentJSON, chunksJSON []byte) (*Document, e
 			path = append(path, parent.text)
 		}
 		page, bbox := firstLocation(item.Provenance)
+		multiPage := false
+		for _, location := range item.Provenance {
+			if location.PageNo > 0 && location.PageNo != page {
+				multiPage = true
+				break
+			}
+		}
 		block := Block{
 			ID:          item.ID,
 			Ordinal:     item.Ordinal,
@@ -153,6 +160,7 @@ func Normalize(sourcePath string, documentJSON, chunksJSON []byte) (*Document, e
 			AssetID:     item.AssetID,
 			HeadingPath: path,
 			Page:        page,
+			MultiPage:   multiPage,
 			BBox:        bbox,
 		}
 		document.Blocks = append(document.Blocks, block)
