@@ -60,6 +60,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import os
+          import plistlib
           from pathlib import Path
 
           keys = [key.encode() for key in set((Path(os.environ['RUNNER_TEMP']) / 'finder-asset-keys.txt').read_text().splitlines())]
@@ -67,10 +68,21 @@ jobs:
           android = sorted((root / 'android').glob('lib/*/libenise_docs_lib.so'))
           if not android:
               raise SystemExit('::error::No ENISE Android native libraries in the APK')
+          def ios_executables(base):
+              executables = []
+              for info in base.rglob('Info.plist'):
+                  if info.parent.suffix != '.app':
+                      continue
+                  with info.open('rb') as plist:
+                      name = plistlib.load(plist).get('CFBundleExecutable')
+                  if name and Path(name).name == name and (info.parent / name).is_file():
+                      executables.append(info.parent / name)
+              return executables
+
           groups = {
               **{f'Android {lib.parent.name}': [lib] for lib in android},
-              'iOS': list((root / 'ios').glob('Payload/*.app/enise-docs')),
-              'iOS Simulator': list((root / 'sim').glob('*.app/enise-docs')),
+              'iOS': ios_executables(root / 'ios'),
+              'iOS Simulator': ios_executables(root / 'sim'),
               'macOS': list((root / 'mac').glob('*.app/Contents/MacOS/enise-docs')),
               'Windows': list((root / 'windows').rglob('enise-docs.exe')),
           }
@@ -81,7 +93,7 @@ jobs:
                   data = file.read_bytes()
                   matches.update(key.decode() for key in keys if key in data)
               if matches:
-                  print(f'{platform}: embedded Finder entry point {", ".join(sorted(matches))}')
+                  print(f'::notice::{platform}: embedded Finder entry point {", ".join(sorted(matches))}')
               else:
                   print(f'::error::{platform}: expected Finder asset not found in {files}')
                   failed.append(platform)
