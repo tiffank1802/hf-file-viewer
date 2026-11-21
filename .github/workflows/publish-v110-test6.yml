@@ -1,0 +1,21 @@
+name: Publish ENISE Docs 1.1.0-test.6 packages
+
+# Publish the five platforms from the exact build already validated for this delivery.
+# This prerelease does not provide a stable updater feed.
+on:
+  push:
+    branches: ['arena/4ed8dd41-hf-file-viewer']
+    paths: ['.github/workflows/publish-v110-test6.yml']
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    if: github.repository == 'tiffank1802/hf-file-viewer'
+    uses: ./.github/workflows/verify-v110-finder.yml
+    with:
+      release_tag: v1.1.0-test.6
+      source_run: '44897616692'
+      source_sha: 9bc253e4ad01ae99bb3e0fea619ebf24ffa32261

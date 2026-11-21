@@ -6,6 +6,14 @@ on:
       release_tag:
         required: true
         type: string
+      source_run:
+        description: ID of an already completed Tauri build on the calling branch
+        required: false
+        type: string
+      source_sha:
+        description: Exact commit compiled by source_run
+        required: false
+        type: string
 
 permissions:
   actions: read
@@ -17,8 +25,10 @@ concurrency:
 
 env:
   RELEASE_TAG: ${{ inputs.release_tag }}
-  BUILD_RUN: ${{ github.run_id }}
-  BUILD_SHA: ${{ github.sha }}
+  BUILD_RUN: ${{ inputs.source_run || github.run_id }}
+  BUILD_SHA: ${{ inputs.source_sha || github.sha }}
+  REUSE_BUILD: ${{ inputs.source_run != '' }}
+  VITE_ENISE_PREVIEW_TAG: ${{ !inputs.source_run && inputs.release_tag || '' }}
 
 jobs:
   verify:
@@ -41,9 +51,13 @@ jobs:
         run: |
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN" > source-run.json
           actual=$(jq -r '[.head_repository.full_name,.path,.event,.head_branch,.head_sha] | @tsv' source-run.json)
-          expected=$(printf '%s\t%s\t%s\t%s\t%s' "$GITHUB_REPOSITORY" '.github/workflows/tauri-build.yml' push 'arena/197b0080-hf-file-viewer' "$BUILD_SHA")
+          expected=$(printf '%s\t%s\t%s\t%s\t%s' "$GITHUB_REPOSITORY" '.github/workflows/tauri-build.yml' push "$GITHUB_REF_NAME" "$BUILD_SHA")
           if [ "$actual" != "$expected" ]; then
             echo '::error::Le run source ne correspond pas au build Finder validé.'
+            exit 1
+          fi
+          if [ "$REUSE_BUILD" = true ] && [ "$(jq -r '.conclusion' source-run.json)" != success ]; then
+            echo '::error::Le build natif source doit avoir réussi.'
             exit 1
           fi
           version=$(node -p 'require("./src-tauri/tauri.conf.json").version')
@@ -51,7 +65,8 @@ jobs:
             echo '::error::Le tag de préversion ne correspond pas à la version native.'
             exit 1
           fi
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" > source-jobs.json
+          attempt=$(jq -r '.run_attempt' source-run.json)
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN/attempts/$attempt/jobs?per_page=100" > source-jobs.json
           draft=$(gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,targetCommitish --jq '[.isDraft,.isPrerelease,.targetCommitish] | @tsv')
           if [ "$draft" != "$(printf 'true\ttrue\t%s' "$BUILD_SHA")" ]; then
             echo '::error::Le brouillon de préversion ne cible pas le commit compilé.'
@@ -61,7 +76,7 @@ jobs:
       - name: Rebuild the Finder and PDF reader UI from the release commit
         shell: bash
         run: |
-          export GITHUB_SHA="$BUILD_SHA" VITE_API_ORIGIN='' VITE_ENISE_PREVIEW_TAG="$RELEASE_TAG"
+          export GITHUB_SHA="$BUILD_SHA" VITE_API_ORIGIN=''
           for mode in unset unsigned signed; do
             case "$mode" in
               unset) unset VITE_ENISE_SIGNED_UPDATER ;;
@@ -85,6 +100,8 @@ jobs:
           done
       - uses: actions/download-artifact@v7
         with:
+          github-token: ${{ inputs.source_run && github.token || '' }}
+          run-id: ${{ env.BUILD_RUN }}
           pattern: enise-docs-*
           path: native-builds
           merge-multiple: true
