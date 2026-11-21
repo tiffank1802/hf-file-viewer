@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "node scripts/dev-go.mjs",
     "dev:vite": "vite",
+    "demo:updater": "node scripts/demo-native-updater.mjs",
     "dev:api": "node scripts/dev-go.mjs --api-only",
     "start:go": "npm run build && node scripts/dev-go.mjs --api-only --static",
     "start:api": "node scripts/dev-go.mjs --api-only --public",

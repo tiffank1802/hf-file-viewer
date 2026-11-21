@@ -104,6 +104,13 @@ try {
   assert.equal(await entry(desktop, lesson).getAttribute('aria-pressed'), 'true');
   await entry(desktop, lesson).press('Enter');
   await desktop.waitForURL(href(lesson));
+  const pdfIcon = entry(desktop, `${lesson}/Cours.pdf`).locator('[data-file-icon="pdf"]');
+  const textIcon = entry(desktop, notes).locator('[data-file-icon="text"]');
+  await pdfIcon.waitFor();
+  await textIcon.waitFor();
+  assert.equal(await pdfIcon.getAttribute('aria-hidden'), 'true');
+  assert.notEqual(await pdfIcon.locator('linearGradient').first().getAttribute('id'),
+    await textIcon.locator('linearGradient').first().getAttribute('id'));
   await control(desktop, 'Affichage : Colonnes').click();
   await entry(desktop, empty).click();
   await heading(desktop, 'Vide').first().waitFor();
