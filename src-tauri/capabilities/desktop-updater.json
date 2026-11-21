@@ -4,5 +4,5 @@
   "description": "Permet la mise à jour signée depuis la fenêtre principale.",
   "windows": ["main"],
   "platforms": ["macOS", "windows", "linux"],
-  "permissions": ["updater:default"]
+  "permissions": ["updater:allow-check", "updater:allow-download", "updater:allow-install"]
 }
